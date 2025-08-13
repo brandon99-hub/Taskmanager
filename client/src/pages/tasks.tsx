@@ -1,0 +1,227 @@
+import { useEffect, useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
+import { useQuery } from "@tanstack/react-query";
+import Navigation from "@/components/layout/navigation";
+import TaskCard from "@/components/tasks/task-card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Search, Filter, Plus } from "lucide-react";
+import { isUnauthorizedError } from "@/lib/authUtils";
+
+export default function Tasks() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const { toast } = useToast();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      toast({
+        title: "Unauthorized",
+        description: "You are logged out. Logging in again...",
+        variant: "destructive",
+      });
+      setTimeout(() => {
+        window.location.href = "/api/login";
+      }, 500);
+      return;
+    }
+  }, [isAuthenticated, isLoading, toast]);
+
+  const { data: tasks = [], isLoading: tasksLoading, error } = useQuery({
+    queryKey: ['/api/tasks'],
+    enabled: !!isAuthenticated,
+  });
+
+  useEffect(() => {
+    if (error && isUnauthorizedError(error)) {
+      toast({
+        title: "Unauthorized",
+        description: "You are logged out. Logging in again...",
+        variant: "destructive",
+      });
+      setTimeout(() => {
+        window.location.href = "/api/login";
+      }, 500);
+    }
+  }, [error, toast]);
+
+  if (isLoading || !isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  // Filter tasks based on search and filters
+  const filteredTasks = tasks.filter((task: any) => {
+    const matchesSearch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         task.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         task.project?.name.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = statusFilter === "all" || task.status === statusFilter;
+    const matchesPriority = priorityFilter === "all" || task.priority === priorityFilter;
+    
+    return matchesSearch && matchesStatus && matchesPriority;
+  });
+
+  // Group tasks by status
+  const tasksByStatus = {
+    todo: filteredTasks.filter((task: any) => task.status === 'todo'),
+    in_progress: filteredTasks.filter((task: any) => task.status === 'in_progress'),
+    review: filteredTasks.filter((task: any) => task.status === 'review'),
+    done: filteredTasks.filter((task: any) => task.status === 'done'),
+  };
+
+  const getStatusTitle = (status: string) => {
+    switch (status) {
+      case 'todo': return 'To Do';
+      case 'in_progress': return 'In Progress';
+      case 'review': return 'Review';
+      case 'done': return 'Done';
+      default: return status;
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'todo': return 'bg-gray-100';
+      case 'in_progress': return 'bg-blue-50';
+      case 'review': return 'bg-yellow-50';
+      case 'done': return 'bg-green-50';
+      default: return 'bg-gray-100';
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background-page">
+      <Navigation />
+      
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        {/* Header */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
+          <div>
+            <h2 className="text-3xl font-medium text-gray-900 mb-2" data-testid="text-title">Tasks</h2>
+            <p className="text-gray-600" data-testid="text-subtitle">Track and manage all your assigned tasks</p>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="text-lg">Filters & Search</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid md:grid-cols-4 gap-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                <Input
+                  placeholder="Search tasks..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                  data-testid="input-search"
+                />
+              </div>
+              
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger data-testid="select-status">
+                  <SelectValue placeholder="Filter by status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="todo">To Do</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="review">Review</SelectItem>
+                  <SelectItem value="done">Done</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+                <SelectTrigger data-testid="select-priority">
+                  <SelectValue placeholder="Filter by priority" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Priorities</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="critical">Critical</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <div className="flex items-center space-x-2">
+                <Badge variant="outline" data-testid="badge-task-count">
+                  {filteredTasks.length} tasks
+                </Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Tasks Content */}
+        {tasksLoading ? (
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[...Array(4)].map((_, i) => (
+              <Card key={i} className="animate-pulse">
+                <CardHeader>
+                  <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                  <div className="h-2 bg-gray-200 rounded w-full"></div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {[...Array(3)].map((_, j) => (
+                      <div key={j} className="h-12 bg-gray-200 rounded"></div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : tasks.length === 0 ? (
+          <Card>
+            <CardContent className="text-center py-12">
+              <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-tasks">No tasks yet</h3>
+              <p className="text-gray-600 mb-4">Tasks will appear here once they are assigned to you</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {Object.entries(tasksByStatus).map(([status, statusTasks]) => (
+              <div key={status} className={`rounded-lg p-4 ${getStatusColor(status)}`}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-medium text-gray-900" data-testid={`text-status-${status}`}>
+                    {getStatusTitle(status)}
+                  </h3>
+                  <Badge variant="secondary" data-testid={`badge-count-${status}`}>
+                    {statusTasks.length}
+                  </Badge>
+                </div>
+                
+                <div className="space-y-3">
+                  {statusTasks.map((task: any) => (
+                    <TaskCard key={task.id} task={task} />
+                  ))}
+                  
+                  {statusTasks.length === 0 && (
+                    <div className="text-center py-8 text-gray-500" data-testid={`text-empty-${status}`}>
+                      No {getStatusTitle(status).toLowerCase()} tasks
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

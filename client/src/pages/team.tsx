@@ -1,0 +1,388 @@
+import { useEffect, useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import Navigation from "@/components/layout/navigation";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { Users, Plus, Mail, UserPlus, Calendar } from "lucide-react";
+import { isUnauthorizedError } from "@/lib/authUtils";
+
+const createTeamSchema = z.object({
+  name: z.string().min(1, "Team name is required").max(100, "Team name too long"),
+  description: z.string().optional(),
+});
+
+type CreateTeamData = z.infer<typeof createTeamSchema>;
+
+export default function Team() {
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const { toast } = useToast();
+  const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      toast({
+        title: "Unauthorized",
+        description: "You are logged out. Logging in again...",
+        variant: "destructive",
+      });
+      setTimeout(() => {
+        window.location.href = "/api/login";
+      }, 500);
+      return;
+    }
+  }, [isAuthenticated, isLoading, toast]);
+
+  const { data: teams = [], isLoading: teamsLoading, error: teamsError } = useQuery({
+    queryKey: ['/api/teams'],
+    enabled: !!isAuthenticated,
+  });
+
+  const { data: workload = [], isLoading: workloadLoading, error: workloadError } = useQuery({
+    queryKey: ['/api/dashboard/workload'],
+    enabled: !!isAuthenticated,
+  });
+
+  useEffect(() => {
+    const errors = [teamsError, workloadError].filter(Boolean);
+    errors.forEach(error => {
+      if (error && isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+      }
+    });
+  }, [teamsError, workloadError, toast]);
+
+  const form = useForm<CreateTeamData>({
+    resolver: zodResolver(createTeamSchema),
+    defaultValues: {
+      name: "",
+      description: "",
+    },
+  });
+
+  const createTeamMutation = useMutation({
+    mutationFn: async (data: CreateTeamData) => {
+      const response = await apiRequest("POST", "/api/teams", data);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/teams"] });
+      setIsCreateTeamOpen(false);
+      form.reset();
+      toast({
+        title: "Success",
+        description: "Team created successfully",
+      });
+    },
+    onError: (error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to create team",
+        variant: "destructive",
+      });
+    },
+  });
+
+  if (isLoading || !isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  const onSubmit = (data: CreateTeamData) => {
+    createTeamMutation.mutate(data);
+  };
+
+  const getInitials = (name: string) => {
+    return name.split(' ').map(n => n[0]).join('').toUpperCase();
+  };
+
+  return (
+    <div className="min-h-screen bg-background-page">
+      <Navigation />
+      
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        {/* Header */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
+          <div>
+            <h2 className="text-3xl font-medium text-gray-900 mb-2" data-testid="text-title">Team Management</h2>
+            <p className="text-gray-600" data-testid="text-subtitle">Manage teams and monitor member workloads</p>
+          </div>
+          <div className="flex space-x-3 mt-4 md:mt-0">
+            <Dialog open={isCreateTeamOpen} onOpenChange={setIsCreateTeamOpen}>
+              <DialogTrigger asChild>
+                <Button className="bg-primary hover:bg-primary-dark" data-testid="button-create-team">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Team
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create New Team</DialogTitle>
+                  <DialogDescription>
+                    Create a new team to organize your projects and members.
+                  </DialogDescription>
+                </DialogHeader>
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Team Name *</FormLabel>
+                          <FormControl>
+                            <Input 
+                              placeholder="Enter team name" 
+                              {...field} 
+                              data-testid="input-team-name"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    
+                    <FormField
+                      control={form.control}
+                      name="description"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Description</FormLabel>
+                          <FormControl>
+                            <Textarea 
+                              placeholder="Describe the team's purpose and responsibilities" 
+                              {...field} 
+                              data-testid="textarea-team-description"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="flex justify-end space-x-3 pt-4">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsCreateTeamOpen(false)}
+                        data-testid="button-cancel-team"
+                      >
+                        Cancel
+                      </Button>
+                      <Button 
+                        type="submit" 
+                        disabled={createTeamMutation.isPending}
+                        data-testid="button-submit-team"
+                      >
+                        {createTeamMutation.isPending ? "Creating..." : "Create Team"}
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+
+        {/* Teams Section */}
+        <div className="mb-8">
+          <h3 className="text-xl font-medium text-gray-900 mb-4" data-testid="text-teams-section">Teams</h3>
+          
+          {teamsLoading ? (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[...Array(3)].map((_, i) => (
+                <Card key={i} className="animate-pulse">
+                  <CardHeader>
+                    <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                    <div className="h-3 bg-gray-200 rounded w-full"></div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-8 bg-gray-200 rounded w-1/2"></div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : teams.length === 0 ? (
+            <Card>
+              <CardContent className="text-center py-12">
+                <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-teams">No teams yet</h3>
+                <p className="text-gray-600 mb-4">Create your first team to get started</p>
+                <Button onClick={() => setIsCreateTeamOpen(true)} data-testid="button-create-first-team">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Team
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {teams.map((team: any) => (
+                <Card key={team.id} className="hover:shadow-md transition-shadow" data-testid={`card-team-${team.id}`}>
+                  <CardHeader>
+                    <CardTitle className="flex items-center">
+                      <Users className="h-5 w-5 mr-2 text-primary" />
+                      <span data-testid={`text-team-name-${team.id}`}>{team.name}</span>
+                    </CardTitle>
+                    {team.description && (
+                      <CardDescription data-testid={`text-team-description-${team.id}`}>
+                        {team.description}
+                      </CardDescription>
+                    )}
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center text-sm text-gray-600">
+                      <Calendar className="h-4 w-4 mr-2" />
+                      Created {new Date(team.createdAt).toLocaleDateString()}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Team Members Workload */}
+        <div>
+          <h3 className="text-xl font-medium text-gray-900 mb-4" data-testid="text-workload-section">Team Workload</h3>
+          
+          {workloadLoading ? (
+            <Card className="animate-pulse">
+              <CardContent className="py-6">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="flex items-center space-x-4 py-4">
+                    <div className="w-12 h-12 bg-gray-200 rounded-full"></div>
+                    <div className="flex-1">
+                      <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
+                      <div className="h-3 bg-gray-200 rounded w-1/6"></div>
+                    </div>
+                    <div className="w-24 h-2 bg-gray-200 rounded"></div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : workload.length === 0 ? (
+            <Card>
+              <CardContent className="text-center py-12">
+                <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-workload">No workload data available</h3>
+                <p className="text-gray-600">Team members with assigned tasks will appear here</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Team Member Performance</CardTitle>
+                <CardDescription>Individual workload and task completion rates</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {workload.map((member: any) => (
+                    <div 
+                      key={member.userId} 
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
+                      data-testid={`workload-member-${member.userId}`}
+                    >
+                      <div className="flex items-center space-x-4">
+                        <Avatar>
+                          <AvatarImage src={member.user.profileImageUrl} />
+                          <AvatarFallback>
+                            {getInitials(member.user.firstName && member.user.lastName 
+                              ? `${member.user.firstName} ${member.user.lastName}`
+                              : member.user.email || 'U'
+                            )}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="font-medium" data-testid={`text-member-name-${member.userId}`}>
+                            {member.user.firstName && member.user.lastName 
+                              ? `${member.user.firstName} ${member.user.lastName}`
+                              : member.user.email
+                            }
+                          </p>
+                          <div className="flex items-center space-x-2">
+                            <Badge variant="outline" className="text-xs" data-testid={`badge-member-role-${member.userId}`}>
+                              {member.user.role}
+                            </Badge>
+                            {member.user.email && (
+                              <span className="text-xs text-gray-500 flex items-center">
+                                <Mail className="h-3 w-3 mr-1" />
+                                {member.user.email}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center space-x-6">
+                        <div className="text-right">
+                          <p className="text-sm font-medium" data-testid={`text-member-tasks-${member.userId}`}>
+                            {member.completedTasks}/{member.totalTasks} tasks
+                          </p>
+                          <p className="text-xs text-gray-600">
+                            {member.workloadPercentage}% completion rate
+                          </p>
+                        </div>
+                        
+                        <div className="w-24">
+                          <Progress 
+                            value={member.workloadPercentage} 
+                            className="h-2"
+                            data-testid={`progress-member-${member.userId}`}
+                          />
+                        </div>
+                        
+                        <Badge 
+                          variant={member.workloadPercentage >= 80 ? "default" : 
+                                 member.workloadPercentage >= 60 ? "secondary" : "outline"}
+                          data-testid={`badge-performance-${member.userId}`}
+                        >
+                          {member.workloadPercentage >= 80 ? "High" : 
+                           member.workloadPercentage >= 60 ? "Medium" : "Low"}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
