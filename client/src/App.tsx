@@ -7,17 +7,19 @@ import { useAuth } from "@/hooks/useAuth";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Home from "@/pages/home";
+import Dashboard from "@/pages/dashboard";
+import Projects from "@/pages/projects";
+import Tasks from "@/pages/tasks";
+import Reports from "@/pages/reports";
+import Team from "@/pages/team";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 dark:text-gray-300">Loading...</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
       </div>
     );
   }
@@ -27,7 +29,14 @@ function Router() {
       {!isAuthenticated ? (
         <Route path="/" component={Landing} />
       ) : (
-        <Route path="/" component={Home} />
+        <>
+          <Route path="/" component={Dashboard} />
+          <Route path="/home" component={Home} />
+          <Route path="/projects" component={Projects} />
+          <Route path="/tasks" component={Tasks} />
+          <Route path="/reports" component={Reports} />
+          <Route path="/team" component={Team} />
+        </>
       )}
       <Route component={NotFound} />
     </Switch>
