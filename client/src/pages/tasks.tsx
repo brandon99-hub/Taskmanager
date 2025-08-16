@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation, useSearch } from "wouter";
 import Navigation from "@/components/layout/navigation";
 import TaskCard from "@/components/tasks/task-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,15 +10,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Search, Filter, Plus } from "lucide-react";
+import { Search, Filter, Plus, X } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
 export default function Tasks() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const auth = useAuth() as any;
+  const { isAuthenticated, isLoading, user } = auth;
   const { toast } = useToast();
+  const searchParams = useSearch();
+  const [, setLocation] = useLocation();
+  
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
+  const [projectFilter, setProjectFilter] = useState("all");
+
+  // Get project filter from URL params
+  useEffect(() => {
+    const urlParams = new URLSearchParams(searchParams);
+    const projectParam = urlParams.get('project');
+    if (projectParam) {
+      setProjectFilter(projectParam);
+    }
+  }, [searchParams]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -28,15 +43,28 @@ export default function Tasks() {
         variant: "destructive",
       });
       setTimeout(() => {
-        window.location.href = "/api/login";
+        window.location.href = "/login";
       }, 500);
       return;
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  const { data: tasks = [], isLoading: tasksLoading, error } = useQuery({
+  const { data: tasks = [], isLoading: tasksLoading, error } = useQuery<any[]>({
     queryKey: ['/api/tasks'],
     enabled: !!isAuthenticated,
+  });
+
+  const { data: projects = [] } = useQuery<any[]>({
+    queryKey: ['/api/projects'],
+    enabled: !!isAuthenticated,
+  });
+
+  // Role-based task filtering
+  const roleFilteredTasks = tasks.filter((task: any) => {
+    if (user?.role === 'employee') {
+      return task.assignedUserId === user.id;
+    }
+    return true;
   });
 
   useEffect(() => {
@@ -47,7 +75,7 @@ export default function Tasks() {
         variant: "destructive",
       });
       setTimeout(() => {
-        window.location.href = "/api/login";
+        window.location.href = "/login";
       }, 500);
     }
   }, [error, toast]);
@@ -61,16 +89,34 @@ export default function Tasks() {
   }
 
   // Filter tasks based on search and filters
-  const filteredTasks = tasks.filter((task: any) => {
+  const filteredTasks = roleFilteredTasks.filter((task: any) => {
     const matchesSearch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          task.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          task.project?.name.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesStatus = statusFilter === "all" || task.status === statusFilter;
     const matchesPriority = priorityFilter === "all" || task.priority === priorityFilter;
+    const matchesProject = projectFilter === "all" || task.projectId === projectFilter;
     
-    return matchesSearch && matchesStatus && matchesPriority;
+    return matchesSearch && matchesStatus && matchesPriority && matchesProject;
   });
+
+  // Get active filters count
+  const activeFiltersCount = [
+    searchTerm && searchTerm.length > 0,
+    statusFilter !== "all",
+    priorityFilter !== "all", 
+    projectFilter !== "all"
+  ].filter(Boolean).length;
+
+  // Clear all filters
+  const clearFilters = () => {
+    setSearchTerm("");
+    setStatusFilter("all");
+    setPriorityFilter("all");
+    setProjectFilter("all");
+    setLocation('/tasks');
+  };
 
   // Group tasks by status
   const tasksByStatus = {
@@ -109,9 +155,26 @@ export default function Tasks() {
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
           <div>
-            <h2 className="text-3xl font-medium text-gray-900 mb-2" data-testid="text-title">Tasks</h2>
-            <p className="text-gray-600" data-testid="text-subtitle">Track and manage all your assigned tasks</p>
+            <h2 className="text-3xl font-medium text-gray-900 mb-2" data-testid="text-title">
+              {user?.role === 'employee' ? 'My Milestones' : 'All Milestones'}
+            </h2>
+            <p className="text-gray-600" data-testid="text-subtitle">
+              {user?.role === 'employee' 
+                 ? 'Track and manage your assigned milestones' 
+                : 'Track and manage all team milestones'
+              }
+            </p>
           </div>
+          {activeFiltersCount > 0 && (
+            <Button 
+              variant="outline" 
+              onClick={clearFilters}
+              className="flex items-center space-x-2"
+            >
+              <X className="h-4 w-4" />
+              <span>Clear Filters ({activeFiltersCount})</span>
+            </Button>
+          )}
         </div>
 
         {/* Filters */}
@@ -120,8 +183,8 @@ export default function Tasks() {
             <CardTitle className="text-lg">Filters & Search</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid md:grid-cols-4 gap-4">
-              <div className="relative">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="relative lg:col-span-2">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                 <Input
                   placeholder="Search tasks..."
@@ -158,16 +221,37 @@ export default function Tasks() {
                 </SelectContent>
               </Select>
 
-              <div className="flex items-center space-x-2">
-                <Badge variant="outline" data-testid="badge-task-count">
-                  {filteredTasks.length} tasks
-                </Badge>
+              <div className="flex flex-col space-y-2 lg:space-y-0">
+                <Select value={projectFilter} onValueChange={setProjectFilter}>
+                  <SelectTrigger data-testid="select-project">
+                    <SelectValue placeholder="Filter by project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Projects</SelectItem>
+                    {projects.map((project: any) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                <div className="flex items-center justify-between">
+                  <Badge variant="outline" data-testid="badge-task-count">
+                    {filteredTasks.length} milestones
+                  </Badge>
+                  {projectFilter !== "all" && (
+                    <Badge variant="secondary" className="text-xs">
+                      Project filtered
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Tasks Content */}
+        {/* Milestones Content */}
         {tasksLoading ? (
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[...Array(4)].map((_, i) => (
@@ -189,14 +273,14 @@ export default function Tasks() {
         ) : tasks.length === 0 ? (
           <Card>
             <CardContent className="text-center py-12">
-              <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-tasks">No tasks yet</h3>
-              <p className="text-gray-600 mb-4">Tasks will appear here once they are assigned to you</p>
+              <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-tasks">No milestones yet</h3>
+              <p className="text-gray-600 mb-4">Milestones will appear here once they are assigned to you</p>
             </CardContent>
           </Card>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
             {Object.entries(tasksByStatus).map(([status, statusTasks]) => (
-              <div key={status} className={`rounded-lg p-4 ${getStatusColor(status)}`}>
+              <div key={status} className={`rounded-lg p-4 ${getStatusColor(status)} min-h-[200px]`}>
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-medium text-gray-900" data-testid={`text-status-${status}`}>
                     {getStatusTitle(status)}
@@ -213,7 +297,7 @@ export default function Tasks() {
                   
                   {statusTasks.length === 0 && (
                     <div className="text-center py-8 text-gray-500" data-testid={`text-empty-${status}`}>
-                      No {getStatusTitle(status).toLowerCase()} tasks
+                      No {getStatusTitle(status).toLowerCase()} milestones
                     </div>
                   )}
                 </div>

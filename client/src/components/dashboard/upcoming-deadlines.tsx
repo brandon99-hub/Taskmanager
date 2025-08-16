@@ -1,12 +1,35 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Calendar } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 
 export default function UpcomingDeadlines() {
-  const { data: upcomingTasks = [], isLoading } = useQuery({
+  const [currentPage, setCurrentPage] = useState(0);
+  const itemsPerPage = 5;
+
+  const { data: upcomingTasks = [], isLoading } = useQuery<any[]>({
     queryKey: ['/api/dashboard/upcoming-tasks'],
   });
+
+  // Pagination logic
+  const totalPages = Math.ceil(upcomingTasks.length / itemsPerPage);
+  const startIndex = currentPage * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedTasks = upcomingTasks.slice(startIndex, endIndex);
+
+  const goToNextPage = () => {
+    if (currentPage < totalPages - 1) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+
+  const goToPrevPage = () => {
+    if (currentPage > 0) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
 
   const getUrgencyColor = (dueDate: string) => {
     const now = new Date();
@@ -43,7 +66,17 @@ export default function UpcomingDeadlines() {
     return (
       <Card className="bg-surface shadow-sm border border-gray-200">
         <CardHeader>
-          <CardTitle className="text-lg">Upcoming Deadlines</CardTitle>
+          <CardTitle className="text-lg flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Calendar className="h-5 w-5" />
+              <span>Upcoming Milestones</span>
+            </div>
+            {totalPages > 1 && (
+              <div className="flex items-center space-x-1 text-sm text-gray-500">
+                <span>{currentPage + 1} of {totalPages}</span>
+              </div>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -67,20 +100,20 @@ export default function UpcomingDeadlines() {
   return (
     <Card className="bg-surface shadow-sm border border-gray-200" data-testid="upcoming-deadlines">
       <CardHeader>
-        <CardTitle className="text-lg flex items-center" data-testid="text-deadlines-title">
+          <CardTitle className="text-lg flex items-center" data-testid="text-deadlines-title">
           <Calendar className="h-5 w-5 mr-2" />
-          Upcoming Deadlines
+          Upcoming Milestone Deadlines
         </CardTitle>
       </CardHeader>
       <CardContent>
         {upcomingTasks.length === 0 ? (
           <div className="text-center py-8 text-gray-500" data-testid="text-no-deadlines">
             <Calendar className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p>No upcoming deadlines</p>
+            <p>No upcoming milestone deadlines</p>
           </div>
         ) : (
           <div className="space-y-4">
-            {upcomingTasks.slice(0, 5).map((task: any) => (
+            {paginatedTasks.map((task: any) => (
               <div 
                 key={task.id} 
                 className={`flex items-center space-x-3 p-3 rounded-lg border ${getUrgencyColor(task.dueDate)}`}
@@ -110,11 +143,33 @@ export default function UpcomingDeadlines() {
               </div>
             ))}
             
-            {upcomingTasks.length > 5 && (
-              <div className="text-center pt-2">
-                <Badge variant="outline" data-testid="badge-more-deadlines">
-                  +{upcomingTasks.length - 5} more deadlines
-                </Badge>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={goToPrevPage}
+                  disabled={currentPage === 0}
+                  className="flex items-center space-x-1"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  <span>Previous</span>
+                </Button>
+                
+                <span className="text-sm text-gray-500">
+                  {currentPage + 1} of {totalPages} pages
+                </span>
+                
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={goToNextPage}
+                  disabled={currentPage >= totalPages - 1}
+                  className="flex items-center space-x-1"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               </div>
             )}
           </div>

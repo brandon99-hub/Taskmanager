@@ -22,14 +22,17 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 const createTeamSchema = z.object({
   name: z.string().min(1, "Team name is required").max(100, "Team name too long"),
   description: z.string().optional(),
+  members: z.array(z.string()).optional(),
 });
 
 type CreateTeamData = z.infer<typeof createTeamSchema>;
 
 export default function Team() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const auth = useAuth() as any;
+  const { user, isAuthenticated, isLoading } = auth;
   const { toast } = useToast();
   const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
+  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -46,12 +49,24 @@ export default function Team() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  const { data: teams = [], isLoading: teamsLoading, error: teamsError } = useQuery({
+  const { data: teams = [], isLoading: teamsLoading, error: teamsError } = useQuery<any[]>({
     queryKey: ['/api/teams'],
     enabled: !!isAuthenticated,
   });
 
-  const { data: workload = [], isLoading: workloadLoading, error: workloadError } = useQuery({
+  const [searchTerm, setSearchTerm] = useState("");
+  const { data: employees = [], isLoading: employeesLoading } = useQuery<any[]>({
+    queryKey: ['/api/users', 'employee', searchTerm],
+    queryFn: async () => {
+      const params = new URLSearchParams({ role: 'employee', q: searchTerm, limit: '20' });
+      const res = await fetch(`/api/users?${params}`, { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) throw new Error('Failed to fetch users');
+      return res.json();
+    },
+    enabled: isCreateTeamOpen && !!isAuthenticated,
+  });
+
+  const { data: workload = [], isLoading: workloadLoading, error: workloadError } = useQuery<any[]>({
     queryKey: ['/api/dashboard/workload'],
     enabled: !!isAuthenticated,
   });
@@ -66,7 +81,7 @@ export default function Team() {
           variant: "destructive",
         });
         setTimeout(() => {
-          window.location.href = "/api/login";
+          window.location.href = "/login";
         }, 500);
       }
     });
@@ -82,13 +97,15 @@ export default function Team() {
 
   const createTeamMutation = useMutation({
     mutationFn: async (data: CreateTeamData) => {
-      const response = await apiRequest("POST", "/api/teams", data);
+      const payload = { ...data, members: selectedMembers };
+      const response = await apiRequest("POST", "/api/teams", payload);
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/teams"] });
       setIsCreateTeamOpen(false);
       form.reset();
+      setSelectedMembers([]);
       toast({
         title: "Success",
         description: "Team created successfully",
@@ -102,7 +119,7 @@ export default function Team() {
           variant: "destructive",
         });
         setTimeout(() => {
-          window.location.href = "/api/login";
+          window.location.href = "/login";
         }, 500);
         return;
       }
@@ -143,79 +160,132 @@ export default function Team() {
             <p className="text-gray-600" data-testid="text-subtitle">Manage teams and monitor member workloads</p>
           </div>
           <div className="flex space-x-3 mt-4 md:mt-0">
-            <Dialog open={isCreateTeamOpen} onOpenChange={setIsCreateTeamOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-primary hover:bg-primary-dark" data-testid="button-create-team">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create Team
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create New Team</DialogTitle>
-                  <DialogDescription>
-                    Create a new team to organize your projects and members.
-                  </DialogDescription>
-                </DialogHeader>
-                <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                    <FormField
-                      control={form.control}
-                      name="name"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Team Name *</FormLabel>
-                          <FormControl>
-                            <Input 
-                              placeholder="Enter team name" 
-                              {...field} 
-                              data-testid="input-team-name"
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    
-                    <FormField
-                      control={form.control}
-                      name="description"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Description</FormLabel>
-                          <FormControl>
-                            <Textarea 
-                              placeholder="Describe the team's purpose and responsibilities" 
-                              {...field} 
-                              data-testid="textarea-team-description"
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+            {user?.role !== 'employee' ? (
+              <Dialog open={isCreateTeamOpen} onOpenChange={setIsCreateTeamOpen}>
+                <DialogTrigger asChild>
+                  <Button className="bg-primary hover:bg-primary-dark" data-testid="button-create-team">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Team
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Create New Team</DialogTitle>
+                    <DialogDescription>
+                      Create a new team to organize your projects and members.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Team Name *</FormLabel>
+                            <FormControl>
+                              <Input 
+                                placeholder="Enter team name" 
+                                {...field} 
+                                data-testid="input-team-name"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      
+                      <FormField
+                        control={form.control}
+                        name="description"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Description</FormLabel>
+                            <FormControl>
+                              <Textarea 
+                                placeholder="Describe the team's purpose and responsibilities" 
+                                {...field} 
+                                data-testid="textarea-team-description"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                    <div className="flex justify-end space-x-3 pt-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setIsCreateTeamOpen(false)}
-                        data-testid="button-cancel-team"
-                      >
-                        Cancel
-                      </Button>
-                      <Button 
-                        type="submit" 
-                        disabled={createTeamMutation.isPending}
-                        data-testid="button-submit-team"
-                      >
-                        {createTeamMutation.isPending ? "Creating..." : "Create Team"}
-                      </Button>
-                    </div>
-                  </form>
-                </Form>
-              </DialogContent>
-            </Dialog>
+                      {/* Members Selector (only for managers/admins) */}
+                      <div className="space-y-2">
+                        <FormLabel>Members</FormLabel>
+                        <Input 
+                          placeholder="Search employees by name or email"
+                          value={searchTerm}
+                          onChange={(e)=> setSearchTerm(e.target.value)}
+                        />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-auto border rounded-md p-2">
+                          {employeesLoading ? (
+                            <div className="text-sm text-gray-500">Loading employees…</div>
+                          ) : employees.length === 0 ? (
+                            <div className="text-sm text-gray-500">No employees found</div>
+                          ) : (
+                            employees.map((emp: any) => {
+                              const checked = selectedMembers.includes(emp.id);
+                              return (
+                                <label key={emp.id} className="flex items-center space-x-2 p-2 border rounded-md cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      setSelectedMembers((prev) => {
+                                        if (e.target.checked) return [...prev, emp.id];
+                                        return prev.filter((id) => id !== emp.id);
+                                      });
+                                    }}
+                                  />
+                                  <span className="text-sm">
+                                    {emp.firstName && emp.lastName ? `${emp.firstName} ${emp.lastName}` : emp.email}
+                                  </span>
+                                </label>
+                              );
+                            })
+                          )}
+                        </div>
+                        {selectedMembers.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {selectedMembers.map((id) => {
+                              const emp = employees.find((e: any) => e.id === id);
+                              const label = emp ? (emp.firstName && emp.lastName ? `${emp.firstName} ${emp.lastName}` : emp.email) : id;
+                              return (
+                                <Badge key={id} variant="secondary" className="text-xs">
+                                  {label}
+                                </Badge>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex justify-end space-x-3 pt-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setIsCreateTeamOpen(false)}
+                          data-testid="button-cancel-team"
+                        >
+                          Cancel
+                        </Button>
+                        <Button 
+                          type="submit" 
+                          disabled={createTeamMutation.isPending}
+                          data-testid="button-submit-team"
+                        >
+                          {createTeamMutation.isPending ? "Creating..." : "Create Team"}
+                        </Button>
+                      </div>
+                    </form>
+                  </Form>
+                </DialogContent>
+              </Dialog>
+            ) : null}
           </div>
         </div>
 
@@ -242,11 +312,7 @@ export default function Team() {
               <CardContent className="text-center py-12">
                 <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-teams">No teams yet</h3>
-                <p className="text-gray-600 mb-4">Create your first team to get started</p>
-                <Button onClick={() => setIsCreateTeamOpen(true)} data-testid="button-create-first-team">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create Team
-                </Button>
+                <p className="text-gray-600">You are not currently a member of any team.</p>
               </CardContent>
             </Card>
           ) : (
@@ -277,6 +343,7 @@ export default function Team() {
         </div>
 
         {/* Team Members Workload */}
+        {((user?.role !== 'employee') || teams.length > 0) && (
         <div>
           <h3 className="text-xl font-medium text-gray-900 mb-4" data-testid="text-workload-section">Team Workload</h3>
           
@@ -382,6 +449,7 @@ export default function Team() {
             </Card>
           )}
         </div>
+        )}
       </div>
     </div>
   );

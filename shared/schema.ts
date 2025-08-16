@@ -25,14 +25,17 @@ export const sessions = pgTable(
   (table) => [index("IDX_session_expire").on(table.expire)]
 );
 
-// User storage table (required for Replit Auth)
+// User storage table (updated for local auth)
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email").unique(),
+  email: varchar("email").unique().notNull(),
+  password: varchar("password").notNull(), // Added for local auth
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
   role: varchar("role", { length: 20 }).notNull().default("employee"),
+  isActive: boolean("is_active").notNull().default(true), // Added for account management
+  lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -58,6 +61,14 @@ export const taskStatusEnum = pgEnum("task_status", [
   "in_progress",
   "review",
   "done",
+]);
+
+// Billing lifecycle for milestones
+export const billingStatusEnum = pgEnum("billing_status", [
+  "none",       // default, not actionable
+  "to_send",    // milestone completed, invoice should be sent
+  "sent",       // invoice sent
+  "paid",       // payment received
 ]);
 
 // Teams table
@@ -96,10 +107,15 @@ export const tasks = pgTable("tasks", {
   dueDate: timestamp("due_date"),
   estimatedHours: integer("estimated_hours"),
   actualHours: integer("actual_hours").default(0),
+  // Financials / assignment additions for milestones
+  feeAmount: decimal("fee_amount", { precision: 12, scale: 2 }),
+  billingStatus: billingStatusEnum("billing_status").notNull().default("none"),
   projectId: varchar("project_id").references(() => projects.id).notNull(),
   assignedUserId: varchar("assigned_user_id").references(() => users.id),
+  assignedTeamId: varchar("assigned_team_id").references(() => teams.id),
   createdById: varchar("created_by_id").references(() => users.id).notNull(),
   completedAt: timestamp("completed_at"),
+  progressPercent: integer("progress_percent").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -238,10 +254,26 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({
   email: true,
+  password: true,
   firstName: true,
   lastName: true,
   profileImageUrl: true,
   role: true,
+});
+
+// Schema for registration (includes password)
+export const registerUserSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  firstName: z.string().min(1, "First name is required"),
+  lastName: z.string().min(1, "Last name is required"),
+  role: z.enum(["admin", "manager", "employee"]).default("employee"),
+});
+
+// Schema for login
+export const loginUserSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(1, "Password is required"),
 });
 
 export const insertTeamSchema = createInsertSchema(teams).omit({
@@ -310,3 +342,6 @@ export type InsertTaskDependency = z.infer<typeof insertTaskDependencySchema>;
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
+export type RegisterUser = z.infer<typeof registerUserSchema>;
+export type LoginUser = z.infer<typeof loginUserSchema>;

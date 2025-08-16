@@ -1,5 +1,29 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+// CSRF token management
+let csrfToken: string | null = null;
+
+async function getCSRFToken(): Promise<string | null> {
+  if (csrfToken) return csrfToken;
+  
+  try {
+    const response = await fetch('/api/csrf-token', {
+      method: 'GET',
+      credentials: 'include',
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      csrfToken = data.csrfToken;
+      return csrfToken;
+    }
+  } catch (error) {
+    console.warn('Failed to get CSRF token:', error);
+  }
+  
+  return null;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
@@ -12,12 +36,48 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const headers: Record<string, string> = {};
+  
+  // Add Content-Type for requests with data
+  if (data) {
+    headers["Content-Type"] = "application/json";
+  }
+  
+  // Add CSRF token for state-changing operations
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const token = await getCSRFToken();
+    if (token) {
+      headers["X-CSRF-Token"] = token;
+    }
+  }
+
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
+
+  // Handle CSRF token errors
+  if (res.status === 403) {
+    const errorText = await res.text();
+    if (errorText.includes('CSRF') || errorText.includes('csrf')) {
+      // Clear cached token and retry once
+      csrfToken = null;
+      const newToken = await getCSRFToken();
+      if (newToken && headers["X-CSRF-Token"] !== newToken) {
+        headers["X-CSRF-Token"] = newToken;
+        const retryRes = await fetch(url, {
+          method,
+          headers,
+          body: data ? JSON.stringify(data) : undefined,
+          credentials: "include",
+        });
+        await throwIfResNotOk(retryRes);
+        return retryRes;
+      }
+    }
+  }
 
   await throwIfResNotOk(res);
   return res;
@@ -31,6 +91,10 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      cache: "no-store",
+      headers: {
+        "cache-control": "no-cache",
+      },
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

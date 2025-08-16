@@ -4,7 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { LogOut, User, Settings, Bell } from "lucide-react";
 
 export default function Home() {
-  const { user } = useAuth();
+  const auth = useAuth() as any;
+  const { user } = auth;
 
   return (
     <div className="min-h-screen bg-background-page">
@@ -101,7 +102,7 @@ export default function Home() {
 
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
             <CardHeader>
-              <CardTitle className="text-lg">Tasks</CardTitle>
+              <CardTitle className="text-lg">Milestones</CardTitle>
               <CardDescription>
                 View and manage your assigned tasks
               </CardDescription>
@@ -112,7 +113,7 @@ export default function Home() {
                 onClick={() => window.location.href = '/tasks'}
                 data-testid="button-tasks"
               >
-                View Tasks
+                View Milestones
               </Button>
             </CardContent>
           </Card>

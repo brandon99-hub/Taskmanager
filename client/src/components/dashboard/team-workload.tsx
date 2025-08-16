@@ -1,13 +1,31 @@
 import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { useScreenSize } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Users } from "lucide-react";
+import { Users, Trophy, Star } from "lucide-react";
 
 export default function TeamWorkload() {
-  const { data: workload = [], isLoading } = useQuery({
+  const auth = useAuth() as any;
+  const { user } = auth;
+  const { isMobile, isTablet } = useScreenSize();
+  const { data: workload = [], isLoading } = useQuery<any[]>({
     queryKey: ['/api/dashboard/workload'],
+  });
+
+  // For admin/manager: get best performing team
+  const { data: bestTeam, isLoading: bestTeamLoading } = useQuery<{
+    teamId: string;
+    team: { id: string; name: string; description?: string };
+    completionRate: number;
+    onTimeDeliveryRate: number;
+    overallScore: number;
+    members: any[];
+  } | null>({
+    queryKey: ['/api/dashboard/best-team'],
+    enabled: user?.role !== 'employee',
   });
 
   const getWorkloadColor = (percentage: number) => {
@@ -56,6 +74,80 @@ export default function TeamWorkload() {
     );
   }
 
+  if (user?.role === 'employee' && workload.length === 0) {
+    return null;
+  }
+
+  // For admin/manager, show best performing team if available
+  if (user?.role !== 'employee' && bestTeam && !bestTeamLoading) {
+    return (
+      <Card className="bg-surface shadow-sm border border-gray-200" data-testid="best-team">
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center justify-between" data-testid="text-best-team-title">
+            <div className="flex items-center">
+              <Trophy className="h-5 w-5 mr-2 text-amber-500" />
+              Best Performing Team
+            </div>
+            <Badge variant="outline" className="flex items-center space-x-1">
+              <Star className="h-3 w-3" />
+              <span>{bestTeam.overallScore}% score</span>
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
+            <h3 className="font-medium text-amber-900">{bestTeam.team.name}</h3>
+            <div className="flex items-center justify-between mt-2 text-sm">
+              <span className="text-amber-700">Completion: {bestTeam.completionRate}%</span>
+              <span className="text-amber-700">On-Time: {bestTeam.onTimeDeliveryRate}%</span>
+            </div>
+          </div>
+          
+                      <div className="space-y-3">
+              <h4 className="text-sm font-medium text-gray-900">Top Team Members</h4>
+              {bestTeam.members.slice(0, isMobile ? 3 : 4).map((member) => (
+                <div key={member.userId} className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
+                    <Avatar className={`${isMobile ? 'w-6 h-6' : 'w-8 h-8'} flex-shrink-0`}>
+                      <AvatarImage src={member.user.profileImageUrl} />
+                      <AvatarFallback className="text-xs">
+                        {getInitials(member.user.firstName && member.user.lastName 
+                          ? `${member.user.firstName} ${member.user.lastName}`
+                          : member.user.email || 'U'
+                        )}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <p className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium text-gray-900 truncate`}>
+                        {member.user.firstName && member.user.lastName 
+                          ? `${member.user.firstName} ${member.user.lastName}`
+                          : member.user.email
+                        }
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        {member.completedTasks}/{member.totalTasks} tasks
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2 flex-shrink-0">
+                    <div className={`${isMobile ? 'w-12' : 'w-16'} bg-gray-200 rounded-full h-2`}>
+                      <div 
+                        className={`h-2 rounded-full ${getWorkloadColor(member.workloadPercentage)}`}
+                        style={{ width: `${Math.min(member.workloadPercentage, 100)}%` }}
+                      ></div>
+                    </div>
+                    <span className={`text-xs text-gray-600 ${isMobile ? 'w-6' : 'w-8'}`}>
+                      {member.workloadPercentage}%
+                    </span>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="bg-surface shadow-sm border border-gray-200" data-testid="team-workload">
       <CardHeader>
@@ -71,18 +163,18 @@ export default function TeamWorkload() {
             <p>No workload data available</p>
           </div>
         ) : (
-          <div className="space-y-4">
-            {workload.slice(0, 6).map((member: any) => {
+          <div className={`space-y-${isMobile ? '3' : '4'}`}>
+            {workload.slice(0, isMobile ? 4 : 6).map((member: any) => {
               const workloadStatus = getWorkloadStatus(member.workloadPercentage);
               
               return (
                 <div 
                   key={member.userId} 
-                  className="flex items-center justify-between"
+                  className={`flex items-center ${isMobile ? 'flex-col space-y-2' : 'justify-between'}`}
                   data-testid={`workload-member-${member.userId}`}
                 >
-                  <div className="flex items-center space-x-3">
-                    <Avatar className="w-8 h-8">
+                  <div className={`flex items-center space-x-2 sm:space-x-3 ${isMobile ? 'w-full' : 'min-w-0 flex-1'}`}>
+                    <Avatar className={`${isMobile ? 'w-6 h-6' : 'w-8 h-8'} flex-shrink-0`}>
                       <AvatarImage src={member.user.profileImageUrl} />
                       <AvatarFallback className="text-xs">
                         {getInitials(member.user.firstName && member.user.lastName 
@@ -91,8 +183,8 @@ export default function TeamWorkload() {
                         )}
                       </AvatarFallback>
                     </Avatar>
-                    <div>
-                      <p className="text-sm font-medium text-gray-900" data-testid={`text-member-name-${member.userId}`}>
+                    <div className="min-w-0 flex-1">
+                      <p className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium text-gray-900 truncate`} data-testid={`text-member-name-${member.userId}`}>
                         {member.user.firstName && member.user.lastName 
                           ? `${member.user.firstName} ${member.user.lastName}`
                           : member.user.email
@@ -102,34 +194,45 @@ export default function TeamWorkload() {
                         {member.user.role}
                       </p>
                     </div>
+                    {isMobile && (
+                      <Badge 
+                        variant={workloadStatus.variant}
+                        className="text-xs flex-shrink-0"
+                        data-testid={`badge-workload-status-${member.userId}`}
+                      >
+                        {workloadStatus.label}
+                      </Badge>
+                    )}
                   </div>
                   
-                  <div className="flex items-center space-x-3">
-                    <div className="text-right">
+                  <div className={`flex items-center ${isMobile ? 'w-full justify-between' : 'space-x-3'}`}>
+                    <div className={`${isMobile ? 'text-left' : 'text-right'}`}>
                       <p className="text-xs text-gray-600" data-testid={`text-member-tasks-${member.userId}`}>
                         {member.completedTasks}/{member.totalTasks} tasks
                       </p>
                     </div>
                     
                     <div className="flex items-center space-x-2">
-                      <div className="w-16 bg-gray-200 rounded-full h-2">
+                      <div className={`${isMobile ? 'w-20' : 'w-16'} bg-gray-200 rounded-full h-2`}>
                         <div 
                           className={`h-2 rounded-full ${getWorkloadColor(member.workloadPercentage)}`}
                           style={{ width: `${Math.min(member.workloadPercentage, 100)}%` }}
                         ></div>
                       </div>
-                      <span className="text-xs text-gray-600 w-8" data-testid={`text-member-percentage-${member.userId}`}>
+                      <span className={`text-xs text-gray-600 ${isMobile ? 'w-6' : 'w-8'}`} data-testid={`text-member-percentage-${member.userId}`}>
                         {member.workloadPercentage}%
                       </span>
                     </div>
                     
-                    <Badge 
-                      variant={workloadStatus.variant}
-                      className="text-xs"
-                      data-testid={`badge-workload-status-${member.userId}`}
-                    >
-                      {workloadStatus.label}
-                    </Badge>
+                    {!isMobile && (
+                      <Badge 
+                        variant={workloadStatus.variant}
+                        className="text-xs"
+                        data-testid={`badge-workload-status-${member.userId}`}
+                      >
+                        {workloadStatus.label}
+                      </Badge>
+                    )}
                   </div>
                 </div>
               );

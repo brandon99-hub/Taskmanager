@@ -6,15 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { BarChart3, Bell, Home, FolderOpen, CheckSquare, FileText, Users, LogOut, Menu, User } from "lucide-react";
+import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useScreenSize } from "@/hooks/use-mobile";
+import { BarChart3, Bell, Home, FolderOpen, CheckSquare, FileText, Users, LogOut, Menu, User, X } from "lucide-react";
 
 export default function Navigation() {
-  const { user } = useAuth();
+  const auth = useAuth() as any;
+  const { user } = auth;
   const [location] = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { isMobile, isTablet } = useScreenSize();
 
-  const { data: notifications = [] } = useQuery({
+  const { data: notifications = [] } = useQuery<any[]>({
     queryKey: ['/api/notifications'],
   });
 
@@ -23,8 +26,8 @@ export default function Navigation() {
   const navigationItems = [
     { path: "/", label: "Dashboard", icon: BarChart3 },
     { path: "/projects", label: "Projects", icon: FolderOpen },
-    { path: "/tasks", label: "Tasks", icon: CheckSquare },
-    { path: "/reports", label: "Reports", icon: FileText },
+    { path: "/tasks", label: "Milestones", icon: CheckSquare },
+    ...(user?.role !== 'employee' ? [{ path: "/reports", label: "Reports", icon: FileText }] : []),
     { path: "/team", label: "Team", icon: Users },
   ];
 
@@ -57,12 +60,14 @@ export default function Navigation() {
 
   return (
     <nav className="bg-surface shadow-sm border-b border-gray-200 sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          <div className="flex items-center">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex justify-between h-14 sm:h-16">
+          <div className="flex items-center min-w-0 flex-1">
             <div className="flex-shrink-0 flex items-center">
-              <BarChart3 className="h-8 w-8 text-primary mr-3" />
-              <h1 className="text-xl font-medium text-gray-900" data-testid="text-app-title">AppKings Dashboard</h1>
+              <BarChart3 className="h-6 w-6 sm:h-8 sm:w-8 text-primary mr-2 sm:mr-3" />
+              <h1 className="text-lg sm:text-xl font-medium text-gray-900 truncate" data-testid="text-app-title">
+                {isMobile ? "AppKings" : "AppKings Dashboard"}
+              </h1>
             </div>
             
             {/* Desktop Navigation */}
@@ -89,19 +94,19 @@ export default function Navigation() {
             </div>
           </div>
           
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4">
             {/* Notifications */}
             <Button 
               variant="ghost" 
-              size="sm" 
-              className="relative text-gray-600 hover:text-gray-900"
+              size={isMobile ? "sm" : "sm"}
+              className="relative text-gray-600 hover:text-gray-900 p-2"
               data-testid="button-notifications"
             >
-              <Bell className="h-5 w-5" />
+              <Bell className="h-4 w-4 sm:h-5 sm:w-5" />
               {unreadCount > 0 && (
                 <Badge 
                   variant="destructive" 
-                  className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center text-xs p-0 min-w-0"
+                  className="absolute -top-1 -right-1 h-4 w-4 sm:h-5 sm:w-5 flex items-center justify-center text-xs p-0 min-w-0"
                   data-testid="badge-notification-count"
                 >
                   {unreadCount > 9 ? '9+' : unreadCount}
@@ -110,9 +115,9 @@ export default function Navigation() {
             </Button>
             
             {/* User Profile */}
-            <div className="flex items-center space-x-3">
-              <div className="hidden sm:block text-right">
-                <p className="text-sm text-gray-700" data-testid="text-user-name">
+            <div className="flex items-center space-x-2 sm:space-x-3">
+              <div className="hidden lg:block text-right">
+                <p className="text-sm text-gray-700 truncate max-w-32" data-testid="text-user-name">
                   {user?.firstName && user?.lastName 
                     ? `${user.firstName} ${user.lastName}`
                     : user?.email
@@ -125,10 +130,10 @@ export default function Navigation() {
               
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="relative h-8 w-8 rounded-full" data-testid="button-user-menu">
-                    <Avatar className="h-8 w-8">
+                  <Button variant="ghost" className="relative h-7 w-7 sm:h-8 sm:w-8 rounded-full" data-testid="button-user-menu">
+                    <Avatar className="h-7 w-7 sm:h-8 sm:w-8">
                       <AvatarImage src={user?.profileImageUrl} />
-                      <AvatarFallback>
+                      <AvatarFallback className="text-xs">
                         {getInitials(user?.firstName && user?.lastName 
                           ? `${user.firstName} ${user.lastName}`
                           : user?.email || 'U'
@@ -137,7 +142,19 @@ export default function Navigation() {
                     </Avatar>
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent align="end" className="w-56">
+                  {/* Show user info on mobile/tablet since it's hidden in header */}
+                  <div className="lg:hidden px-3 py-2 border-b">
+                    <p className="text-sm font-medium text-gray-900 truncate" data-testid="mobile-user-name">
+                      {user?.firstName && user?.lastName 
+                        ? `${user.firstName} ${user.lastName}`
+                        : user?.email
+                      }
+                    </p>
+                    <Badge variant="outline" className="text-xs mt-1" data-testid="mobile-user-role">
+                      {user?.role || 'Employee'}
+                    </Badge>
+                  </div>
                   <Link href="/home">
                     <DropdownMenuItem data-testid="menu-profile">
                       <User className="mr-2 h-4 w-4" />
@@ -146,7 +163,18 @@ export default function Navigation() {
                   </Link>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem 
-                    onClick={() => window.location.href = '/api/logout'}
+                    onClick={async () => {
+                      try {
+                        await fetch('/api/auth/logout', { 
+                          method: 'POST', 
+                          credentials: 'include' 
+                        });
+                        window.location.href = '/login';
+                      } catch (error) {
+                        console.error('Logout error:', error);
+                        window.location.href = '/login';
+                      }
+                    }}
                     data-testid="menu-logout"
                   >
                     <LogOut className="mr-2 h-4 w-4" />
@@ -160,13 +188,19 @@ export default function Navigation() {
             <div className="md:hidden">
               <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
                 <SheetTrigger asChild>
-                  <Button variant="ghost" size="sm" data-testid="button-mobile-menu">
+                  <Button variant="ghost" size="sm" className="p-2" data-testid="button-mobile-menu">
                     <Menu className="h-5 w-5" />
                   </Button>
                 </SheetTrigger>
-                <SheetContent side="right" className="w-64">
+                <SheetContent side="right" className="w-72 sm:w-80">
+                  <SheetHeader className="text-left pb-4">
+                    <SheetTitle className="flex items-center">
+                      <BarChart3 className="h-6 w-6 text-primary mr-2" />
+                      AppKings Dashboard
+                    </SheetTitle>
+                  </SheetHeader>
                   <div className="py-4">
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                       <NavContent />
                     </div>
                   </div>

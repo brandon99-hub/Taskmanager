@@ -1,27 +1,65 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { useScreenSize } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import PriorityBadge from "@/components/ui/priority-badge";
-import { Filter, Search } from "lucide-react";
+import { Filter, Search, ExternalLink, Briefcase, ClipboardList, Zap, Eye, CheckCircle, AlertTriangle, ChevronRight, Calendar, User } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { useLocation } from "wouter";
 
 const statusColumns = [
-  { id: 'todo', title: 'To Do', color: 'bg-gray-50' },
-  { id: 'in_progress', title: 'In Progress', color: 'bg-blue-50' },
-  { id: 'review', title: 'Review', color: 'bg-yellow-50' },
-  { id: 'done', title: 'Done', color: 'bg-green-50' }
+  { 
+    id: 'overdue', 
+    title: 'Overdue', 
+    mobileTitle: 'Overdue',
+    color: 'bg-red-50', 
+    icon: AlertTriangle 
+  },
+  { 
+    id: 'highPriorityTodo', 
+    title: 'High Priority Todo', 
+    mobileTitle: 'Priority',
+    color: 'bg-orange-50', 
+    icon: Zap 
+  },
+  { 
+    id: 'review', 
+    title: 'Review', 
+    mobileTitle: 'Review',
+    color: 'bg-blue-50', 
+    icon: Eye 
+  },
+  { 
+    id: 'recentlyDone', 
+    title: 'Recently Done', 
+    mobileTitle: 'Done',
+    color: 'bg-green-50', 
+    icon: CheckCircle 
+  }
 ];
 
 export default function KanbanBoard() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const currentUser = user as any;
+  const [, setLocation] = useLocation();
+  const { isMobile, isTablet } = useScreenSize();
 
-  const { data: tasks = [], isLoading } = useQuery({
-    queryKey: ['/api/tasks'],
+  // Enhanced kanban task fetching
+  const { data: kanbanTasks, isLoading } = useQuery<{
+    overdue: any[];
+    review: any[];
+    recentlyDone: any[];
+    highPriorityTodo: any[];
+  }>({
+    queryKey: ['/api/dashboard/kanban-tasks'],
   });
 
   const updateTaskMutation = useMutation({
@@ -32,9 +70,11 @@ export default function KanbanBoard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/metrics"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kanban-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       toast({
         title: "Success",
-        description: "Task status updated successfully",
+        description: "Milestone status updated successfully",
       });
     },
     onError: (error) => {
@@ -45,7 +85,7 @@ export default function KanbanBoard() {
           variant: "destructive",
         });
         setTimeout(() => {
-          window.location.href = "/api/login";
+          window.location.href = "/login";
         }, 500);
         return;
       }
@@ -66,15 +106,23 @@ export default function KanbanBoard() {
   };
 
   const tasksByStatus = statusColumns.reduce((acc, column) => {
-    acc[column.id] = tasks.filter((task: any) => task.status === column.id);
+    acc[column.id] = kanbanTasks?.[column.id as keyof typeof kanbanTasks] || [];
     return acc;
   }, {} as Record<string, any[]>);
+
+  // Get board title based on user role
+  const getBoardTitle = () => {
+    if (currentUser?.role === 'employee') {
+      return 'My Critical Milestones';
+    }
+    return 'Critical Milestone Board';
+  };
 
   if (isLoading) {
     return (
       <Card className="bg-surface shadow-sm border border-gray-200">
         <CardHeader>
-          <CardTitle className="text-lg">Project Board</CardTitle>
+          <CardTitle className="text-lg">{getBoardTitle()}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -98,60 +146,144 @@ export default function KanbanBoard() {
     <Card className="bg-surface shadow-sm border border-gray-200" data-testid="kanban-board">
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg" data-testid="text-kanban-title">Project Board</CardTitle>
+          <div className="flex items-center space-x-2">
+            <CardTitle className="text-lg" data-testid="text-kanban-title">{getBoardTitle()}</CardTitle>
+            {currentUser?.role === 'employee' && (
+              <Badge variant="outline" className="text-xs">
+                {Object.values(tasksByStatus).reduce((total, tasks) => total + tasks.length, 0)} milestones
+              </Badge>
+            )}
+          </div>
           <div className="flex space-x-2">
-            <Button variant="ghost" size="sm" data-testid="button-kanban-filter">
-              <Filter className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="sm" data-testid="button-kanban-search">
-              <Search className="h-4 w-4" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  data-testid="button-kanban-filter"
+                  onClick={() => setLocation('/tasks')}
+                >
+                  <Filter className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                 <p>Filter and search all milestones</p>
+              </TooltipContent>
+            </Tooltip>
+            
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  data-testid="button-kanban-view-all"
+                  onClick={() => setLocation('/tasks')}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                 <p>View all milestones</p>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <CardContent className={isMobile ? 'p-4' : ''}>
+        <div className={`isolate ${isMobile 
+          ? 'flex gap-3 overflow-x-auto snap-x pb-2' 
+          : isTablet 
+            ? 'grid grid-cols-2 gap-4' 
+            : 'flex gap-4 overflow-x-auto snap-x md:grid md:grid-cols-4 md:gap-6'
+        }`}>
           {statusColumns.map((column) => {
             const columnTasks = tasksByStatus[column.id] || [];
+            const Icon = column.icon;
             
             return (
               <div 
                 key={column.id} 
-                className={`${column.color} rounded-lg p-4`}
+                className={`${column.color} rounded-lg ${
+                  isMobile 
+                    ? 'p-3 min-w-[280px] snap-start' 
+                    : isTablet 
+                      ? 'p-4' 
+                      : 'p-5 min-w-[340px] snap-start'
+                } relative z-0 overflow-visible`}
                 data-testid={`kanban-column-${column.id}`}
               >
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="font-medium text-gray-900" data-testid={`text-column-title-${column.id}`}>
-                    {column.title}
-                  </h4>
-                  <Badge variant="secondary" data-testid={`badge-column-count-${column.id}`}>
-                    {columnTasks.length}
-                  </Badge>
+                <div className="flex items-center justify-between mb-3 sm:mb-4">
+                  <div className="flex items-center space-x-2">
+                    <Icon className={`${isMobile ? 'h-4 w-4' : 'h-5 w-5'} text-gray-700`} />
+                    <h4 className={`font-medium text-gray-900 ${isMobile ? 'text-sm' : 'text-base'}`} data-testid={`text-column-title-${column.id}`}>
+                      {isMobile ? column.mobileTitle : column.title}
+                    </h4>
+                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="secondary" data-testid={`badge-column-count-${column.id}`}>
+                        {columnTasks.length}
+                      </Badge>
+                    </TooltipTrigger>
+                     <TooltipContent>
+                       <p>{columnTasks.length} milestones</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
                 
-                <div className="space-y-3">
+                <div className={`space-y-${isMobile ? '3' : '4'}`}>
                   {columnTasks.map((task: any) => (
                     <Card 
                       key={task.id} 
-                      className="bg-surface border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"
+                      className="bg-surface border border-gray-200 cursor-pointer hover:shadow-lg transition-shadow relative z-[1] hover:z-10"
                       data-testid={`task-card-${task.id}`}
+                      onClick={() => setLocation(`/projects/${task.project.id}?task=${task.id}`)}
                     >
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <h5 className="font-medium text-gray-900 text-sm line-clamp-2" data-testid={`text-task-name-${task.id}`}>
-                            {task.name}
-                          </h5>
+                      <CardContent className={`${isMobile ? 'p-3 space-y-2' : 'p-4 sm:p-5 space-y-3'}`}>
+                        {/* Project badge */}
+                        <div className="flex items-center justify-between">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge variant="outline" className={`text-xs flex items-center space-x-1 ${isMobile ? 'max-w-[120px]' : ''}`}>
+                                <Briefcase className="h-3 w-3 flex-shrink-0" />
+                                <span className="truncate">{task.project?.name || 'No Project'}</span>
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                               <p>Project this milestone belongs to</p>
+                            </TooltipContent>
+                          </Tooltip>
                           <PriorityBadge priority={task.priority} />
                         </div>
                         
-                        {task.description && (
-                          <p className="text-gray-600 text-sm mb-3 line-clamp-2" data-testid={`text-task-description-${task.id}`}>
-                            {task.description}
-                          </p>
+                        <div>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <h5 className={`font-medium text-gray-900 ${isMobile ? 'text-sm' : 'text-sm'} line-clamp-2`} data-testid={`text-task-name-${task.id}`}>
+                                {task.name}
+                              </h5>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="max-w-xs whitespace-pre-wrap">{task.name}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                        
+                        {!isMobile && task.description && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <p className="text-gray-600 text-sm mb-3 line-clamp-2" data-testid={`text-task-description-${task.id}`}>
+                                {task.description}
+                              </p>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="max-w-sm whitespace-pre-wrap">{task.description}</p>
+                            </TooltipContent>
+                          </Tooltip>
                         )}
                         
                         {task.status === 'in_progress' && (
-                          <div className="mb-3">
+                          <div>
                             <div className="w-full bg-gray-200 rounded-full h-2">
                               <div 
                                 className="bg-primary h-2 rounded-full" 
@@ -162,47 +294,79 @@ export default function KanbanBoard() {
                         )}
                         
                         <div className="flex items-center justify-between">
-                          <div className="flex -space-x-2">
-                            {task.assignedUser && (
-                              <Avatar className="w-6 h-6 border-2 border-white">
-                                <AvatarImage src={task.assignedUser.profileImageUrl} />
-                                <AvatarFallback className="text-xs">
-                                  {getInitials(task.assignedUser.firstName && task.assignedUser.lastName 
-                                    ? `${task.assignedUser.firstName} ${task.assignedUser.lastName}`
-                                    : task.assignedUser.email || 'U'
-                                  )}
-                                </AvatarFallback>
-                              </Avatar>
+                          <div className="flex items-center space-x-2 min-w-0 flex-1">
+                            {task.assignedUser ? (
+                              <>
+                                <Avatar className={`${isMobile ? 'w-5 h-5' : 'w-6 h-6'} border-2 border-white flex-shrink-0`}>
+                                  <AvatarImage src={task.assignedUser.profileImageUrl} />
+                                  <AvatarFallback className="text-xs">
+                                    {getInitials(task.assignedUser.firstName && task.assignedUser.lastName 
+                                      ? `${task.assignedUser.firstName} ${task.assignedUser.lastName}`
+                                      : task.assignedUser.email || 'U'
+                                    )}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <span className="text-xs text-gray-600 truncate">
+                                  {isMobile 
+                                    ? (task.assignedUser.firstName?.[0] || task.assignedUser.email.split('@')[0].substring(0, 3))
+                                    : (task.assignedUser.firstName || task.assignedUser.email.split('@')[0])
+                                  }
+                                </span>
+                              </>
+                            ) : (
+                              <div className="flex items-center space-x-1 text-xs text-gray-500">
+                                <User className="h-3 w-3" />
+                                <span>{isMobile ? 'None' : 'Unassigned'}</span>
+                              </div>
                             )}
                           </div>
                           
                           {task.dueDate && (
-                            <span className="text-xs text-gray-500" data-testid={`text-task-due-${task.id}`}>
-                              {new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            <span 
+                              className={`text-xs px-2 py-1 rounded ${
+                                new Date(task.dueDate) < new Date() && task.status !== 'done'
+                                  ? 'bg-red-100 text-red-800 font-medium'
+                                  : 'text-gray-500'
+                              }`} 
+                              data-testid={`text-task-due-${task.id}`}
+                            >
+                              {new Date(task.dueDate) < new Date() && task.status !== 'done' 
+                                ? 'OVERDUE' 
+                                : new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                              }
                             </span>
                           )}
                         </div>
                         
-                        {/* Quick status change buttons */}
-                        <div className="mt-3 flex space-x-1">
-                          {statusColumns.map((status) => (
-                            <Button
-                              key={status.id}
-                              size="sm"
-                              variant={task.status === status.id ? "default" : "outline"}
-                              className="text-xs h-6 px-2"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (task.status !== status.id) {
-                                  handleTaskStatusChange(task.id, status.id);
-                                }
-                              }}
-                              disabled={updateTaskMutation.isPending}
-                              data-testid={`button-status-${status.id}-${task.id}`}
-                            >
-                              {status.title.split(' ')[0]}
-                            </Button>
-                          ))}
+                        {/* Status control: icons with tooltips */}
+                        <div className="pt-1 flex items-center gap-1.5">
+                          {statusColumns.map((status) => {
+                            const isActive = task.status === status.id;
+                            const Icon = status.id === 'todo' ? ClipboardList : status.id === 'in_progress' ? Zap : status.id === 'review' ? Eye : CheckCircle;
+                            return (
+                              <Tooltip key={status.id}>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant={isActive ? 'default' : 'outline'}
+                                    className={`h-7 w-7 p-0 ${isActive ? '' : 'text-gray-600'}`}
+                                    aria-label={`Move to ${status.title}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (!isActive) handleTaskStatusChange(task.id, status.id);
+                                    }}
+                                    disabled={updateTaskMutation.isPending}
+                                    data-testid={`button-status-${status.id}-${task.id}`}
+                                  >
+                                    <Icon className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Move to {status.title}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            );
+                          })}
                         </div>
                       </CardContent>
                     </Card>
@@ -210,7 +374,7 @@ export default function KanbanBoard() {
                   
                   {columnTasks.length === 0 && (
                     <div className="text-center py-8 text-gray-500" data-testid={`text-empty-column-${column.id}`}>
-                      No {column.title.toLowerCase()} tasks
+                      No {column.title.toLowerCase()} milestones
                     </div>
                   )}
                 </div>

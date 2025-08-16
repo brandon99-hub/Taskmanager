@@ -1,19 +1,27 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { useScreenSize } from "@/hooks/use-mobile";
 import Navigation from "@/components/layout/navigation";
 import CreateProjectModal from "@/components/projects/create-project-modal";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { Calendar, Users, DollarSign, MoreHorizontal } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangle, Search, Filter } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 export default function Projects() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const auth = useAuth() as any;
+  const { isAuthenticated, isLoading, user } = auth;
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
+  const { isMobile, isTablet } = useScreenSize();
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -24,16 +32,66 @@ export default function Projects() {
         variant: "destructive",
       });
       setTimeout(() => {
-        window.location.href = "/api/login";
+        window.location.href = "/login";
       }, 500);
       return;
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  const { data: projects = [], isLoading: projectsLoading, error } = useQuery({
+  const { data: projects = [], isLoading: projectsLoading, error } = useQuery<any[]>({
     queryKey: ['/api/projects'],
     enabled: !!isAuthenticated,
   });
+  const [query, setQuery] = useState("");
+  const filteredProjects = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return projects;
+    return projects.filter((p: any) => (
+      (p.name || "").toLowerCase().includes(q) ||
+      (p.client || "").toLowerCase().includes(q)
+    ));
+  }, [projects, query]);
+
+  const { data: overdueTasks = [] } = useQuery<any[]>({
+    queryKey: ['/api/dashboard/overdue-tasks'],
+    enabled: !!isAuthenticated,
+  });
+
+  // Get overdue tasks count for each project
+  const getProjectOverdueCount = (projectId: string) => {
+    return overdueTasks.filter((task: any) => task.projectId === projectId).length;
+  };
+
+  const handleDeleteProject = async (e: React.MouseEvent, project: any) => {
+    e.stopPropagation();
+    const confirmed = window.confirm(`Delete project "${project.name}"? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      await apiRequest('DELETE', `/api/projects/${project.id}`);
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/dashboard/metrics'] });
+      toast({ title: 'Project deleted', description: `${project.name} was removed.` });
+    } catch (error: any) {
+      if (isUnauthorizedError(error)) {
+        toast({ title: 'Unauthorized', description: 'You are logged out. Logging in again...', variant: 'destructive' });
+        setTimeout(() => { window.location.href = '/login'; }, 500);
+        return;
+      }
+      toast({ title: 'Failed to delete', description: error?.message || 'Unknown error', variant: 'destructive' });
+    }
+  };
+
+  const handleProjectClick = (projectId: string) => {
+    // Navigate to dedicated project detail page
+    setLocation(`/projects/${projectId}`);
+  };
+
+  const [editingProject, setEditingProject] = useState<any>(null);
+
+  const handleEditProject = (e: React.MouseEvent, project: any) => {
+    e.stopPropagation();
+    setEditingProject(project);
+  };
 
   useEffect(() => {
     if (error && isUnauthorizedError(error)) {
@@ -43,7 +101,7 @@ export default function Projects() {
         variant: "destructive",
       });
       setTimeout(() => {
-        window.location.href = "/api/login";
+        window.location.href = "/login";
       }, 500);
     }
   }, [error, toast]);
@@ -86,7 +144,21 @@ export default function Projects() {
             <p className="text-gray-600" data-testid="text-subtitle">Manage and track all your active projects</p>
           </div>
           <div className="flex space-x-3 mt-4 md:mt-0">
+            {/* Mount modal so it can open from global event as well */}
             <CreateProjectModal />
+          </div>
+        </div>
+
+        {/* Search */}
+        <div className="mb-6">
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full pl-10 pr-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="Search projects by name or client..."
+            />
           </div>
         </div>
 
@@ -109,88 +181,167 @@ export default function Projects() {
               </Card>
             ))}
           </div>
-        ) : projects.length === 0 ? (
+        ) : filteredProjects.length === 0 ? (
           <Card>
             <CardContent className="text-center py-12">
-              <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-projects">No projects yet</h3>
-              <p className="text-gray-600 mb-4">Create your first project to get started</p>
-              <CreateProjectModal />
+              <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-projects">No projects found</h3>
+              <p className="text-gray-600 mb-4">Try adjusting your search</p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {projects.map((project: any) => (
-              <Card key={project.id} className="hover:shadow-md transition-shadow" data-testid={`card-project-${project.id}`}>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="text-lg mb-2" data-testid={`text-project-name-${project.id}`}>
-                        {project.name}
-                      </CardTitle>
-                      <CardDescription className="line-clamp-2" data-testid={`text-project-description-${project.id}`}>
-                        {project.description}
-                      </CardDescription>
-                    </div>
-                    <Button variant="ghost" size="sm" data-testid={`button-project-menu-${project.id}`}>
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {/* Status */}
-                    <div className="flex items-center justify-between">
-                      <Badge className={getStatusColor(project.status)} data-testid={`badge-project-status-${project.id}`}>
-                        {formatStatus(project.status)}
-                      </Badge>
-                      <span className="text-sm text-gray-500" data-testid={`text-project-progress-${project.id}`}>
-                        {project.progress}% Complete
-                      </span>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <Progress value={project.progress} className="h-2" data-testid={`progress-project-${project.id}`} />
-
-                    {/* Project Details */}
-                    <div className="space-y-2 text-sm text-gray-600">
-                      {project.client && (
-                        <div className="flex items-center" data-testid={`text-project-client-${project.id}`}>
-                          <Users className="h-4 w-4 mr-2" />
-                          <span>{project.client}</span>
+            {filteredProjects.map((project: any) => {
+              const overdueCount = getProjectOverdueCount(project.id);
+              const milestoneCount = project.milestoneCount ?? 0;
+              const completedMilestoneCount = project.completedMilestoneCount ?? 0;
+              const completionRate = milestoneCount > 0 ? Math.round((completedMilestoneCount / milestoneCount) * 100) : project.progress;
+              return (
+                <Card 
+                  key={project.id} 
+                  className="hover:shadow-lg transition-all cursor-pointer border-l-4 border-l-primary" 
+                  data-testid={`card-project-${project.id}`}
+                  onClick={() => handleProjectClick(project.id)}
+                >
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <CardTitle className="text-lg" data-testid={`text-project-name-${project.id}`}>
+                            {project.name}
+                          </CardTitle>
+                          {overdueCount > 0 && (
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <Badge variant="destructive" className="flex items-center space-x-1">
+                                  <AlertTriangle className="h-3 w-3" />
+                                  <span>{overdueCount}</span>
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{overdueCount} overdue task{overdueCount > 1 ? 's' : ''}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </div>
-                      )}
-                      
-                      <div className="flex items-center" data-testid={`text-project-dates-${project.id}`}>
-                        <Calendar className="h-4 w-4 mr-2" />
-                        <span>
-                          {new Date(project.startDate).toLocaleDateString()} - {new Date(project.endDate).toLocaleDateString()}
+                        <CardDescription className="line-clamp-2" data-testid={`text-project-description-${project.id}`}>
+                          {project.description}
+                        </CardDescription>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleProjectClick(project.id);
+                              }}
+                              data-testid={`button-project-view-${project.id}`}
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>View project details</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        {(user as any)?.role !== 'employee' && (
+                          <>
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={(e) => handleEditProject(e, project)}
+                              data-testid={`button-project-edit-${project.id}`}
+                            >
+                              Edit
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={(e) => handleDeleteProject(e, project)}
+                              data-testid={`button-project-delete-${project.id}`}
+                            >
+                              Delete
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {/* Status */}
+                      <div className="flex items-center justify-between">
+                        <Badge className={getStatusColor(project.status)} data-testid={`badge-project-status-${project.id}`}>
+                          {formatStatus(project.status)}
+                        </Badge>
+                        <span className="text-sm text-gray-500" data-testid={`text-project-progress-${project.id}`}>
+                          {project.progress}% Complete
                         </span>
                       </div>
 
-                      {project.budget && (
-                        <div className="flex items-center" data-testid={`text-project-budget-${project.id}`}>
-                          <DollarSign className="h-4 w-4 mr-2" />
-                          <span>${parseFloat(project.budget).toLocaleString()}</span>
+                      {/* Progress Bar */}
+                      <Progress value={project.progress} className="h-2" data-testid={`progress-project-${project.id}`} />
+
+                      {/* Project Details */}
+                      <div className="space-y-2 text-sm text-gray-600">
+                        {project.client && (
+                          <div className="flex items-center" data-testid={`text-project-client-${project.id}`}>
+                            <Users className="h-4 w-4 mr-2" />
+                            <span>{project.client}</span>
+                          </div>
+                        )}
+                        
+                        <div className="flex items-center" data-testid={`text-project-dates-${project.id}`}>
+                          <Calendar className="h-4 w-4 mr-2" />
+                          <span>
+                            {new Date(project.startDate).toLocaleDateString()} - {new Date(project.endDate).toLocaleDateString()}
+                          </span>
                         </div>
-                      )}
 
-                      <div className="flex items-center" data-testid={`text-project-manager-${project.id}`}>
-                        <Users className="h-4 w-4 mr-2" />
-                        <span>Manager: {project.manager?.firstName || project.manager?.email}</span>
-                      </div>
+                        {project.budget && (
+                          <div className="flex items-center" data-testid={`text-project-budget-${project.id}`}>
+                            <DollarSign className="h-4 w-4 mr-2" />
+                            <span>KSh {parseFloat(project.budget).toLocaleString()}</span>
+                          </div>
+                        )}
 
-                      {project.team && (
-                        <div className="flex items-center" data-testid={`text-project-team-${project.id}`}>
+                        <div className="flex items-center" data-testid={`text-project-manager-${project.id}`}>
                           <Users className="h-4 w-4 mr-2" />
-                          <span>Team: {project.team.name}</span>
+                          <span>Manager: {project.manager?.firstName || project.manager?.email}</span>
                         </div>
-                      )}
+
+                        {project.team && (
+                          <div className="flex items-center" data-testid={`text-project-team-${project.id}`}>
+                            <Users className="h-4 w-4 mr-2" />
+                            <span>Team: {project.team.name}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between pt-2 text-xs text-gray-700">
+                          <span data-testid={`text-project-milestones-${project.id}`}>
+                            {completedMilestoneCount}/{milestoneCount} milestones done ({completionRate}%)
+                          </span>
+                          <span className="font-medium text-green-600" data-testid={`text-project-paid-amount-${project.id}`}>
+                            KSh {(project.paidAmount || 0).toLocaleString()} paid
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
+        )}
+        
+        {/* Edit Project Modal */}
+        {editingProject && (
+          <CreateProjectModal 
+            project={editingProject} 
+            key={`edit-${editingProject.id}`}
+            onClose={() => setEditingProject(null)}
+          />
         )}
       </div>
     </div>

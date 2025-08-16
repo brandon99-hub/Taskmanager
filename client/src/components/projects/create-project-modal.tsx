@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -9,10 +9,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Badge } from "@/components/ui/badge";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Download } from "lucide-react";
+import { Plus, Download, X, CalendarDays, UserCircle2 } from "lucide-react";
+import { useLocation, useSearch } from "wouter";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
 const createProjectSchema = z.object({
@@ -23,6 +25,7 @@ const createProjectSchema = z.object({
   endDate: z.string().min(1, "End date is required"),
   teamId: z.string().optional(),
   budget: z.string().optional(),
+  status: z.enum(["planning", "active", "on_hold", "completed", "cancelled"]).optional(),
 }).refine((data) => {
   const start = new Date(data.startDate);
   const end = new Date(data.endDate);
@@ -34,13 +37,32 @@ const createProjectSchema = z.object({
 
 type CreateProjectData = z.infer<typeof createProjectSchema>;
 
-export default function CreateProjectModal() {
-  const { user } = useAuth();
-  const { toast } = useToast();
-  const [isOpen, setIsOpen] = useState(false);
+type NewTaskRow = {
+  name: string;
+  description?: string;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  startDate?: string;
+  dueDate?: string;
+  assignedUserId?: string;
+  feeAmount?: string;
+  errors?: { startDate?: string; dueDate?: string; name?: string; feeAmount?: string };
+};
 
-  const { data: teams = [] } = useQuery({
+export default function CreateProjectModal({ project, onClose }: { project?: any; onClose?: () => void }) {
+  const auth = useAuth() as any;
+  const { user } = auth;
+  const { toast } = useToast();
+  const [isOpen, setIsOpen] = useState(!!project);
+  const [pathname, setLocation] = useLocation();
+  const search = useSearch();
+  const [tasks, setTasks] = useState<NewTaskRow[]>([]);
+  const isEditMode = !!project;
+
+  const { data: teams = [] } = useQuery<any[]>({
     queryKey: ['/api/teams'],
+    enabled: isOpen, // load when modal opens
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   const form = useForm<CreateProjectData>({
@@ -53,21 +75,89 @@ export default function CreateProjectModal() {
       endDate: "",
       teamId: "",
       budget: "",
+      status: "planning",
     },
   });
+
+  // Auto-open modal in edit mode and prefill form
+  useEffect(() => {
+    if (project) {
+      setIsOpen(true);
+      form.reset({
+        name: project.name || "",
+        description: project.description || "",
+        client: project.client || "",
+        startDate: project.startDate ? new Date(project.startDate).toISOString().slice(0, 10) : "",
+        endDate: project.endDate ? new Date(project.endDate).toISOString().slice(0, 10) : "",
+        teamId: project.teamId || "",
+        budget: project.budget ? String(project.budget) : "",
+        status: project.status || "planning",
+      });
+    }
+  }, [project]);
+
+  // Fetch existing milestones in edit mode
+  const { data: existingMilestones = [] } = useQuery<any[]>({
+    queryKey: ['/api/projects', project?.id, 'tasks'],
+    queryFn: async () => {
+      if (!project?.id) return [];
+      const res = await fetch(`/api/projects/${project.id}/tasks`, { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: isEditMode && isOpen && !!project?.id,
+  });
+
+  const { data: teamMembers = [] } = useQuery<any[]>({
+    queryKey: ['/api/team-members', form.watch('teamId')],
+    queryFn: async () => {
+      const teamId = form.getValues('teamId');
+      if (!teamId) return [];
+      const res = await fetch(`/api/teams/${teamId}`, { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) return [];
+      const json = await res.json();
+      return json.members?.map((m: any) => m.user) ?? [];
+    },
+    enabled: isOpen && !!form.watch('teamId'),
+  });
+
+  // Load existing milestones in edit mode
+  useEffect(() => {
+    if (isEditMode && existingMilestones.length > 0) {
+      const milestoneTasks = existingMilestones.map((m: any) => ({
+        id: m.id, // Keep the ID for updates
+        name: m.name,
+        description: m.description || '',
+        priority: m.priority,
+        startDate: m.startDate ? new Date(m.startDate).toISOString().slice(0, 10) : '',
+        dueDate: m.dueDate ? new Date(m.dueDate).toISOString().slice(0, 10) : '',
+        assignedUserId: m.assignedUserId || undefined,
+        feeAmount: m.feeAmount ? String(m.feeAmount) : '',
+        status: m.status,
+        billingStatus: m.billingStatus,
+      }));
+      setTasks(milestoneTasks);
+    }
+  }, [isEditMode, existingMilestones]);
 
   const createProjectMutation = useMutation({
     mutationFn: async (data: CreateProjectData) => {
       const payload = {
         ...data,
-        budget: data.budget ? parseFloat(data.budget) : undefined,
-        startDate: new Date(data.startDate).toISOString(),
-        endDate: new Date(data.endDate).toISOString(),
+        budget: data.budget ? String(data.budget) : undefined,
+        startDate: new Date(data.startDate),
+        endDate: new Date(data.endDate),
         teamId: data.teamId || undefined,
         client: data.client || undefined,
       };
       
-      const response = await apiRequest("POST", "/api/projects", payload);
+      console.log('Sending payload:', payload);
+      console.log('Is edit mode:', isEditMode);
+      console.log('Project ID:', project?.id);
+      
+      const response = isEditMode
+        ? await apiRequest("PUT", `/api/projects/${project.id}`, payload)
+        : await apiRequest("POST", "/api/projects", payload);
       return response.json();
     },
     onSuccess: () => {
@@ -75,9 +165,10 @@ export default function CreateProjectModal() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/metrics"] });
       setIsOpen(false);
       form.reset();
+      if (onClose) onClose();
       toast({
         title: "Success",
-        description: "Project created successfully",
+        description: isEditMode ? "Project updated successfully" : "Project created successfully",
       });
     },
     onError: (error) => {
@@ -88,35 +179,188 @@ export default function CreateProjectModal() {
           variant: "destructive",
         });
         setTimeout(() => {
-          window.location.href = "/api/login";
+          window.location.href = "/login";
         }, 500);
         return;
       }
+      console.error('Project mutation error:', error);
       toast({
         title: "Error",
-        description: "Failed to create project",
+        description: isEditMode ? "Failed to update project" : "Failed to create project",
         variant: "destructive",
       });
     },
   });
 
   const onSubmit = (data: CreateProjectData) => {
-    createProjectMutation.mutate(data);
+    // Client-side validation for task timelines and required fields
+    const projectStart = data.startDate ? new Date(data.startDate) : undefined;
+    const projectEnd = data.endDate ? new Date(data.endDate) : undefined;
+
+    let hasErrors = false;
+    const validated = tasks.map((t) => {
+      const errors: NewTaskRow['errors'] = {};
+      const start = t.startDate ? new Date(t.startDate) : undefined;
+      const due = t.dueDate ? new Date(t.dueDate) : undefined;
+
+      if (!t.name || t.name.trim().length === 0) {
+        errors.name = 'Task name is required';
+        hasErrors = true;
+      }
+      if (!due) {
+        errors.dueDate = 'Deadline is required';
+        hasErrors = true;
+      }
+      if (start && due && start > due) {
+        errors.startDate = 'Start cannot be after deadline';
+        hasErrors = true;
+      }
+      if (projectStart && start && start < projectStart) {
+        errors.startDate = 'Start cannot be before project start';
+        hasErrors = true;
+      }
+      if (projectEnd && due && due > projectEnd) {
+        errors.dueDate = 'Deadline cannot be after project end';
+        hasErrors = true;
+      }
+      if (!t.feeAmount || isNaN(Number(t.feeAmount))) {
+        errors.feeAmount = 'Fee amount is required';
+        hasErrors = true;
+      }
+
+      return { ...t, errors };
+    });
+    if (hasErrors) {
+      setTasks(validated);
+      toast({ title: 'Fix milestone details', description: 'Please resolve the highlighted milestone errors before saving the project.', variant: 'destructive' });
+      return;
+    }
+
+    createProjectMutation.mutate(data, {
+      onSuccess: async (project) => {
+        // Handle milestones for both create and edit modes
+        if (validated.length > 0) {
+          for (const t of validated) {
+            try {
+              const payload = {
+                name: t.name,
+                description: t.description || undefined,
+                priority: t.priority,
+                projectId: project.id,
+                assignedUserId: t.assignedUserId || undefined,
+                startDate: t.startDate ? new Date(t.startDate).toISOString() : undefined,
+                dueDate: t.dueDate ? new Date(t.dueDate).toISOString() : undefined,
+                feeAmount: t.feeAmount ? Number(t.feeAmount) : undefined,
+              };
+
+              if (isEditMode && (t as any).id) {
+                // Update existing milestone
+                await apiRequest('PUT', `/api/tasks/${(t as any).id}`, payload);
+              } else {
+                // Create new milestone
+                await apiRequest('POST', '/api/tasks', payload);
+              }
+            } catch (e: any) {
+              let description = `Milestone: ${t.name}`;
+              try {
+                const raw = (e?.message || '').replace(/^\d{3}:\s*/, '');
+                const parsed = JSON.parse(raw);
+                if (parsed?.errors && parsed.errors[0]?.message) {
+                  description = `${description} — ${parsed.errors[0].message}`;
+                } else if (parsed?.message) {
+                  description = `${description} — ${parsed.message}`;
+                }
+              } catch {}
+              toast({ title: 'Milestone operation failed', description, variant: 'destructive' });
+            }
+          }
+
+          // In edit mode, remove milestones that were deleted
+          if (isEditMode && existingMilestones.length > 0) {
+            const currentMilestoneIds = validated.map((t: any) => t.id).filter(Boolean);
+            const milestonesToDelete = existingMilestones.filter((m: any) => 
+              !currentMilestoneIds.includes(m.id)
+            );
+            
+            for (const milestone of milestonesToDelete) {
+              try {
+                await apiRequest('DELETE', `/api/tasks/${milestone.id}`);
+              } catch (e: any) {
+                console.error('Failed to delete milestone:', e);
+                toast({ title: 'Warning', description: `Failed to delete milestone: ${milestone.name}`, variant: 'destructive' });
+              }
+            }
+          }
+        }
+      }
+    });
   };
 
+  // Open modal when URL contains ?new=project (e.g., from Quick Actions)
+  // Done in an effect to avoid setting state during render
+  useEffect(() => {
+    const params = new URLSearchParams(search ?? "");
+    if (!isOpen && params.get('new') === 'project') {
+      setIsOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open);
+    if (!open) {
+      // remove query params to prevent reopening on navigation within the page
+      const hasQuery = (search ?? "").length > 0;
+      if (hasQuery) setLocation(pathname);
+      if (onClose) onClose();
+    }
+  };
+
+  // Global open handler so any button can open the modal without navigation
+  useEffect(() => {
+    const openHandler = () => setIsOpen(true);
+    // @ts-ignore - CustomEvent type is fine for runtime
+    window.addEventListener('open-create-project', openHandler as EventListener);
+    return () => {
+      // @ts-ignore
+      window.removeEventListener('open-create-project', openHandler as EventListener);
+    };
+  }, []);
+
+  const canCreateProject = (user?.role === 'admin' || user?.role === 'manager');
+
+  if (!canCreateProject) {
+    return null;
+  }
+
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button className="bg-primary hover:bg-primary-dark" data-testid="button-create-project">
-          <Plus className="h-4 w-4 mr-2" />
-          New Project
-        </Button>
+        {isEditMode ? (
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => setIsOpen(true)}
+            data-testid={`button-edit-project-${project?.id}`}
+          >
+            Edit
+          </Button>
+        ) : (
+          <Button 
+            className="bg-primary hover:bg-primary-dark" 
+            onClick={() => setIsOpen(true)}
+            data-testid="button-create-project"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            New Project
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="modal-create-project">
         <DialogHeader>
-          <DialogTitle>Create New Project</DialogTitle>
+          <DialogTitle>{isEditMode ? 'Edit Project' : 'Create New Project'}</DialogTitle>
           <DialogDescription>
-            Create a new project to organize tasks and track progress.
+            {isEditMode ? 'Update project details.' : 'Create a new project to organize tasks and track progress.'}
           </DialogDescription>
         </DialogHeader>
         
@@ -217,21 +461,24 @@ export default function CreateProjectModal() {
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
                 name="teamId"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Assigned Team</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select 
+                      onValueChange={(value) => field.onChange(value === 'none' ? '' : value)} 
+                      value={field.value || 'none'}
+                    >
                       <FormControl>
                         <SelectTrigger data-testid="select-project-team">
                           <SelectValue placeholder="Select team (optional)" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="">No team assigned</SelectItem>
+                        <SelectItem value="none">No team assigned</SelectItem>
                         {teams.map((team: any) => (
                           <SelectItem key={team.id} value={team.id}>
                             {team.name}
@@ -255,7 +502,7 @@ export default function CreateProjectModal() {
                         type="number" 
                         placeholder="0" 
                         min="0" 
-                        step="100"
+                        step="0.01"
                         {...field} 
                         data-testid="input-project-budget"
                       />
@@ -264,6 +511,122 @@ export default function CreateProjectModal() {
                   </FormItem>
                 )}
               />
+              
+              {/* Status field - only show in edit mode */}
+              {isEditMode && (
+                <FormField
+                  control={form.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Project Status</FormLabel>
+                      <Select 
+                        onValueChange={field.onChange} 
+                        value={field.value || 'planning'}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-project-status">
+                            <SelectValue placeholder="Select status" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="planning">Planning</SelectItem>
+                          <SelectItem value="active">Active</SelectItem>
+                          <SelectItem value="on_hold">On Hold</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                          <SelectItem value="cancelled">Cancelled</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+            </div>
+
+            {/* Milestones Builder */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="font-medium">{isEditMode ? 'Edit Milestones' : 'Create Milestones'}</h4>
+                <Button type="button" variant="outline" onClick={() => setTasks((prev) => [...prev, { name: '', description: '', priority: 'medium' } as NewTaskRow])}>
+                  <Plus className="h-4 w-4 mr-2" /> Add Milestone
+                </Button>
+              </div>
+              {tasks.length === 0 ? (
+                <p className="text-sm text-gray-500">{isEditMode ? 'No milestones found.' : 'No milestones added yet.'}</p>
+              ) : (
+                <div className="space-y-3">
+                  {tasks.map((t, idx) => (
+                    <div key={idx} className="p-3 border rounded-md space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-sm text-gray-600">Milestone #{idx + 1}</span>
+                          {isEditMode && (t as any).id && (
+                            <Badge variant="outline" className="text-xs">
+                              {(t as any).status} • {(t as any).billingStatus || 'none'}
+                            </Badge>
+                          )}
+                        </div>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setTasks((prev) => prev.filter((_, i) => i !== idx))}><X className="h-4 w-4" /></Button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                                                      <Input placeholder="Milestone name *" value={t.name} onChange={(e) => setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], name: e.target.value, errors: { ...c[idx].errors, name: undefined } }; return c; })} />
+                          {t.errors?.name && <p className="text-xs text-error mt-1">{t.errors.name}</p>}
+                        </div>
+                        <Select value={t.priority} onValueChange={(v)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], priority: v as NewTaskRow['priority'] }; return c; })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Priority" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="low">Low</SelectItem>
+                            <SelectItem value="medium">Medium</SelectItem>
+                            <SelectItem value="high">High</SelectItem>
+                            <SelectItem value="critical">Critical</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Textarea placeholder="Milestone description" value={t.description || ''} onChange={(e)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], description: e.target.value }; return c; })} className="md:col-span-2" />
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:col-span-2">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <CalendarDays className="h-4 w-4 text-gray-400" />
+                              <Input type="date" value={t.startDate || ''} onChange={(e)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], startDate: e.target.value, errors: { ...c[idx].errors, startDate: undefined } }; return c; })} placeholder="Start (optional)" />
+                            </div>
+                            {t.errors?.startDate && <p className="text-xs text-error">{t.errors.startDate}</p>}
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <CalendarDays className="h-4 w-4 text-gray-400" />
+                              <Input type="date" value={t.dueDate || ''} onChange={(e)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], dueDate: e.target.value, errors: { ...c[idx].errors, dueDate: undefined } }; return c; })} placeholder="Deadline *" />
+                            </div>
+                            {t.errors?.dueDate && <p className="text-xs text-error">{t.errors.dueDate}</p>}
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <Input type="number" min="0" step="0.01" placeholder="Fee amount *" value={t.feeAmount || ''} onChange={(e)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], feeAmount: e.target.value, errors: { ...c[idx].errors, feeAmount: undefined } }; return c; })} />
+                            </div>
+                            {t.errors?.feeAmount && <p className="text-xs text-error">{t.errors.feeAmount}</p>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <UserCircle2 className="h-4 w-4 text-gray-400" />
+                            <Select value={t.assignedUserId || 'none'} onValueChange={(v)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], assignedUserId: v === 'none' ? undefined : v }; return c; })}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Assign to" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Unassigned</SelectItem>
+                                {teamMembers.map((m: any) => (
+                                  <SelectItem key={m.id} value={m.id}>{m.firstName && m.lastName ? `${m.firstName} ${m.lastName}` : m.email}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
@@ -280,7 +643,7 @@ export default function CreateProjectModal() {
                 disabled={createProjectMutation.isPending}
                 data-testid="button-submit-project"
               >
-                {createProjectMutation.isPending ? "Creating..." : "Create Project"}
+                {createProjectMutation.isPending ? (isEditMode ? "Saving..." : "Creating...") : (isEditMode ? "Save Changes" : "Create Project")}
               </Button>
             </div>
           </form>

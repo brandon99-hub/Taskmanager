@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -7,12 +7,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Download, FileText, BarChart3, TrendingUp, Users, Calendar } from "lucide-react";
+import { Download, FileText, BarChart3, TrendingUp, Users, Calendar, Loader2 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function Reports() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const auth = useAuth() as any;
+  const { isAuthenticated, isLoading } = auth;
   const { toast } = useToast();
+  
+  // Loading states for exports
+  const [exportingStates, setExportingStates] = useState<Record<string, boolean>>({});
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -23,28 +28,28 @@ export default function Reports() {
         variant: "destructive",
       });
       setTimeout(() => {
-        window.location.href = "/api/login";
+        window.location.href = "/login";
       }, 500);
       return;
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  const { data: metrics, isLoading: metricsLoading, error: metricsError } = useQuery({
+  const { data: metrics, isLoading: metricsLoading, error: metricsError } = useQuery<any>({
     queryKey: ['/api/dashboard/metrics'],
     enabled: !!isAuthenticated,
   });
 
-  const { data: projects = [], isLoading: projectsLoading, error: projectsError } = useQuery({
+  const { data: projects = [], isLoading: projectsLoading, error: projectsError } = useQuery<any[]>({
     queryKey: ['/api/projects'],
     enabled: !!isAuthenticated,
   });
 
-  const { data: tasks = [], isLoading: tasksLoading, error: tasksError } = useQuery({
+  const { data: tasks = [], isLoading: tasksLoading, error: tasksError } = useQuery<any[]>({
     queryKey: ['/api/tasks'],
     enabled: !!isAuthenticated,
   });
 
-  const { data: workload = [], isLoading: workloadLoading, error: workloadError } = useQuery({
+  const { data: workload = [], isLoading: workloadLoading, error: workloadError } = useQuery<any[]>({
     queryKey: ['/api/dashboard/workload'],
     enabled: !!isAuthenticated,
   });
@@ -59,7 +64,7 @@ export default function Reports() {
           variant: "destructive",
         });
         setTimeout(() => {
-          window.location.href = "/api/login";
+          window.location.href = "/login";
         }, 500);
       }
     });
@@ -75,12 +80,92 @@ export default function Reports() {
 
   const isDataLoading = metricsLoading || projectsLoading || tasksLoading || workloadLoading;
 
-  const handleExportReport = (type: string) => {
-    toast({
-      title: "Export Started",
-      description: `Your ${type} report is being generated...`,
-    });
-    // TODO: Implement actual export functionality
+  const handleExportReport = async (reportType: string) => {
+    const exportKey = reportType.toLowerCase().replace(/\s+/g, '_');
+    
+    try {
+      setExportingStates(prev => ({ ...prev, [exportKey]: true }));
+      
+      toast({
+        title: "Export Started",
+        description: `Generating ${reportType} report...`,
+      });
+
+      // Map display names to API report types
+      const reportTypeMap: Record<string, string> = {
+        'Project Summary': 'projects',
+        'Task List': 'milestones', 
+        'Team Performance': 'performance',
+        'Workload Analysis': 'workload',
+        'Financial Report': 'financial',
+        'Complete': 'complete'
+      };
+
+      const apiReportType = reportTypeMap[reportType] || reportType.toLowerCase();
+
+      // Make API request to generate export
+      const response = await fetch('/api/reports/export', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          reportType: apiReportType,
+          format: 'excel',
+          filters: {} // TODO: Add filter support later
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Export failed');
+      }
+
+      // Get the filename from response headers
+      const contentDisposition = response.headers.get('Content-Disposition');
+      const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
+      const filename = filenameMatch?.[1] || `AppKings-Solutions-${apiReportType}-${new Date().toISOString().split('T')[0]}.xlsx`;
+
+      // Convert response to blob and trigger download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "Export Complete",
+        description: `${reportType} report downloaded successfully!`,
+      });
+
+    } catch (error: any) {
+      console.error('Export error:', error);
+      
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 500);
+        return;
+      }
+
+      toast({
+        title: "Export Failed",
+        description: error.message || `Failed to export ${reportType} report`,
+        variant: "destructive",
+      });
+    } finally {
+      setExportingStates(prev => ({ ...prev, [exportKey]: false }));
+    }
   };
 
   // Calculate additional metrics
@@ -122,10 +207,15 @@ export default function Reports() {
             <Button 
               onClick={() => handleExportReport('Complete')}
               className="flex items-center"
+              disabled={exportingStates.complete}
               data-testid="button-export-all"
             >
-              <Download className="h-4 w-4 mr-2" />
-              Export All
+              {exportingStates.complete ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              {exportingStates.complete ? 'Generating...' : 'Export All'}
             </Button>
           </div>
         </div>
@@ -165,40 +255,78 @@ export default function Reports() {
                     variant="outline" 
                     onClick={() => handleExportReport('Project Summary')}
                     className="flex items-center justify-center h-20 flex-col"
+                    disabled={exportingStates.project_summary}
                     data-testid="button-export-projects"
                   >
-                    <BarChart3 className="h-6 w-6 mb-2" />
-                    Project Summary
+                    {exportingStates.project_summary ? (
+                      <Loader2 className="h-6 w-6 mb-2 animate-spin" />
+                    ) : (
+                      <BarChart3 className="h-6 w-6 mb-2" />
+                    )}
+                    {exportingStates.project_summary ? 'Generating...' : 'Project Summary'}
                   </Button>
                   
                   <Button 
                     variant="outline" 
                     onClick={() => handleExportReport('Task List')}
                     className="flex items-center justify-center h-20 flex-col"
+                    disabled={exportingStates.task_list}
                     data-testid="button-export-tasks"
                   >
-                    <FileText className="h-6 w-6 mb-2" />
-                    Task List
+                    {exportingStates.task_list ? (
+                      <Loader2 className="h-6 w-6 mb-2 animate-spin" />
+                    ) : (
+                      <FileText className="h-6 w-6 mb-2" />
+                    )}
+                    {exportingStates.task_list ? 'Generating...' : 'Milestone List'}
                   </Button>
                   
                   <Button 
                     variant="outline" 
                     onClick={() => handleExportReport('Team Performance')}
                     className="flex items-center justify-center h-20 flex-col"
+                    disabled={exportingStates.team_performance}
                     data-testid="button-export-performance"
                   >
-                    <TrendingUp className="h-6 w-6 mb-2" />
-                    Team Performance
+                    {exportingStates.team_performance ? (
+                      <Loader2 className="h-6 w-6 mb-2 animate-spin" />
+                    ) : (
+                      <TrendingUp className="h-6 w-6 mb-2" />
+                    )}
+                    {exportingStates.team_performance ? 'Generating...' : 'Team Performance'}
                   </Button>
                   
                   <Button 
                     variant="outline" 
                     onClick={() => handleExportReport('Workload Analysis')}
                     className="flex items-center justify-center h-20 flex-col"
+                    disabled={exportingStates.workload_analysis}
                     data-testid="button-export-workload"
                   >
-                    <Users className="h-6 w-6 mb-2" />
-                    Workload Analysis
+                    {exportingStates.workload_analysis ? (
+                      <Loader2 className="h-6 w-6 mb-2 animate-spin" />
+                    ) : (
+                      <Users className="h-6 w-6 mb-2" />
+                    )}
+                    {exportingStates.workload_analysis ? 'Generating...' : 'Workload Analysis'}
+                  </Button>
+                </div>
+                
+                {/* Add Financial Report Button */}
+                <div className="mt-4">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => handleExportReport('Financial Report')}
+                    className="flex items-center justify-center h-20 flex-col w-full md:w-auto"
+                    disabled={exportingStates.financial_report}
+                    data-testid="button-export-financial"
+                  >
+                    {exportingStates.financial_report ? (
+                      <Loader2 className="h-6 w-6 mb-2 animate-spin" />
+                    ) : (
+                      <Calendar className="h-6 w-6 mb-2" />
+                    )}
+                    {exportingStates.financial_report ? 'Generating...' : 'Financial Report'}
                   </Button>
                 </div>
               </CardContent>
