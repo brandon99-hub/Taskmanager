@@ -52,9 +52,12 @@ export function setupRateLimiting(app: Express) {
   const speedLimiter = slowDown({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
     delayAfter: 50, // Allow 50 requests per windowMs without delay
-    delayMs: 250, // Add 250ms delay per request after delayAfter
+    delayMs: () => 250, // Add 250ms delay per request after delayAfter (new API)
     maxDelayMs: 5000, // Maximum delay of 5 seconds
     keyGenerator: (req: Request) => req.ip,
+    validate: {
+      delayMs: false // Disable the deprecation warning
+    }
   });
   
   // Apply general rate limiting to all API routes

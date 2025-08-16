@@ -190,12 +190,19 @@ export default function KanbanBoard() {
         </div>
       </CardHeader>
       <CardContent className={isMobile ? 'p-4' : ''}>
-        <div className={`isolate ${isMobile 
-          ? 'flex gap-3 overflow-x-auto snap-x pb-2' 
-          : isTablet 
-            ? 'grid grid-cols-2 gap-4' 
-            : 'flex gap-4 overflow-x-auto snap-x md:grid md:grid-cols-4 md:gap-6'
-        }`}>
+        {/* Enhanced scrollable container with full card visibility */}
+        <div className="relative">
+          {/* Scroll indicator for desktop */}
+          {!isMobile && (
+            <div className="absolute right-0 top-1/2 transform -translate-y-1/2 z-10 bg-gradient-to-l from-white via-white/80 to-transparent w-8 h-full pointer-events-none flex items-center justify-end pr-1">
+              <ChevronRight className="h-4 w-4 text-gray-400 animate-pulse" />
+            </div>
+          )}
+          
+          <div className={`isolate kanban-scroll-container ${isMobile 
+            ? 'flex gap-3 overflow-x-auto snap-x pb-2' 
+            : 'flex gap-4 overflow-x-auto snap-x pb-2'
+          } scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100`}>
           {statusColumns.map((column) => {
             const columnTasks = tasksByStatus[column.id] || [];
             const Icon = column.icon;
@@ -205,10 +212,8 @@ export default function KanbanBoard() {
                 key={column.id} 
                 className={`${column.color} rounded-lg ${
                   isMobile 
-                    ? 'p-3 min-w-[280px] snap-start' 
-                    : isTablet 
-                      ? 'p-4' 
-                      : 'p-5 min-w-[340px] snap-start'
+                    ? 'p-3 min-w-[320px] snap-start flex-shrink-0' 
+                    : 'p-5 min-w-[380px] snap-start flex-shrink-0'
                 } relative z-0 overflow-visible`}
                 data-testid={`kanban-column-${column.id}`}
               >
@@ -241,45 +246,26 @@ export default function KanbanBoard() {
                     >
                       <CardContent className={`${isMobile ? 'p-3 space-y-2' : 'p-4 sm:p-5 space-y-3'}`}>
                         {/* Project badge */}
-                        <div className="flex items-center justify-between">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Badge variant="outline" className={`text-xs flex items-center space-x-1 ${isMobile ? 'max-w-[120px]' : ''}`}>
-                                <Briefcase className="h-3 w-3 flex-shrink-0" />
-                                <span className="truncate">{task.project?.name || 'No Project'}</span>
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                               <p>Project this milestone belongs to</p>
-                            </TooltipContent>
-                          </Tooltip>
+                        <div className="flex items-start justify-between mb-2">
+                          <Badge variant="outline" className={`text-xs flex items-center space-x-1 ${isMobile ? 'max-w-[140px]' : 'max-w-[200px]'} flex-wrap`}>
+                            <Briefcase className="h-3 w-3 flex-shrink-0" />
+                            <span className="break-words">{task.project?.name || 'No Project'}</span>
+                          </Badge>
                           <PriorityBadge priority={task.priority} />
                         </div>
                         
                         <div>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <h5 className={`font-medium text-gray-900 ${isMobile ? 'text-sm' : 'text-sm'} line-clamp-2`} data-testid={`text-task-name-${task.id}`}>
-                                {task.name}
-                              </h5>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p className="max-w-xs whitespace-pre-wrap">{task.name}</p>
-                            </TooltipContent>
-                          </Tooltip>
+                          <h5 className={`font-medium text-gray-900 ${isMobile ? 'text-sm' : 'text-sm'} mb-2 whitespace-pre-wrap leading-relaxed`} data-testid={`text-task-name-${task.id}`}>
+                            {task.name}
+                          </h5>
                         </div>
                         
-                        {!isMobile && task.description && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <p className="text-gray-600 text-sm mb-3 line-clamp-2" data-testid={`text-task-description-${task.id}`}>
-                                {task.description}
-                              </p>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p className="max-w-sm whitespace-pre-wrap">{task.description}</p>
-                            </TooltipContent>
-                          </Tooltip>
+                        {task.description && (
+                          <div className="mb-3">
+                            <p className={`text-gray-600 ${isMobile ? 'text-xs' : 'text-sm'} whitespace-pre-wrap leading-relaxed`} data-testid={`text-task-description-${task.id}`}>
+                              {task.description}
+                            </p>
+                          </div>
                         )}
                         
                         {task.status === 'in_progress' && (
@@ -381,6 +367,7 @@ export default function KanbanBoard() {
               </div>
             );
           })}
+          </div>
         </div>
       </CardContent>
     </Card>
