@@ -10,7 +10,8 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Eye, EyeOff, Lock, Mail, User, Shield, ArrowRight, Sparkles, CheckCircle } from "lucide-react";
+import { useState } from "react";
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -25,6 +26,7 @@ type RegisterData = z.infer<typeof registerSchema>;
 export default function Register() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [showPassword, setShowPassword] = useState(false);
 
   const form = useForm<RegisterData>({
     resolver: zodResolver(registerSchema),
@@ -63,37 +65,60 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen bg-background-page flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Background decorative elements */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-200/30 to-indigo-300/30 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-tr from-indigo-200/30 to-purple-300/30 rounded-full blur-3xl"></div>
+      </div>
+
+      <div className="w-full max-w-md relative z-10">
         {/* Header */}
         <div className="flex items-center justify-center mb-8">
-          <BarChart3 className="h-8 w-8 text-primary mr-3" />
-          <h1 className="text-2xl font-bold text-gray-900">TaskFlow</h1>
+          <div className="relative">
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg blur-lg opacity-75"></div>
+            <div className="relative bg-gradient-to-r from-blue-600 to-indigo-600 p-3 rounded-lg">
+              <BarChart3 className="h-8 w-8 text-white" />
+            </div>
+          </div>
+          <div className="ml-4">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              TaskFlow
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">Project Management Platform</p>
+          </div>
         </div>
 
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle>Create Account</CardTitle>
-            <CardDescription>
-              Sign up to get started with TaskFlow
+        <Card className="border-0 shadow-2xl bg-white/80 backdrop-blur-sm">
+          <CardHeader className="text-center pb-6">
+            <div className="mx-auto w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center mb-4">
+              <User className="h-6 w-6 text-white" />
+            </div>
+            <CardTitle className="text-2xl font-bold text-gray-900">Create Account</CardTitle>
+            <CardDescription className="text-gray-600 text-base">
+              Join TaskFlow and start managing your projects efficiently
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-8 pb-8">
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
                     name="firstName"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>First Name</FormLabel>
+                        <FormLabel className="text-sm font-medium text-gray-700">First Name</FormLabel>
                         <FormControl>
-                          <Input
-                            placeholder="First name"
-                            {...field}
-                            data-testid="input-first-name"
-                          />
+                          <div className="relative">
+                            <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input
+                              placeholder="First name"
+                              className="pl-10 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500 transition-colors"
+                              {...field}
+                              data-testid="input-first-name"
+                            />
+                          </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -105,13 +130,17 @@ export default function Register() {
                     name="lastName"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Last Name</FormLabel>
+                        <FormLabel className="text-sm font-medium text-gray-700">Last Name</FormLabel>
                         <FormControl>
-                          <Input
-                            placeholder="Last name"
-                            {...field}
-                            data-testid="input-last-name"
-                          />
+                          <div className="relative">
+                            <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input
+                              placeholder="Last name"
+                              className="pl-10 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500 transition-colors"
+                              {...field}
+                              data-testid="input-last-name"
+                            />
+                          </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -124,14 +153,18 @@ export default function Register() {
                   name="email"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Email</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Email Address</FormLabel>
                       <FormControl>
-                        <Input
-                          type="email"
-                          placeholder="Enter your email"
-                          {...field}
-                          data-testid="input-email"
-                        />
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                          <Input
+                            type="email"
+                            placeholder="Enter your email"
+                            className="pl-10 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500 transition-colors"
+                            {...field}
+                            data-testid="input-email"
+                          />
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -143,14 +176,25 @@ export default function Register() {
                   name="password"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Password</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Password</FormLabel>
                       <FormControl>
-                        <Input
-                          type="password"
-                          placeholder="Create a password (min 8 characters)"
-                          {...field}
-                          data-testid="input-password"
-                        />
+                        <div className="relative">
+                          <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                          <Input
+                            type={showPassword ? "text" : "password"}
+                            placeholder="Create a password (min 8 characters)"
+                            className="pl-10 pr-12 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500 transition-colors"
+                            {...field}
+                            data-testid="input-password"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                          >
+                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -162,12 +206,15 @@ export default function Register() {
                   name="role"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Role</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Role</FormLabel>
                       <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
-                          <SelectTrigger data-testid="select-role">
-                            <SelectValue placeholder="Select your role" />
-                          </SelectTrigger>
+                          <div className="relative">
+                            <Shield className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+                            <SelectTrigger className="pl-10 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500 transition-colors" data-testid="select-role">
+                              <SelectValue placeholder="Select your role" />
+                            </SelectTrigger>
+                          </div>
                         </FormControl>
                         <SelectContent>
                           <SelectItem value="employee">Employee</SelectItem>
@@ -182,27 +229,61 @@ export default function Register() {
 
                 <Button
                   type="submit"
-                  className="w-full"
+                  className="w-full h-12 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-medium text-base shadow-lg hover:shadow-xl transition-all duration-200 transform hover:-translate-y-0.5"
                   disabled={registerMutation.isPending}
                   data-testid="button-register"
                 >
-                  {registerMutation.isPending ? "Creating account..." : "Create Account"}
+                  {registerMutation.isPending ? (
+                    <div className="flex items-center">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Creating account...
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center">
+                      Create Account
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </div>
+                  )}
                 </Button>
               </form>
             </Form>
 
-            <div className="mt-6 text-center">
+            <div className="mt-8 text-center">
               <p className="text-sm text-gray-600">
                 Already have an account?{" "}
                 <Button
                   variant="link"
-                  className="p-0 h-auto"
+                  className="p-0 h-auto text-blue-600 hover:text-blue-700 font-medium"
                   onClick={() => setLocation("/login")}
                   data-testid="link-login"
                 >
-                  Sign in
+                  Sign in here
                 </Button>
               </p>
+            </div>
+
+            {/* Features Preview */}
+            <div className="mt-8 pt-6 border-t border-gray-100">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="flex flex-col items-center">
+                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mb-2">
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                  </div>
+                  <span className="text-xs text-gray-500">Easy Setup</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mb-2">
+                    <Sparkles className="h-4 w-4 text-blue-600" />
+                  </div>
+                  <span className="text-xs text-gray-500">Smart Features</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center mb-2">
+                    <Shield className="h-4 w-4 text-purple-600" />
+                  </div>
+                  <span className="text-xs text-gray-500">Secure</span>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>

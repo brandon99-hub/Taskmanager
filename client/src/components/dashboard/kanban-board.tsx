@@ -10,9 +10,10 @@ import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import PriorityBadge from "@/components/ui/priority-badge";
-import { Filter, Search, ExternalLink, Briefcase, ClipboardList, Zap, Eye, CheckCircle, AlertTriangle, ChevronRight, Calendar, User } from "lucide-react";
+import { Filter, Search, ExternalLink, Briefcase, ClipboardList, Zap, Eye, CheckCircle, AlertTriangle, ChevronRight, Calendar, User, ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useLocation } from "wouter";
+import { useState } from "react";
 
 const statusColumns = [
   { 
@@ -51,6 +52,16 @@ export default function KanbanBoard() {
   const currentUser = user as any;
   const [, setLocation] = useLocation();
   const { isMobile, isTablet } = useScreenSize();
+
+  // Pagination state for each column
+  const [currentPages, setCurrentPages] = useState<Record<string, number>>({
+    overdue: 0,
+    highPriorityTodo: 0,
+    review: 0,
+    recentlyDone: 0
+  });
+
+  const itemsPerPage = 3;
 
   // Enhanced kanban task fetching
   const { data: kanbanTasks, isLoading } = useQuery<{
@@ -98,7 +109,16 @@ export default function KanbanBoard() {
   });
 
   const handleTaskStatusChange = (taskId: string, newStatus: string) => {
-    updateTaskMutation.mutate({ taskId, status: newStatus });
+    // Map column IDs to actual database status values
+    const statusMapping: Record<string, string> = {
+      'overdue': 'todo', // Overdue tasks are typically todo tasks that are past due
+      'highPriorityTodo': 'todo',
+      'review': 'review',
+      'recentlyDone': 'done'
+    };
+    
+    const actualStatus = statusMapping[newStatus] || newStatus;
+    updateTaskMutation.mutate({ taskId, status: actualStatus });
   };
 
   const getInitials = (name: string) => {
@@ -116,6 +136,33 @@ export default function KanbanBoard() {
       return 'My Critical Milestones';
     }
     return 'Critical Milestone Board';
+  };
+
+  // Pagination functions
+  const goToNextPage = (columnId: string) => {
+    setCurrentPages(prev => ({
+      ...prev,
+      [columnId]: Math.min(prev[columnId] + 1, Math.ceil((tasksByStatus[columnId]?.length || 0) / itemsPerPage) - 1)
+    }));
+  };
+
+  const goToPrevPage = (columnId: string) => {
+    setCurrentPages(prev => ({
+      ...prev,
+      [columnId]: Math.max(prev[columnId] - 1, 0)
+    }));
+  };
+
+  const getPaginatedTasks = (columnId: string) => {
+    const tasks = tasksByStatus[columnId] || [];
+    const startIndex = currentPages[columnId] * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return tasks.slice(startIndex, endIndex);
+  };
+
+  const getTotalPages = (columnId: string) => {
+    const tasks = tasksByStatus[columnId] || [];
+    return Math.ceil(tasks.length / itemsPerPage);
   };
 
   if (isLoading) {
@@ -206,6 +253,9 @@ export default function KanbanBoard() {
           {statusColumns.map((column) => {
             const columnTasks = tasksByStatus[column.id] || [];
             const Icon = column.icon;
+            const paginatedTasks = getPaginatedTasks(column.id);
+            const totalPages = getTotalPages(column.id);
+            const currentPage = currentPages[column.id];
             
             return (
               <div 
@@ -237,7 +287,7 @@ export default function KanbanBoard() {
                 </div>
                 
                 <div className={`space-y-${isMobile ? '3' : '4'}`}>
-                  {columnTasks.map((task: any) => (
+                  {paginatedTasks.map((task: any) => (
                     <Card 
                       key={task.id} 
                       className="bg-surface border border-gray-200 cursor-pointer hover:shadow-lg transition-shadow relative z-[1] hover:z-10"
@@ -327,8 +377,28 @@ export default function KanbanBoard() {
                         {/* Status control: icons with tooltips */}
                         <div className="pt-1 flex items-center gap-1.5">
                           {statusColumns.map((status) => {
-                            const isActive = task.status === status.id;
-                            const Icon = status.id === 'todo' ? ClipboardList : status.id === 'in_progress' ? Zap : status.id === 'review' ? Eye : CheckCircle;
+                            // Map column IDs to actual database status values
+                            const statusMapping: Record<string, string> = {
+                              'overdue': 'todo',
+                              'highPriorityTodo': 'todo',
+                              'review': 'review',
+                              'recentlyDone': 'done'
+                            };
+                            
+                            const actualStatus = statusMapping[status.id];
+                            const isActive = task.status === actualStatus;
+                            
+                            // Get the correct icon based on the actual status
+                            const Icon = actualStatus === 'todo' ? ClipboardList : 
+                                        actualStatus === 'in_progress' ? Zap : 
+                                        actualStatus === 'review' ? Eye : 
+                                        actualStatus === 'done' ? CheckCircle : ClipboardList;
+                            
+                            // Hide "done" status button for employees
+                            if (currentUser?.role === 'employee' && status.id === 'recentlyDone') {
+                              return null;
+                            }
+                            
                             return (
                               <Tooltip key={status.id}>
                                 <TooltipTrigger asChild>
@@ -358,12 +428,41 @@ export default function KanbanBoard() {
                     </Card>
                   ))}
                   
-                  {columnTasks.length === 0 && (
+                  {paginatedTasks.length === 0 && (
                     <div className="text-center py-8 text-gray-500" data-testid={`text-empty-column-${column.id}`}>
                       No {column.title.toLowerCase()} milestones
                     </div>
                   )}
                 </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-200">
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => goToPrevPage(column.id)}
+                        disabled={currentPage === 0}
+                        className="h-7 w-7 p-0"
+                      >
+                        <ChevronLeft className="h-3 w-3" />
+                      </Button>
+                      <span className="text-xs text-gray-600">
+                        {currentPage + 1} of {totalPages}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => goToNextPage(column.id)}
+                        disabled={currentPage >= totalPages - 1}
+                        className="h-7 w-7 p-0"
+                      >
+                        <ChevronRightIcon className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

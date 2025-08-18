@@ -10,7 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Eye, EyeOff, Lock, Mail, ArrowRight, Sparkles } from "lucide-react";
+import ForgotPasswordModal from "@/components/auth/forgot-password-modal";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -22,7 +23,8 @@ type LoginData = z.infer<typeof loginSchema>;
 export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [showRegister, setShowRegister] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
 
   const form = useForm<LoginData>({
     resolver: zodResolver(loginSchema),
@@ -59,37 +61,60 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-background-page flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Background decorative elements */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-200/30 to-indigo-300/30 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-tr from-indigo-200/30 to-purple-300/30 rounded-full blur-3xl"></div>
+      </div>
+
+      <div className="w-full max-w-md relative z-10">
         {/* Header */}
         <div className="flex items-center justify-center mb-8">
-          <BarChart3 className="h-8 w-8 text-primary mr-3" />
-          <h1 className="text-2xl font-bold text-gray-900">TaskFlow</h1>
+          <div className="relative">
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg blur-lg opacity-75"></div>
+            <div className="relative bg-gradient-to-r from-blue-600 to-indigo-600 p-3 rounded-lg">
+              <BarChart3 className="h-8 w-8 text-white" />
+            </div>
+          </div>
+          <div className="ml-4">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              TaskFlow
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">Project Management Platform</p>
+          </div>
         </div>
 
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle>Welcome Back</CardTitle>
-            <CardDescription>
-              Sign in to your account to continue
+        <Card className="border-0 shadow-2xl bg-white/80 backdrop-blur-sm">
+          <CardHeader className="text-center pb-6">
+            <div className="mx-auto w-12 h-12 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full flex items-center justify-center mb-4">
+              <Lock className="h-6 w-6 text-white" />
+            </div>
+            <CardTitle className="text-2xl font-bold text-gray-900">Welcome Back</CardTitle>
+            <CardDescription className="text-gray-600 text-base">
+              Sign in to your account to continue managing your projects
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-8 pb-8">
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
                 <FormField
                   control={form.control}
                   name="email"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Email</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Email Address</FormLabel>
                       <FormControl>
-                        <Input
-                          type="email"
-                          placeholder="Enter your email"
-                          {...field}
-                          data-testid="input-email"
-                        />
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                          <Input
+                            type="email"
+                            placeholder="Enter your email"
+                            className="pl-10 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500 transition-colors"
+                            {...field}
+                            data-testid="input-email"
+                          />
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -101,47 +126,110 @@ export default function Login() {
                   name="password"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Password</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Password</FormLabel>
                       <FormControl>
-                        <Input
-                          type="password"
-                          placeholder="Enter your password"
-                          {...field}
-                          data-testid="input-password"
-                        />
+                        <div className="relative">
+                          <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                          <Input
+                            type={showPassword ? "text" : "password"}
+                            placeholder="Enter your password"
+                            className="pl-10 pr-12 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500 transition-colors"
+                            {...field}
+                            data-testid="input-password"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                          >
+                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
 
+                {/* Forgot Password Link */}
+                <div className="text-right">
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="text-sm text-blue-600 hover:text-blue-700 p-0 h-auto font-medium"
+                    onClick={() => setIsForgotPasswordOpen(true)}
+                  >
+                    Forgot your password?
+                  </Button>
+                </div>
+
                 <Button
                   type="submit"
-                  className="w-full"
+                  className="w-full h-12 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium text-base shadow-lg hover:shadow-xl transition-all duration-200 transform hover:-translate-y-0.5"
                   disabled={loginMutation.isPending}
                   data-testid="button-login"
                 >
-                  {loginMutation.isPending ? "Signing in..." : "Sign In"}
+                  {loginMutation.isPending ? (
+                    <div className="flex items-center">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Signing in...
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center">
+                      Sign In
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </div>
+                  )}
                 </Button>
               </form>
             </Form>
 
-            <div className="mt-6 text-center">
+            <div className="mt-8 text-center">
               <p className="text-sm text-gray-600">
                 Don't have an account?{" "}
                 <Button
                   variant="link"
-                  className="p-0 h-auto"
+                  className="p-0 h-auto text-blue-600 hover:text-blue-700 font-medium"
                   onClick={() => setLocation("/register")}
                   data-testid="link-register"
                 >
-                  Sign up
+                  Create one now
                 </Button>
               </p>
+            </div>
+
+            {/* Features Preview */}
+            <div className="mt-8 pt-6 border-t border-gray-100">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="flex flex-col items-center">
+                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mb-2">
+                    <BarChart3 className="h-4 w-4 text-blue-600" />
+                  </div>
+                  <span className="text-xs text-gray-500">Analytics</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mb-2">
+                    <Sparkles className="h-4 w-4 text-green-600" />
+                  </div>
+                  <span className="text-xs text-gray-500">Automation</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center mb-2">
+                    <Lock className="h-4 w-4 text-purple-600" />
+                  </div>
+                  <span className="text-xs text-gray-500">Security</span>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Forgot Password Modal */}
+      <ForgotPasswordModal 
+        isOpen={isForgotPasswordOpen} 
+        onClose={() => setIsForgotPasswordOpen(false)} 
+      />
     </div>
   );
 }

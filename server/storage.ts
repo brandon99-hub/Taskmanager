@@ -7,6 +7,8 @@ import {
   projectAttachments,
   taskDependencies,
   notifications,
+  userNotificationPreferences,
+  userCalendarSettings,
   type User,
   type UpsertUser,
   type Team,
@@ -23,9 +25,13 @@ import {
   type InsertTaskDependency,
   type Notification,
   type InsertNotification,
+  type UserNotificationPreferences,
+  type InsertUserNotificationPreferences,
+  type UserCalendarSettings,
+  type InsertUserCalendarSettings,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, asc, and, or, sql, count, avg, inArray } from "drizzle-orm";
+import { eq, desc, asc, and, or, sql, count, avg, inArray, gt } from "drizzle-orm";
 
 export interface IStorage {
   // User operations (updated for local auth)
@@ -45,6 +51,18 @@ export interface IStorage {
   updateTeam(id: string, team: Partial<InsertTeam>): Promise<Team>;
   deleteTeam(id: string): Promise<void>;
   getTeamMembers(teamId: string): Promise<(TeamMember & { user: User })[]>;
+  getTeamWithWorkload(teamId: string): Promise<{
+    team: Team;
+    members: {
+      userId: string;
+      user: User;
+      totalTasks: number;
+      completedTasks: number;
+      workloadPercentage: number;
+    }[];
+    projects: any[];
+    totalTasks: number;
+  }>;
   addTeamMember(member: InsertTeamMember): Promise<TeamMember>;
   removeTeamMember(teamId: string, userId: string): Promise<void>;
   isUserInTeam(teamId: string, userId: string): Promise<boolean>;
@@ -52,7 +70,7 @@ export interface IStorage {
   // Project operations
   getProjects(): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number })[]>;
   getProject(id: string): Promise<(Project & { manager: User; team: Team | null; tasks: Task[] }) | undefined>;
-  getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null })[]>;
+  getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number })[]>;
   createProject(project: InsertProject): Promise<Project>;
   updateProject(id: string, project: Partial<InsertProject>): Promise<Project>;
   deleteProject(id: string): Promise<void>;
@@ -137,6 +155,13 @@ export interface IStorage {
   createNotification(notification: InsertNotification): Promise<Notification>;
   markNotificationRead(id: string): Promise<void>;
   markAllNotificationsRead(userId: string): Promise<void>;
+  getUserNotificationPreferences(userId: string): Promise<UserNotificationPreferences>;
+  updateUserNotificationPreferences(userId: string, preferences: InsertUserNotificationPreferences): Promise<void>;
+  getUserCalendarSettings(userId: string): Promise<UserCalendarSettings>;
+  updateUserCalendarSettings(userId: string, settings: InsertUserCalendarSettings): Promise<void>;
+  updateUserPassword(id: string, hashedPassword: string): Promise<void>;
+  getUserByResetToken(token: string): Promise<User | undefined>;
+  updateUserResetToken(userId: string, resetToken: string | null, resetTokenExpiry: Date | null): Promise<void>;
 
   // File operations
   getProjectAttachments(projectId: string): Promise<(ProjectAttachment & { uploadedBy: User })[]>;
@@ -269,6 +294,94 @@ export class DatabaseStorage implements IStorage {
       })));
   }
 
+  async getTeamWithWorkload(teamId: string): Promise<{
+    team: Team;
+    members: {
+      userId: string;
+      user: User;
+      totalTasks: number;
+      completedTasks: number;
+      workloadPercentage: number;
+    }[];
+    projects: any[];
+    totalTasks: number;
+  }> {
+    // Get team info
+    const team = await this.getTeam(teamId);
+    if (!team) {
+      throw new Error('Team not found');
+    }
+
+    // Get team members
+    const members = await this.getTeamMembers(teamId);
+    
+    // Get projects for this team
+    const teamProjects = await this.getProjectsByTeam(teamId);
+    
+    // Calculate workload for each member
+    const membersWithWorkload = await Promise.all(
+      members.map(async (member) => {
+        // Count total tasks assigned to this user in projects under this team
+        const totalTasksResult = await db
+          .select({ count: count() })
+          .from(tasks)
+          .leftJoin(projects, eq(tasks.projectId, projects.id))
+          .where(
+            and(
+              eq(tasks.assignedUserId, member.userId),
+              eq(projects.teamId, teamId)
+            )
+          );
+        
+        const totalTasks = Number(totalTasksResult[0]?.count || 0);
+        
+        // Count completed tasks
+        const completedTasksResult = await db
+          .select({ count: count() })
+          .from(tasks)
+          .leftJoin(projects, eq(tasks.projectId, projects.id))
+          .where(
+            and(
+              eq(tasks.assignedUserId, member.userId),
+              eq(projects.teamId, teamId),
+              eq(tasks.status, 'done')
+            )
+          );
+        
+        const completedTasks = Number(completedTasksResult[0]?.count || 0);
+        
+        // Calculate workload percentage
+        const workloadPercentage = totalTasks > 0 
+          ? Math.round((completedTasks / totalTasks) * 100) 
+          : 0;
+        
+        return {
+          userId: member.userId,
+          user: member.user,
+          totalTasks,
+          completedTasks,
+          workloadPercentage
+        };
+      })
+    );
+    
+    // Calculate total tasks for the team
+    const totalTasksResult = await db
+      .select({ count: count() })
+      .from(tasks)
+      .leftJoin(projects, eq(tasks.projectId, projects.id))
+      .where(eq(projects.teamId, teamId));
+    
+    const totalTasks = Number(totalTasksResult[0]?.count || 0);
+    
+    return {
+      team,
+      members: membersWithWorkload,
+      projects: teamProjects,
+      totalTasks
+    };
+  }
+
   async addTeamMember(member: InsertTeamMember): Promise<TeamMember> {
     const [newMember] = await db.insert(teamMembers).values(member).returning();
     return newMember;
@@ -322,33 +435,63 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null })[]> {
+  async getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number })[]> {
+    // Get unique project IDs that the user has access to
+    const userProjectIds = new Set<string>();
+    
     // By membership
     const byMembership = await db
-      .select()
+      .select({ projectId: projects.id })
       .from(projects)
       .leftJoin(teams, eq(projects.teamId, teams.id))
-      .leftJoin(users, eq(projects.managerId, users.id))
       .leftJoin(teamMembers, eq(teams.id, teamMembers.teamId))
       .where(eq(teamMembers.userId, userId));
+    
+    byMembership.forEach(r => {
+      if (r.projectId) userProjectIds.add(r.projectId);
+    });
 
     // By assigned tasks
     const byTasks = await db
-      .select()
+      .select({ projectId: projects.id })
       .from(tasks)
       .leftJoin(projects, eq(tasks.projectId, projects.id))
+      .where(eq(tasks.assignedUserId, userId));
+    
+    byTasks.forEach(r => {
+      if (r.projectId) userProjectIds.add(r.projectId);
+    });
+
+    if (userProjectIds.size === 0) {
+      return [];
+    }
+
+    // Now fetch complete project data with milestone counts and payment data
+    const result = await db
+      .select({
+        project: projects,
+        manager: users,
+        team: teams,
+        milestoneCount: sql<number>`COUNT(${tasks.id})`,
+        completedMilestoneCount: sql<number>`SUM(CASE WHEN ${tasks.status} = 'done' THEN 1 ELSE 0 END)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${tasks.billingStatus} = 'paid' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+      })
+      .from(projects)
       .leftJoin(users, eq(projects.managerId, users.id))
       .leftJoin(teams, eq(projects.teamId, teams.id))
-      .where(eq(tasks.assignedUserId, userId));
+      .leftJoin(tasks, eq(tasks.projectId, projects.id))
+      .where(inArray(projects.id, Array.from(userProjectIds)))
+      .groupBy(projects.id, users.id, teams.id)
+      .orderBy(desc(projects.createdAt));
 
-    const combined: Record<string, Project & { manager: User; team: Team | null }> = {};
-    for (const r of byMembership) {
-      if (r.projects) combined[r.projects.id] = { ...r.projects, manager: r.users!, team: r.teams } as any;
-    }
-    for (const r of byTasks) {
-      if (r.projects) combined[r.projects.id] = { ...r.projects, manager: r.users!, team: r.teams } as any;
-    }
-    return Object.values(combined);
+    return result.map(r => ({
+      ...r.project,
+      manager: r.manager!,
+      team: r.team ?? null,
+      milestoneCount: Number(r.milestoneCount || 0),
+      completedMilestoneCount: Number(r.completedMilestoneCount || 0),
+      paidAmount: Number(r.paidAmount || 0),
+    }));
   }
 
   async getProject(id: string): Promise<(Project & { manager: User; team: Team | null; tasks: Task[] }) | undefined> {
@@ -849,16 +992,37 @@ export class DatabaseStorage implements IStorage {
       .groupBy(users.id)
       .having(sql`COUNT(${tasks.id}) > 0`);
 
-    return workloadData.map((data) => ({
-      userId: data.userId,
-      user: data.user,
-      totalTasks: data.totalTasks,
-      completedTasks: Number(data.completedTasks),
-      workloadPercentage:
-        data.totalTasks > 0
-          ? Math.round((Number(data.completedTasks) / data.totalTasks) * 100)
-          : 0,
-    }));
+    return workloadData.map((data) => {
+      const totalTasks = data.totalTasks;
+      const completedTasks = Number(data.completedTasks);
+      
+      // Calculate workload percentage based on completion rate
+      const completionRate = totalTasks > 0 
+        ? Math.round((completedTasks / totalTasks) * 100)
+        : 0;
+      
+      // For employees, adjust workload calculation to be more realistic
+      // Base workload on actual task count, not just completion percentage
+      let workloadPercentage = completionRate;
+      
+      // If someone has very few tasks but high completion, don't show as overloaded
+      if (totalTasks <= 2 && completionRate >= 80) {
+        workloadPercentage = Math.min(completionRate, 60); // Cap at 60% for low task count
+      }
+      
+      // If someone has many tasks, their workload should reflect that
+      if (totalTasks >= 5) {
+        workloadPercentage = Math.max(workloadPercentage, 40); // Minimum 40% for high task count
+      }
+      
+      return {
+        userId: data.userId,
+        user: data.user,
+        totalTasks,
+        completedTasks,
+        workloadPercentage,
+      };
+    });
   }
 
   // Notification operations
@@ -881,6 +1045,101 @@ export class DatabaseStorage implements IStorage {
 
   async markAllNotificationsRead(userId: string): Promise<void> {
     await db.update(notifications).set({ isRead: true }).where(eq(notifications.userId, userId));
+  }
+
+  async getUserNotificationPreferences(userId: string): Promise<UserNotificationPreferences> {
+    const [preferences] = await db
+      .select()
+      .from(userNotificationPreferences)
+      .where(eq(userNotificationPreferences.userId, userId));
+    return preferences || {
+      userId: userId,
+      emailTaskAssigned: true,
+      emailTaskDueSoon: true,
+      emailTaskOverdue: true,
+      emailProjectDeadline: true,
+      emailTeamUpdates: false,
+      inAppTaskAssigned: true,
+      inAppTaskDueSoon: true,
+      inAppTaskOverdue: true,
+      inAppProjectDeadline: true,
+      inAppTeamUpdates: true,
+      dueSoonDays: 2,
+      reminderTime: "09:00"
+    };
+  }
+
+  async updateUserNotificationPreferences(userId: string, preferences: InsertUserNotificationPreferences): Promise<void> {
+    await db
+      .insert(userNotificationPreferences)
+      .values(preferences)
+      .onConflictDoUpdate({
+        target: userNotificationPreferences.userId,
+        set: {
+          ...preferences,
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  async getUserCalendarSettings(userId: string): Promise<UserCalendarSettings> {
+    const [settings] = await db
+      .select()
+      .from(userCalendarSettings)
+      .where(eq(userCalendarSettings.userId, userId));
+    return settings || {
+      id: '',
+      userId: userId,
+      isConnected: false,
+      syncEnabled: false,
+      calendarName: null,
+      reminderTime: '09:00',
+      syncFrequency: 'daily',
+      googleAccessToken: null,
+      googleRefreshToken: null,
+      googleTokenExpiry: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }
+
+  async updateUserCalendarSettings(userId: string, settings: InsertUserCalendarSettings): Promise<void> {
+    await db
+      .insert(userCalendarSettings)
+      .values(settings)
+      .onConflictDoUpdate({
+        target: userCalendarSettings.userId,
+        set: {
+          ...settings,
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  async updateUserPassword(id: string, hashedPassword: string): Promise<void> {
+    await db.update(users).set({ password: hashedPassword, updatedAt: new Date() }).where(eq(users.id, id));
+  }
+
+  async getUserByResetToken(token: string): Promise<User | undefined> {
+    const result = await db
+      .select()
+      .from(users)
+      .where(eq(users.resetToken, token))
+      .execute();
+    
+    const user = result[0];
+    if (!user || !user.resetTokenExpiry || user.resetTokenExpiry <= new Date()) {
+      return undefined;
+    }
+    
+    return user;
+  }
+
+  async updateUserResetToken(userId: string, resetToken: string | null, resetTokenExpiry: Date | null): Promise<void> {
+    await db
+      .update(users)
+      .set({ resetToken, resetTokenExpiry, updatedAt: new Date() })
+      .where(eq(users.id, userId));
   }
 
   // File operations

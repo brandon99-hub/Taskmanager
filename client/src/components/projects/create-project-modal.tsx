@@ -56,6 +56,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   const [pathname, setLocation] = useLocation();
   const search = useSearch();
   const [tasks, setTasks] = useState<NewTaskRow[]>([]);
+  const [isProcessingMilestones, setIsProcessingMilestones] = useState(false);
+  const [milestoneProgress, setMilestoneProgress] = useState({ current: 0, total: 0, message: '' });
   const isEditMode = !!project;
 
   const { data: teams = [] } = useQuery<any[]>({
@@ -151,9 +153,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         client: data.client || undefined,
       };
       
-      console.log('Sending payload:', payload);
-      console.log('Is edit mode:', isEditMode);
-      console.log('Project ID:', project?.id);
+      // Log payload for debugging (only in development)
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Sending payload:', payload);
+      }
       
       const response = isEditMode
         ? await apiRequest("PUT", `/api/projects/${project.id}`, payload)
@@ -161,15 +164,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       return response.json();
     },
     onSuccess: () => {
+      // Don't close modal here - let the onSubmit onSuccess handle it after milestones
+      // Just invalidate queries to refresh data
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/metrics"] });
-      setIsOpen(false);
-      form.reset();
-      if (onClose) onClose();
-      toast({
-        title: "Success",
-        description: isEditMode ? "Project updated successfully" : "Project created successfully",
-      });
     },
     onError: (error) => {
       if (isUnauthorizedError(error)) {
@@ -240,7 +238,59 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       onSuccess: async (project) => {
         // Handle milestones for both create and edit modes
         if (validated.length > 0) {
-          for (const t of validated) {
+          try {
+            await processMilestones(validated, project, isEditMode);
+          } catch (error) {
+            console.error('Error during milestone processing:', error);
+            toast({
+              title: "Warning",
+              description: "Project updated but some milestones failed to process.",
+              variant: "destructive",
+            });
+          }
+        }
+        
+        // Now close the modal and show success
+        setIsOpen(false);
+        form.reset();
+        if (onClose) onClose();
+        toast({
+          title: "Success",
+          description: isEditMode ? "Project updated successfully" : "Project created successfully",
+        });
+      }
+    });
+  };
+
+  // New function to handle milestone processing with batch processing and retry logic
+  const processMilestones = async (validated: any[], project: any, isEditMode: boolean) => {
+    const batchSize = 3; // Process 3 milestones at a time
+    const maxRetries = 3;
+    const results: { milestone: any; success: boolean; error?: string; retries: number }[] = [];
+    
+    setIsProcessingMilestones(true);
+    setMilestoneProgress({ current: 0, total: validated.length, message: 'Starting milestone updates...' });
+    
+    try {
+      // Process milestones in batches
+      for (let i = 0; i < validated.length; i += batchSize) {
+        const batch = validated.slice(i, i + batchSize);
+        const batchNumber = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(validated.length / batchSize);
+        
+        setMilestoneProgress({ 
+          current: i, 
+          total: validated.length, 
+          message: `Processing batch ${batchNumber}/${totalBatches}...` 
+        });
+        
+        // Process each milestone in the current batch
+        const batchPromises = batch.map(async (t) => {
+          let retries = 0;
+          let success = false;
+          let error = '';
+          
+          while (retries < maxRetries && !success) {
             try {
               const payload = {
                 name: t.name,
@@ -260,40 +310,94 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                 // Create new milestone
                 await apiRequest('POST', '/api/tasks', payload);
               }
+              
+              success = true;
             } catch (e: any) {
-              let description = `Milestone: ${t.name}`;
-              try {
-                const raw = (e?.message || '').replace(/^\d{3}:\s*/, '');
-                const parsed = JSON.parse(raw);
-                if (parsed?.errors && parsed.errors[0]?.message) {
-                  description = `${description} — ${parsed.errors[0].message}`;
-                } else if (parsed?.message) {
-                  description = `${description} — ${parsed.message}`;
-                }
-              } catch {}
-              toast({ title: 'Milestone operation failed', description, variant: 'destructive' });
+              retries++;
+              error = e?.message || 'Unknown error';
+              
+              if (retries < maxRetries) {
+                // Wait a bit before retrying (exponential backoff)
+                await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+              }
             }
           }
-
-          // In edit mode, remove milestones that were deleted
-          if (isEditMode && existingMilestones.length > 0) {
-            const currentMilestoneIds = validated.map((t: any) => t.id).filter(Boolean);
-            const milestonesToDelete = existingMilestones.filter((m: any) => 
-              !currentMilestoneIds.includes(m.id)
-            );
-            
-            for (const milestone of milestonesToDelete) {
-              try {
-                await apiRequest('DELETE', `/api/tasks/${milestone.id}`);
-              } catch (e: any) {
-                console.error('Failed to delete milestone:', e);
-                toast({ title: 'Warning', description: `Failed to delete milestone: ${milestone.name}`, variant: 'destructive' });
-              }
+          
+          return { milestone: t, success, error, retries };
+        });
+        
+        // Wait for all milestones in the current batch to complete
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+        
+        // Small delay between batches to avoid overwhelming the server
+        if (i + batchSize < validated.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      // Process deletion of removed milestones in edit mode
+      if (isEditMode && existingMilestones.length > 0) {
+        const currentMilestoneIds = validated.map((t: any) => t.id).filter(Boolean);
+        const milestonesToDelete = existingMilestones.filter((m: any) => 
+          !currentMilestoneIds.includes(m.id)
+        );
+        
+        if (milestonesToDelete.length > 0) {
+          console.log(`🗑️ Processing ${milestonesToDelete.length} milestones for deletion`);
+          
+          for (const milestone of milestonesToDelete) {
+            try {
+              await apiRequest('DELETE', `/api/tasks/${milestone.id}`);
+              console.log(`✅ Deleted milestone: ${milestone.name}`);
+            } catch (e: any) {
+              console.error('Failed to delete milestone:', e);
+              toast({ title: 'Warning', description: `Failed to delete milestone: ${milestone.name}`, variant: 'destructive' });
             }
           }
         }
       }
-    });
+      
+      // Generate comprehensive results report
+      const successful = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
+      
+      // Show detailed results to user
+      if (failed.length === 0) {
+        toast({
+          title: 'Success',
+          description: `All ${successful.length} milestones processed successfully!`,
+        });
+      } else if (failed.length < successful.length) {
+        // Partial success
+        toast({
+          title: 'Partial Success',
+          description: `${successful.length} milestones updated, ${failed.length} failed.`,
+          variant: 'default',
+        });
+      } else {
+        // Mostly failed
+        toast({
+          title: 'Update Failed',
+          description: `${failed.length} out of ${results.length} milestones failed to update. Please try again.`,
+          variant: 'destructive',
+        });
+      }
+      
+      // Invalidate queries to refresh data
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+    } catch (error) {
+      console.error('Error processing milestones:', error);
+      toast({
+        title: 'Error',
+        description: 'An unexpected error occurred while processing milestones. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsProcessingMilestones(false);
+      setMilestoneProgress({ current: 0, total: 0, message: '' });
+    }
   };
 
   // Open modal when URL contains ?new=project (e.g., from Quick Actions)
@@ -629,21 +733,48 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
               )}
             </div>
 
+            {/* Progress indicator for milestone processing */}
+            {isProcessingMilestones && (
+              <div className="pt-4 border-t border-gray-200">
+                <div className="flex items-center space-x-3 mb-3">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                  <span className="text-sm font-medium text-gray-700">
+                    {milestoneProgress.message}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${milestoneProgress.total > 0 ? (milestoneProgress.current / milestoneProgress.total) * 100 : 0}%` }}
+                  ></div>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  {milestoneProgress.current} of {milestoneProgress.total} milestones processed
+                </p>
+              </div>
+            )}
+
             <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => setIsOpen(false)}
+                disabled={isProcessingMilestones}
                 data-testid="button-cancel-project"
               >
                 Cancel
               </Button>
               <Button 
                 type="submit" 
-                disabled={createProjectMutation.isPending}
+                disabled={createProjectMutation.isPending || isProcessingMilestones}
                 data-testid="button-submit-project"
               >
-                {createProjectMutation.isPending ? (isEditMode ? "Saving..." : "Creating...") : (isEditMode ? "Save Changes" : "Create Project")}
+                {isProcessingMilestones 
+                  ? "Processing Milestones..." 
+                  : createProjectMutation.isPending 
+                    ? (isEditMode ? "Saving..." : "Creating...") 
+                    : (isEditMode ? "Save Changes" : "Create Project")
+                }
               </Button>
             </div>
           </form>

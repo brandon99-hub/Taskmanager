@@ -34,11 +34,25 @@ export default function TeamWorkload() {
     return 'bg-success';
   };
 
-  const getWorkloadStatus = (percentage: number) => {
-    if (percentage >= 90) return { label: 'Overloaded', variant: 'destructive' as const };
-    if (percentage >= 75) return { label: 'High', variant: 'secondary' as const };
-    if (percentage >= 50) return { label: 'Normal', variant: 'outline' as const };
-    return { label: 'Light', variant: 'outline' as const };
+  const getWorkloadStatus = (percentage: number, totalTasks: number) => {
+    // For employees, consider both completion rate and task count
+    if (totalTasks <= 2) {
+      // Low task count - focus on completion rate
+      if (percentage >= 80) return { label: 'Excellent', variant: 'default' as const };
+      if (percentage >= 60) return { label: 'Good', variant: 'secondary' as const };
+      return { label: 'Normal', variant: 'outline' as const };
+    } else if (totalTasks <= 4) {
+      // Medium task count
+      if (percentage >= 90) return { label: 'Overloaded', variant: 'destructive' as const };
+      if (percentage >= 75) return { label: 'High', variant: 'secondary' as const };
+      if (percentage >= 50) return { label: 'Normal', variant: 'outline' as const };
+      return { label: 'Light', variant: 'outline' as const };
+    } else {
+      // High task count
+      if (percentage >= 80) return { label: 'Overloaded', variant: 'destructive' as const };
+      if (percentage >= 60) return { label: 'High', variant: 'secondary' as const };
+      return { label: 'Normal', variant: 'outline' as const };
+    }
   };
 
   const getInitials = (name: string) => {
@@ -165,7 +179,7 @@ export default function TeamWorkload() {
         ) : (
           <div className={`space-y-${isMobile ? '3' : '4'}`}>
             {workload.slice(0, isMobile ? 4 : 6).map((member: any) => {
-              const workloadStatus = getWorkloadStatus(member.workloadPercentage);
+              const workloadStatus = getWorkloadStatus(member.workloadPercentage, member.totalTasks);
               
               return (
                 <div 

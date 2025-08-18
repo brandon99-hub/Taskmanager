@@ -11,6 +11,7 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import { generateExcelBuffer } from "./utils/excelExport";
+import { notificationService } from "./services/notificationService";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -215,12 +216,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/teams/:id', isAuthenticated, async (req, res) => {
     try {
-      const team = await storage.getTeam(req.params.id);
-      if (!team) {
-        return res.status(404).json({ message: "Team not found" });
-      }
-      const members = await storage.getTeamMembers(req.params.id);
-      res.json({ ...team, members });
+      const teamWithWorkload = await storage.getTeamWithWorkload(req.params.id);
+      res.json(teamWithWorkload);
     } catch (error) {
       console.error("Error fetching team:", error);
       res.status(500).json({ message: "Failed to fetch team" });
@@ -353,9 +350,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Forbidden' });
       }
 
-      // Use the same approach as POST route - validate manually instead of relying on Zod for dates
-      console.log('PUT /api/projects/:id - Original request body:', req.body);
-      
       const payload: any = {
         name: req.body.name ? String(req.body.name).trim() : undefined,
         description: req.body.description ? String(req.body.description).trim() : undefined,
@@ -368,7 +362,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Handle dates manually
       if (req.body.startDate) {
-        console.log('Processing startDate:', req.body.startDate, 'type:', typeof req.body.startDate);
         const start = new Date(req.body.startDate);
         if (Number.isNaN(start.getTime())) {
           return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['startDate'], message: 'Invalid start date' }] });
@@ -377,7 +370,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       if (req.body.endDate) {
-        console.log('Processing endDate:', req.body.endDate, 'type:', typeof req.body.endDate);
         const end = new Date(req.body.endDate);
         if (Number.isNaN(end.getTime())) {
           return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['endDate'], message: 'Invalid end date' }] });
@@ -396,9 +388,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
           delete payload[key];
         }
       });
-
-      console.log('PUT /api/projects/:id - Processed payload:', payload);
+      
+      // Get existing project for comparison
+      const existingProject = await storage.getProject(req.params.id);
+      
       const project = await storage.updateProject(req.params.id, payload);
+      
+      // Handle notifications for deadline changes
+      if (payload.endDate && existingProject?.endDate && 
+          new Date(payload.endDate).getTime() !== new Date(existingProject.endDate).getTime()) {
+        
+        // Get project team members to notify about deadline changes
+        if (project.teamId) {
+          const teamMembers = await storage.getTeamMembers(project.teamId);
+          
+          for (const member of teamMembers) {
+            const user = await storage.getUser(member.userId);
+            if (user && user.isActive) {
+              await notificationService.sendProjectDeadlineNotification({
+                project: project,
+                user: user
+              });
+            }
+          }
+        }
+      }
+      
       res.json(project);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -512,15 +527,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const task = await storage.createTask(taskData);
 
-      // Create notification for assigned user
+      // Create notification for assigned user using notification service (respects preferences)
       if (taskData.assignedUserId && taskData.assignedUserId !== (req as any).user.id) {
-        await storage.createNotification({
-          userId: taskData.assignedUserId,
-          title: "New Task Assigned",
-          message: `You have been assigned a new task: ${taskData.name}`,
-          type: "task_assigned",
-          relatedId: task.id,
-        });
+        const assignedUser = await storage.getUser(taskData.assignedUserId);
+        const project = await storage.getProject(taskData.projectId);
+        
+        if (assignedUser && project) {
+          await notificationService.sendTaskAssignedNotification({
+            task: task,
+            project: project,
+            user: assignedUser,
+            assignedBy: req.user
+          });
+        }
       }
 
       res.status(201).json(task);
@@ -535,8 +554,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/tasks/:id', isAuthenticated, async (req, res) => {
     try {
-      console.log('PUT /api/tasks/:id - Original request body:', req.body);
-      
       // Build payload manually to avoid Zod type conversion issues
       const payload: any = {};
       
@@ -598,15 +615,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const existing = await storage.getTask(req.params.id);
         if (existing?.project) {
           if (payload.startDate && existing.project.startDate && payload.startDate < existing.project.startDate) {
-            return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['startDate'], message: 'Task start cannot be before project start' }] });
+            return res.status(400).json({ 
+              message: 'Invalid task data', 
+              errors: [{ 
+                path: ['startDate'], 
+                message: `Task start date (${payload.startDate.toISOString().split('T')[0]}) cannot be before project start date (${existing.project.startDate.toISOString().split('T')[0]})` 
+              }] 
+            });
           }
           if (payload.dueDate && existing.project.endDate && payload.dueDate > existing.project.endDate) {
-            return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['dueDate'], message: 'Task due cannot be after project end' }] });
+            return res.status(400).json({ 
+              message: 'Invalid task data', 
+              errors: [{ 
+                path: ['dueDate'], 
+                message: `Task due date (${payload.dueDate.toISOString().split('T')[0]}) cannot be after project end date (${existing.project.endDate.toISOString().split('T')[0]})` 
+              }] 
+            });
           }
         }
       }
-      
-      console.log('PUT /api/tasks/:id - Processed payload:', payload);
       
       // Validate assigned user is team member
       if (payload.assignedUserId) {
@@ -614,12 +641,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (existing?.project?.teamId) {
           const isMember = await storage.isUserInTeam(existing.project.teamId, payload.assignedUserId);
           if (!isMember) {
-            return res.status(400).json({ message: "Assigned user must be a member of the project's team" });
+            const assignedUser = await storage.getUser(payload.assignedUserId);
+            const project = await storage.getProject(existing.projectId);
+            return res.status(400).json({ 
+              message: "Assigned user must be a member of the project's team",
+              details: {
+                assignedUser: assignedUser ? `${assignedUser.firstName} ${assignedUser.lastName}` : payload.assignedUserId,
+                projectTeam: project?.team?.name || 'Unknown team'
+              }
+            });
           }
         }
       }
       
+      // Get existing task for status comparison
+      const existing = await storage.getTask(req.params.id);
+      
       const task = await storage.updateTask(req.params.id, payload);
+      
+      // Handle notifications for task reassignment
+      if (payload.assignedUserId && payload.assignedUserId !== existing?.assignedUserId) {
+        const project = await storage.getProject(task.projectId);
+        const assignedUser = await storage.getUser(payload.assignedUserId);
+        
+        if (project && assignedUser) {
+          console.log(`Task ${task.id} reassigned to user ${assignedUser.email}, sending notification...`);
+          await notificationService.sendTaskAssignedNotification({
+            task: task,
+            project: project,
+            user: assignedUser,
+            assignedBy: req.user
+          });
+        }
+      }
+      
+      // Handle notifications for status changes
+      if (payload.status && payload.status !== existing?.status) {
+        const project = await storage.getProject(task.projectId);
+        const assignedUser = task.assignedUserId ? await storage.getUser(task.assignedUserId) : null;
+        
+        if (project && assignedUser) {
+          // Notify when task is moved to review
+          if (payload.status === 'review' && existing?.status !== 'review') {
+            await notificationService.sendTaskAssignedNotification({
+              task: task,
+              project: project,
+              user: assignedUser,
+              assignedBy: req.user
+            });
+          }
+          
+          // Notify when task is completed
+          if (payload.status === 'done' && existing?.status !== 'done') {
+            await notificationService.sendTaskAssignedNotification({
+              task: task,
+              project: project,
+              user: assignedUser,
+              assignedBy: req.user
+            });
+          }
+        }
+      }
+      
       res.json(task);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -677,6 +760,248 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error marking all notifications as read:", error);
       res.status(500).json({ message: "Failed to mark all notifications as read" });
+    }
+  });
+
+  // Test endpoint to create sample notifications (remove in production)
+  app.post('/api/notifications/test', isAuthenticated, async (req: any, res) => {
+    try {
+      const sampleNotifications = [
+        {
+          id: `test-${Date.now()}-1`,
+          userId: req.user.id,
+          title: 'New Task Assigned',
+          message: 'You have been assigned a new task: "Update User Dashboard"',
+          type: 'task_assigned',
+          relatedId: 'test-task-1',
+          isRead: false,
+          createdAt: new Date(),
+        },
+        {
+          id: `test-${Date.now()}-2`,
+          userId: req.user.id,
+          title: 'Task Due Soon',
+          message: 'Task "Complete API Documentation" is due in 2 days',
+          type: 'task_overdue',
+          relatedId: 'test-task-2',
+          isRead: false,
+          createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
+        }
+      ];
+
+      // Insert sample notifications
+      for (const notification of sampleNotifications) {
+        await storage.createNotification(notification);
+      }
+
+      res.json({ message: 'Sample notifications created', count: sampleNotifications.length });
+    } catch (error) {
+      console.error("Error creating test notifications:", error);
+      res.status(500).json({ message: "Failed to create test notifications" });
+    }
+  });
+
+  // Manual notification check endpoints
+  app.post('/api/notifications/check-due-soon', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Only managers and admins can trigger notification checks' });
+      }
+      
+      const result = await notificationService.manualDueSoonCheck();
+      res.json({ 
+        message: 'Due soon notification check completed', 
+        processed: result.processed, 
+        sent: result.sent 
+      });
+    } catch (error) {
+      console.error("Error checking due soon notifications:", error);
+      res.status(500).json({ message: "Failed to check due soon notifications" });
+    }
+  });
+
+  app.post('/api/notifications/check-overdue', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Only managers and admins can trigger notification checks' });
+      }
+      
+      const result = await notificationService.manualOverdueCheck();
+      res.json({ 
+        message: 'Overdue notification check completed', 
+        processed: result.processed, 
+        sent: result.sent 
+      });
+    } catch (error) {
+      console.error("Error checking overdue notifications:", error);
+      res.status(500).json({ message: "Failed to check overdue notifications" });
+    }
+  });
+
+  // User notification preferences routes
+  app.get('/api/user/notification-preferences', isAuthenticated, async (req: any, res) => {
+    try {
+      const preferences = await storage.getUserNotificationPreferences(req.user.id);
+      res.json(preferences);
+    } catch (error) {
+      console.error("Error fetching notification preferences:", error);
+      res.status(500).json({ message: "Failed to fetch notification preferences" });
+    }
+  });
+
+  app.put('/api/user/notification-preferences', isAuthenticated, async (req: any, res) => {
+    try {
+      await storage.updateUserNotificationPreferences(req.user.id, req.body);
+      res.json({ message: "Notification preferences updated successfully" });
+    } catch (error) {
+      console.error("Error updating notification preferences:", error);
+      res.status(500).json({ message: "Failed to update notification preferences" });
+    }
+  });
+
+  // User Google Calendar settings routes
+  app.get('/api/user/calendar-settings', isAuthenticated, async (req: any, res) => {
+    try {
+      const settings = await storage.getUserCalendarSettings(req.user.id);
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching calendar settings:", error);
+      res.status(500).json({ message: "Failed to fetch calendar settings" });
+    }
+  });
+
+  app.put('/api/user/calendar-settings', isAuthenticated, async (req: any, res) => {
+    try {
+      await storage.updateUserCalendarSettings(req.user.id, req.body);
+      res.json({ message: "Calendar settings updated successfully" });
+    } catch (error) {
+      console.error("Error updating calendar settings:", error);
+      res.status(500).json({ message: "Failed to update calendar settings" });
+    }
+  });
+
+  // Google OAuth routes
+  app.get('/api/auth/google', isAuthenticated, async (req: any, res) => {
+    try {
+      const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${process.env.GOOGLE_CLIENT_ID}&` +
+        `redirect_uri=${process.env.GOOGLE_REDIRECT_URI}&` +
+        `scope=https://www.googleapis.com/auth/calendar&` +
+        `response_type=code&` +
+        `access_type=offline&` +
+        `prompt=consent&` +
+        `state=${req.user.id}`;
+      
+      res.json({ authUrl: googleAuthUrl });
+    } catch (error) {
+      console.error("Error generating Google auth URL:", error);
+      res.status(500).json({ message: "Failed to generate auth URL" });
+    }
+  });
+
+  app.get('/api/auth/google/callback', async (req: any, res) => {
+    try {
+      const { code, state } = req.query;
+      const userId = state as string;
+
+      if (!code || !userId) {
+        return res.status(400).json({ message: "Missing authorization code or user ID" });
+      }
+
+      // Exchange code for tokens
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: process.env.GOOGLE_CLIENT_ID!,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+          code: code as string,
+          grant_type: 'authorization_code',
+          redirect_uri: process.env.GOOGLE_REDIRECT_URI!,
+        }),
+      });
+
+      const tokens = await tokenResponse.json();
+
+      if (tokens.error) {
+        throw new Error(`Google OAuth error: ${tokens.error_description || tokens.error}`);
+      }
+
+      // Fetch the user's primary calendar name
+      let calendarName = 'Google Calendar';
+      try {
+        const calendarResponse = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList/primary', {
+          headers: {
+            'Authorization': `Bearer ${tokens.access_token}`,
+          },
+        });
+        
+        if (calendarResponse.ok) {
+          const calendarData = await calendarResponse.json();
+          calendarName = calendarData.summary || 'Google Calendar';
+        }
+      } catch (calendarError) {
+        console.warn('Could not fetch calendar name, using default:', calendarError);
+      }
+
+      // Update user calendar settings
+      await storage.updateUserCalendarSettings(userId, {
+        userId,
+        isConnected: true,
+        syncEnabled: true,
+        calendarName: calendarName,
+        googleAccessToken: tokens.access_token,
+        googleRefreshToken: tokens.refresh_token,
+        googleTokenExpiry: new Date(Date.now() + (tokens.expires_in * 1000)),
+      });
+
+      // Redirect to profile page with success
+      res.redirect('/profile?calendar=connected');
+    } catch (error) {
+      console.error("Error in Google OAuth callback:", error);
+      res.redirect('/profile?calendar=error');
+    }
+  });
+
+  app.post('/api/user/calendar-connect', isAuthenticated, async (req: any, res) => {
+    try {
+      // This endpoint initiates the OAuth flow
+      const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${process.env.GOOGLE_CLIENT_ID}&` +
+        `redirect_uri=${process.env.GOOGLE_REDIRECT_URI}&` +
+        `scope=https://www.googleapis.com/auth/calendar&` +
+        `response_type=code&` +
+        `access_type=offline&` +
+        `prompt=consent&` +
+        `state=${req.user.id}`;
+      
+      res.json({ 
+        message: "Calendar connection initiated successfully",
+        authUrl: googleAuthUrl
+      });
+    } catch (error) {
+      console.error("Error connecting calendar:", error);
+      res.status(500).json({ message: "Failed to connect calendar" });
+    }
+  });
+
+  app.post('/api/user/calendar-disconnect', isAuthenticated, async (req: any, res) => {
+    try {
+      await storage.updateUserCalendarSettings(req.user.id, {
+        userId: req.user.id,
+        isConnected: false,
+        syncEnabled: false,
+        googleAccessToken: null,
+        googleRefreshToken: null,
+        googleTokenExpiry: null,
+      });
+      
+      res.json({ message: "Calendar disconnected successfully" });
+    } catch (error) {
+      console.error("Error disconnecting calendar:", error);
+      res.status(500).json({ message: "Failed to disconnect calendar" });
     }
   });
 

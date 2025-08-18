@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URGENT: Task Overdue - TaskFlow</title>
+    <style>
+        /* Reset styles */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }
+        
+        /* Container */
+        .email-container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: #ffffff; 
+            border-radius: 12px; 
+            overflow: hidden; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
+            border: 2px solid #ef4444; 
+        }
+        
+        /* Critical Alert Banner */
+        .critical-banner {
+            background: linear-gradient(90deg, #dc2626 0%, #ef4444 100%);
+            color: white;
+            padding: 15px 20px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 18px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .critical-icon {
+            display: inline-block;
+            margin-right: 10px;
+            animation: flash 1.5s infinite;
+            font-size: 20px;
+        }
+        
+        @keyframes flash {
+            0%, 50% { opacity: 1; }
+            25%, 75% { opacity: 0.3; }
+        }
+        
+        /* Header */
+        .header { 
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); 
+            padding: 30px 20px; 
+            text-align: center; 
+            color: white; 
+        }
+        .logo { height: 40px; margin-bottom: 15px; }
+        .header h1 { 
+            font-size: 28px; 
+            font-weight: 700; 
+            margin: 0; 
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3); 
+        }
+        .header p { 
+            font-size: 16px; 
+            opacity: 0.9; 
+            margin-top: 8px; 
+        }
+        
+        /* Content */
+        .content { padding: 30px 20px; }
+        .greeting { 
+            font-size: 20px; 
+            color: #333; 
+            margin-bottom: 20px; 
+            font-weight: 500; 
+        }
+        .intro { 
+            font-size: 16px; 
+            color: #dc2626; 
+            margin-bottom: 30px; 
+            line-height: 1.6; 
+            font-weight: 600; 
+            background: #fef2f2; 
+            padding: 15px; 
+            border-radius: 8px; 
+            border-left: 4px solid #ef4444; 
+        }
+        
+        /* Overdue Alert */
+        .overdue-alert {
+            background: linear-gradient(135deg, #fecaca 0%, #fca5a5 100%);
+            border: 2px solid #ef4444;
+            border-radius: 12px;
+            padding: 25px;
+            text-align: center;
+            margin: 25px 0;
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.2);
+        }
+        .overdue-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+            display: block;
+            animation: shake 2s infinite;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+        
+        .overdue-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #991b1b;
+            margin-bottom: 10px;
+        }
+        .overdue-message {
+            font-size: 18px;
+            color: #7f1d1d;
+            font-weight: 600;
+        }
+        .days-overdue {
+            background: #991b1b;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 700;
+            margin-top: 15px;
+            display: inline-block;
+        }
+        
+        /* Task Card */
+        .task-card { 
+            background: #fef2f2; 
+            border-radius: 12px; 
+            padding: 25px; 
+            margin: 25px 0; 
+            border-left: 6px solid #dc2626; 
+            box-shadow: 0 4px 15px rgba(220, 38, 38, 0.1); 
+            border: 1px solid #fecaca; 
+        }
+        
+        .task-header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: flex-start; 
+            margin-bottom: 15px; 
+            flex-wrap: wrap; 
+        }
+        .task-title { 
+            font-size: 22px; 
+            font-weight: 600; 
+            color: #991b1b; 
+            margin: 0; 
+            flex: 1; 
+            min-width: 200px; 
+        }
+        
+        /* Priority Badge */
+        .priority-badge { 
+            display: inline-block; 
+            padding: 8px 16px; 
+            border-radius: 20px; 
+            font-size: 12px; 
+            font-weight: 700; 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px; 
+            margin-left: 10px; 
+            background: #991b1b; 
+            color: white; 
+            animation: pulse 2s infinite; 
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        .task-description { 
+            font-size: 16px; 
+            color: #7f1d1d; 
+            margin: 15px 0; 
+            line-height: 1.6; 
+        }
+        
+        /* Task Details Grid */
+        .task-details { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 20px; 
+            margin: 20px 0; 
+        }
+        .detail-item { 
+            background: white; 
+            padding: 15px; 
+            border-radius: 8px; 
+            border: 1px solid #fca5a5; 
+        }
+        .detail-item.highlight {
+            border: 2px solid #ef4444;
+            background: #fffbfb;
+        }
+        .detail-label { 
+            font-size: 14px; 
+            font-weight: 600; 
+            color: #991b1b; 
+            margin-bottom: 5px; 
+            display: flex; 
+            align-items: center; 
+        }
+        .detail-label .icon { margin-right: 6px; }
+        .detail-value { 
+            font-size: 16px; 
+            font-weight: 500; 
+            color: #1f2937; 
+        }
+        .overdue-value {
+            color: #dc2626;
+            font-weight: 700;
+        }
+        
+        /* Escalation Notice */
+        .escalation-notice {
+            background: #7f1d1d;
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 25px 0;
+            text-align: center;
+        }
+        .escalation-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .escalation-text {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        /* Action Buttons */
+        .action-buttons { 
+            text-align: center; 
+            margin: 30px 0; 
+        }
+        .action-button { 
+            display: inline-block; 
+            padding: 16px 32px; 
+            margin: 8px; 
+            border-radius: 8px; 
+            text-decoration: none; 
+            font-weight: 700; 
+            font-size: 16px; 
+            transition: all 0.3s ease; 
+            min-width: 180px; 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px; 
+        }
+        .btn-urgent { 
+            background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); 
+            color: white; 
+            box-shadow: 0 6px 20px rgba(220, 38, 38, 0.4); 
+            animation: glow 2s infinite; 
+        }
+        .btn-urgent:hover { 
+            transform: translateY(-3px); 
+            box-shadow: 0 8px 25px rgba(220, 38, 38, 0.6); 
+        }
+        
+        @keyframes glow {
+            0%, 100% { box-shadow: 0 6px 20px rgba(220, 38, 38, 0.4); }
+            50% { box-shadow: 0 6px 25px rgba(220, 38, 38, 0.7); }
+        }
+        
+        .btn-secondary { 
+            background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); 
+            color: white; 
+            box-shadow: 0 4px 15px rgba(107, 114, 128, 0.4); 
+        }
+        .btn-secondary:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 6px 20px rgba(107, 114, 128, 0.6); 
+        }
+        
+        /* Footer */
+        .footer { 
+            background: #f9fafb; 
+            padding: 30px 20px; 
+            text-align: center; 
+            border-top: 1px solid #e5e7eb; 
+        }
+        .footer-brand { 
+            font-size: 18px; 
+            font-weight: 600; 
+            color: #374151; 
+            margin-bottom: 10px; 
+        }
+        .footer-text { 
+            font-size: 14px; 
+            color: #6b7280; 
+            margin: 5px 0; 
+        }
+        .footer-links { 
+            margin-top: 15px; 
+        }
+        .footer-link { 
+            color: #dc2626; 
+            text-decoration: none; 
+            font-size: 14px; 
+            margin: 0 15px; 
+        }
+        .footer-link:hover { color: #991b1b; }
+        
+        /* Mobile Responsive */
+        @media (max-width: 600px) {
+            .email-container { margin: 10px; border-radius: 8px; }
+            .header { padding: 20px 15px; }
+            .header h1 { font-size: 24px; }
+            .content { padding: 20px 15px; }
+            .task-card { padding: 20px 15px; }
+            .task-header { flex-direction: column; align-items: flex-start; }
+            .task-title { margin-bottom: 10px; }
+            .task-details { grid-template-columns: 1fr; gap: 15px; }
+            .action-button { display: block; margin: 10px 0; width: 100%; }
+            .overdue-icon { font-size: 40px; }
+            .overdue-title { font-size: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <!-- Critical Alert Banner -->
+        <div class="critical-banner">
+            <span class="critical-icon">🚨</span>
+            URGENT: Task Overdue - Immediate Action Required
+        </div>
+        
+        <!-- Header -->
+        <div class="header">
+            {{#if logoUrl}}
+            <img src="{{logoUrl}}" alt="TaskFlow" class="logo">
+            {{/if}}
+            <h1>Task Overdue Alert</h1>
+            <p>Critical deadline has been missed</p>
+        </div>
+        
+        <!-- Content -->
+        <div class="content">
+            <!-- Greeting -->
+            <div class="greeting">
+                Hi {{userName}},
+            </div>
+            
+            <!-- Critical Introduction -->
+            <div class="intro">
+                🚨 <strong>URGENT:</strong> Your task "{{taskName}}" in {{projectName}} is now overdue and requires immediate attention. This may impact project timelines and team deliverables.
+            </div>
+            
+            <!-- Overdue Alert -->
+            <div class="overdue-alert">
+                <span class="overdue-icon">⚠️</span>
+                <div class="overdue-title">Task is Overdue</div>
+                <div class="overdue-message">Original due date: {{dueDate}}</div>
+                <div class="days-overdue">Action required immediately</div>
+            </div>
+            
+            <!-- Task Card -->
+            <div class="task-card">
+                <div class="task-header">
+                    <h3 class="task-title">{{taskName}}</h3>
+                    <span class="priority-badge">OVERDUE</span>
+                </div>
+                
+                {{#if taskDescription}}
+                <div class="task-description">{{taskDescription}}</div>
+                {{/if}}
+                
+                <!-- Task Details Grid -->
+                <div class="task-details">
+                    <div class="detail-item highlight">
+                        <div class="detail-label">⚠️ Due Date</div>
+                        <div class="detail-value overdue-value">{{dueDate}} (OVERDUE)</div>
+                    </div>
+                    
+                    {{#if feeAmount}}
+                    <div class="detail-item">
+                        <div class="detail-label">💰 Fee Amount</div>
+                        <div class="detail-value">KSh {{feeAmount}}</div>
+                    </div>
+                    {{/if}}
+                    
+                    <div class="detail-item">
+                        <div class="detail-label">👥 Project</div>
+                        <div class="detail-value">{{projectName}}</div>
+                    </div>
+                    
+                    <div class="detail-item highlight">
+                        <div class="detail-label">📊 Current Status</div>
+                        <div class="detail-value overdue-value">OVERDUE - {{progressPercent}}% Complete</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Escalation Notice -->
+            <div class="escalation-notice">
+                <div class="escalation-title">📢 Escalation Notice</div>
+                <div class="escalation-text">
+                    This overdue task has been flagged for management attention. Please update the status immediately or contact your project manager for assistance.
+                </div>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="action-buttons">
+                {{#if updateUrl}}
+                <a href="{{updateUrl}}" class="action-button btn-urgent">Update Task Now</a>
+                {{/if}}
+                {{#if taskUrl}}
+                <a href="{{taskUrl}}" class="action-button btn-secondary">View Task Details</a>
+                {{/if}}
+            </div>
+            
+            <!-- Next Steps Section -->
+            <div style="background: #fef2f2; padding: 20px; border-radius: 8px; border-left: 4px solid #dc2626; margin-top: 20px;">
+                <h4 style="color: #991b1b; margin-bottom: 15px;">🔥 Immediate Next Steps</h4>
+                <ol style="color: #7f1d1d; margin: 0; padding-left: 20px; line-height: 1.8;">
+                    <li><strong>Update the task status immediately</strong> with current progress</li>
+                    <li><strong>Communicate with your project manager</strong> about the delay</li>
+                    <li><strong>Provide a realistic completion timeline</strong> for planning purposes</li>
+                    <li><strong>Identify any blockers or support needed</strong> to complete the task</li>
+                </ol>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-brand">TaskFlow</div>
+            <div class="footer-text">Project Management Made Simple</div>
+            <div class="footer-text">© 2024 AppKings Solutions Limited</div>
+            <div class="footer-links">
+                {{#if preferencesUrl}}
+                <a href="{{preferencesUrl}}" class="footer-link">Manage Preferences</a>
+                {{/if}}
+                {{#if unsubscribeUrl}}
+                <a href="{{unsubscribeUrl}}" class="footer-link">Unsubscribe</a>
+                {{/if}}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

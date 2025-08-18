@@ -257,7 +257,9 @@ export default function TaskCard({ task }: TaskCardProps) {
               <SelectItem value="todo">To Do</SelectItem>
               <SelectItem value="in_progress">In Progress</SelectItem>
               <SelectItem value="review">Review</SelectItem>
-              <SelectItem value="done">Done</SelectItem>
+              {user?.role !== 'employee' && (
+                <SelectItem value="done">Done</SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>

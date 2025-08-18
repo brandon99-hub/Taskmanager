@@ -36,6 +36,8 @@ export const users = pgTable("users", {
   role: varchar("role", { length: 20 }).notNull().default("employee"),
   isActive: boolean("is_active").notNull().default(true), // Added for account management
   lastLoginAt: timestamp("last_login_at"),
+  resetToken: text("reset_token"), // Added for password reset
+  resetTokenExpiry: timestamp("reset_token_expiry"), // Added for password reset
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -159,6 +161,42 @@ export const notifications = pgTable("notifications", {
   relatedId: varchar("related_id"), // task_id or project_id
   isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// User notification preferences table
+export const userNotificationPreferences = pgTable("user_notification_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  emailTaskAssigned: boolean("email_task_assigned").default(true),
+  emailTaskDueSoon: boolean("email_task_due_soon").default(true),
+  emailTaskOverdue: boolean("email_task_overdue").default(true),
+  emailProjectDeadline: boolean("email_project_deadline").default(true),
+  emailTeamUpdates: boolean("email_team_updates").default(false),
+  inAppTaskAssigned: boolean("in_app_task_assigned").default(true),
+  inAppTaskDueSoon: boolean("in_app_task_due_soon").default(true),
+  inAppTaskOverdue: boolean("in_app_task_overdue").default(true),
+  inAppProjectDeadline: boolean("in_app_project_deadline").default(true),
+  inAppTeamUpdates: boolean("in_app_team_updates").default(true),
+  dueSoonDays: integer("due_soon_days").default(2),
+  reminderTime: varchar("reminder_time", { length: 5 }).default('09:00'),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// User Google Calendar settings table
+export const userCalendarSettings = pgTable("user_calendar_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  isConnected: boolean("is_connected").default(false),
+  syncEnabled: boolean("sync_enabled").default(false),
+  calendarName: varchar("calendar_name", { length: 255 }),
+  reminderTime: varchar("reminder_time", { length: 5 }).default('09:00'),
+  syncFrequency: varchar("sync_frequency", { length: 20 }).default('daily'),
+  googleAccessToken: text("google_access_token"),
+  googleRefreshToken: text("google_refresh_token"),
+  googleTokenExpiry: timestamp("google_token_expiry"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Relations
@@ -342,6 +380,12 @@ export type InsertTaskDependency = z.infer<typeof insertTaskDependencySchema>;
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
+export type UserNotificationPreferences = typeof userNotificationPreferences.$inferSelect;
+export type InsertUserNotificationPreferences = typeof userNotificationPreferences.$inferInsert;
+
+export type UserCalendarSettings = typeof userCalendarSettings.$inferSelect;
+export type InsertUserCalendarSettings = typeof userCalendarSettings.$inferInsert;
 
 export type RegisterUser = z.infer<typeof registerUserSchema>;
 export type LoginUser = z.infer<typeof loginUserSchema>;
