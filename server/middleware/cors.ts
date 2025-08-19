@@ -13,7 +13,15 @@ export function setupCORS(app: Express) {
       
       const allowedOrigins = getAllowedOrigins();
       
-      if (allowedOrigins.includes(origin)) {
+      const isAllowed = allowedOrigins.some(allowedOrigin => {
+        if (typeof allowedOrigin === 'string') {
+          return allowedOrigin === origin;
+        } else {
+          return allowedOrigin.test(origin);
+        }
+      });
+      
+      if (isAllowed) {
         callback(null, true);
       } else {
         console.warn(`CORS: Blocked request from origin: ${origin}`);
@@ -48,7 +56,7 @@ export function setupCORS(app: Express) {
   app.use(cors(corsOptions));
 }
 
-function getAllowedOrigins(): string[] {
+function getAllowedOrigins(): (string | RegExp)[] {
   const nodeEnv = process.env.NODE_ENV;
   
   if (nodeEnv === 'production') {

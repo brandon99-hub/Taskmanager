@@ -49,6 +49,14 @@ export const projectStatusEnum = pgEnum("project_status", [
   "on_hold",
   "completed",
   "cancelled",
+  "terminated", // Added terminated status
+]);
+
+// Project segments for categorization
+export const projectSegmentEnum = pgEnum("project_segment", [
+  "academic",
+  "parastals",
+  "private",
 ]);
 
 export const taskPriorityEnum = pgEnum("task_priority", [
@@ -71,6 +79,8 @@ export const billingStatusEnum = pgEnum("billing_status", [
   "to_send",    // milestone completed, invoice should be sent
   "sent",       // invoice sent
   "paid",       // payment received
+  "overdue",    // 30 days passed since invoice sent
+  "processing", // payment being processed
 ]);
 
 // Teams table
@@ -78,6 +88,7 @@ export const teams = pgTable("teams", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 100 }).notNull(),
   description: text("description"),
+  segment: projectSegmentEnum("segment").notNull().default("private"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -90,6 +101,7 @@ export const projects = pgTable("projects", {
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date").notNull(),
   status: projectStatusEnum("status").notNull().default("planning"),
+  segment: projectSegmentEnum("segment").notNull().default("private"), // Added segment field
   budget: decimal("budget", { precision: 12, scale: 2 }),
   teamId: varchar("team_id").references(() => teams.id),
   managerId: varchar("manager_id").references(() => users.id).notNull(),
@@ -112,6 +124,13 @@ export const tasks = pgTable("tasks", {
   // Financials / assignment additions for milestones
   feeAmount: decimal("fee_amount", { precision: 12, scale: 2 }),
   billingStatus: billingStatusEnum("billing_status").notNull().default("none"),
+  // Invoice and collection dates
+  expectedInvoiceDate: timestamp("expected_invoice_date"), // Added expected invoice date
+  expectedCollectionDate: timestamp("expected_collection_date"), // Added expected collection date
+  // Invoice tracking fields
+  invoiceSentAt: timestamp("invoice_sent_at"), // When invoice was actually sent
+  paymentReceivedAt: timestamp("payment_received_at"), // When payment was received
+  overdueFlag: boolean("overdue_flag").default(false), // Flag for overdue milestones
   projectId: varchar("project_id").references(() => projects.id).notNull(),
   assignedUserId: varchar("assigned_user_id").references(() => users.id),
   assignedTeamId: varchar("assigned_team_id").references(() => teams.id),
@@ -207,6 +226,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   teamMemberships: many(teamMembers),
   notifications: many(notifications),
   uploadedAttachments: many(projectAttachments),
+  sentInvoices: many(invoiceReports, { relationName: "sentBy" }),
+  collectedInvoices: many(invoiceCollections, { relationName: "collectedBy" }),
 }));
 
 export const teamsRelations = relations(teams, ({ many }) => ({
@@ -226,6 +247,8 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   }),
   tasks: many(tasks),
   attachments: many(projectAttachments),
+  invoices: many(invoiceReports),
+  collections: many(invoiceCollections),
 }));
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
@@ -245,6 +268,8 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   }),
   dependencies: many(taskDependencies, { relationName: "task" }),
   dependentTasks: many(taskDependencies, { relationName: "dependsOn" }),
+  invoices: many(invoiceReports),
+  collections: many(invoiceCollections),
 }));
 
 export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
@@ -362,6 +387,7 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 
 export type Team = typeof teams.$inferSelect;
 export type InsertTeam = z.infer<typeof insertTeamSchema>;
+export type UpdateTeam = Partial<InsertTeam>;
 
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = z.infer<typeof insertProjectSchema>;
@@ -387,5 +413,106 @@ export type InsertUserNotificationPreferences = typeof userNotificationPreferenc
 export type UserCalendarSettings = typeof userCalendarSettings.$inferSelect;
 export type InsertUserCalendarSettings = typeof userCalendarSettings.$inferInsert;
 
+export type InvoiceReport = typeof invoiceReports.$inferSelect;
+export type InsertInvoiceReport = typeof invoiceReports.$inferInsert;
+
+export type MonthlyTarget = typeof monthlyTargets.$inferSelect;
+export type InsertMonthlyTarget = typeof monthlyTargets.$inferInsert;
+
+export type InvoiceCollection = typeof invoiceCollections.$inferSelect;
+export type InsertInvoiceCollection = typeof invoiceCollections.$inferInsert;
+
 export type RegisterUser = z.infer<typeof registerUserSchema>;
 export type LoginUser = z.infer<typeof loginUserSchema>;
+
+// Invoice reports table for tracking sent invoices
+export const invoiceReports = pgTable("invoice_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taskId: varchar("task_id").references(() => tasks.id).notNull(),
+  projectId: varchar("project_id").references(() => projects.id).notNull(),
+  invoiceNumber: varchar("invoice_number", { length: 100 }).unique().notNull(),
+  invoiceDate: timestamp("invoice_date").notNull(),
+  expectedCollectionDate: timestamp("expected_collection_date").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  status: varchar("status", { length: 50 }).notNull().default("sent"), // sent, paid, overdue
+  sentBy: varchar("sent_by").references(() => users.id).notNull(),
+  sentAt: timestamp("sent_at").defaultNow(),
+  paidAt: timestamp("paid_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Monthly targets table (auto-calculated from milestones)
+export const monthlyTargets = pgTable("monthly_targets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  year: integer("year").notNull(),
+  month: integer("month").notNull(), // 1-12
+  segment: projectSegmentEnum("segment").notNull(),
+  targetAmount: decimal("target_amount", { precision: 12, scale: 2 }).notNull(),
+  actualAmount: decimal("actual_amount", { precision: 12, scale: 2 }).default("0"),
+  calculatedAt: timestamp("calculated_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  uniqueConstraint: index("unique_year_month_segment").on(table.year, table.month, table.segment),
+}));
+
+// Invoice collections table for tracking payments
+export const invoiceCollections = pgTable("invoice_collections", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id").references(() => invoiceReports.id).notNull(),
+  taskId: varchar("task_id").references(() => tasks.id).notNull(),
+  projectId: varchar("project_id").references(() => projects.id).notNull(),
+  collectionDate: timestamp("collection_date").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  paymentMethod: varchar("payment_method", { length: 100 }),
+  reference: varchar("reference", { length: 200 }),
+  notes: text("notes"),
+  collectedBy: varchar("collected_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const invoiceReportsRelations = relations(invoiceReports, ({ one, many }) => ({
+  task: one(tasks, {
+    fields: [invoiceReports.taskId],
+    references: [tasks.id],
+  }),
+  project: one(projects, {
+    fields: [invoiceReports.projectId],
+    references: [projects.id],
+  }),
+  sentBy: one(users, {
+    fields: [invoiceReports.sentBy],
+    references: [users.id],
+    relationName: "sentBy",
+  }),
+  collections: many(invoiceCollections),
+}));
+
+export const monthlyTargetsRelations = relations(monthlyTargets, ({ one }) => ({
+  segment: one(projects, {
+    fields: [monthlyTargets.segment],
+    references: [projects.segment],
+  }),
+}));
+
+export const invoiceCollectionsRelations = relations(invoiceCollections, ({ one }) => ({
+  invoice: one(invoiceReports, {
+    fields: [invoiceCollections.invoiceId],
+    references: [invoiceReports.id],
+  }),
+  task: one(tasks, {
+    fields: [invoiceCollections.taskId],
+    references: [tasks.id],
+  }),
+  project: one(projects, {
+    fields: [invoiceCollections.projectId],
+    references: [projects.id],
+  }),
+  collectedBy: one(users, {
+    fields: [invoiceCollections.collectedBy],
+    references: [users.id],
+    relationName: "collectedBy",
+  }),
+}));

@@ -175,21 +175,21 @@ The application uses the following main entities:
 - `POST /api/projects` - Create new project
 - `GET /api/projects/:id` - Get project details
 - `PUT /api/projects/:id` - Update project
-- `DELETE /api/projects/:id` - Delete project
+- `PUT /api/projects/:id/terminate` - Terminate project
 
 ### Tasks
 - `GET /api/tasks` - List all tasks
 - `POST /api/tasks` - Create new task
 - `GET /api/tasks/:id` - Get task details
 - `PUT /api/tasks/:id` - Update task
-- `DELETE /api/tasks/:id` - Delete task
+
 
 ### Teams
 - `GET /api/teams` - List all teams
 - `POST /api/teams` - Create new team
 - `GET /api/teams/:id` - Get team details
 - `PUT /api/teams/:id` - Update team
-- `DELETE /api/teams/:id` - Delete team
+
 
 ### Dashboard
 - `GET /api/dashboard/metrics` - Get dashboard metrics

@@ -3,6 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useScreenSize } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { BarChart3, CheckCircle, AlertTriangle, Users } from "lucide-react";
+import MilestoneDetailModal from "./milestone-detail-modal";
 
 export default function MetricsCards() {
   const auth = useAuth() as any;
@@ -30,6 +31,12 @@ export default function MetricsCards() {
   const { data: employeeTeamsCount } = useQuery<{ count: number }>({
     queryKey: ['/api/dashboard/teams-count'],
     enabled: user?.role === 'employee',
+  });
+
+  // For admin/manager, get total users count
+  const { data: users = [] } = useQuery<any[]>({
+    queryKey: ['/api/users'],
+    enabled: user?.role === 'admin' || user?.role === 'manager',
   });
 
   if (isLoading) {
@@ -69,6 +76,11 @@ export default function MetricsCards() {
 
   const teamsCount = Array.isArray(teams) ? teams.length : 0;
   const upcomingCount = Array.isArray(upcoming) ? upcoming.length : 0;
+  
+  // Get total staff members for admin/manager, teams count for employee
+  const staffOrTeamsCount = user?.role === 'employee' 
+    ? (employeeTeamsCount?.count || 0)
+    : (Array.isArray(users) ? users.length : 0);
 
   const cards = [
     {
@@ -87,7 +99,9 @@ export default function MetricsCards() {
       color: "bg-success",
       change: `+${completedThisWeek}`,
       changeLabel: "this week",
-      testId: "card-completed-tasks"
+      testId: "card-completed-tasks",
+      hasModal: true,
+      modalType: "completed"
     },
     {
       title: "Overdue Milestones",
@@ -97,62 +111,81 @@ export default function MetricsCards() {
       change: `${metrics?.overdueTasks || 0} overdue · ${upcomingCount} due soon`,
       changeLabel: "",
       isNegative: true,
-      testId: "card-overdue-tasks"
+      testId: "card-overdue-tasks",
+      hasModal: true,
+      modalType: "overdue"
     },
     {
-      title: user?.role === 'employee' ? "Team Members" : "Staff Members",
-      value: user?.role === 'employee' ? (employeeTeamsCount?.count || 0) : (metrics?.teamMembers || 0),
+      title: user?.role === 'employee' ? "Teams You're Part Of" : "Total Staff Members",
+      value: staffOrTeamsCount,
       icon: Users,
-      color: "bg-warning",
-      change: user?.role === 'employee' 
-        ? `${employeeTeamsCount?.count || 0} team${(employeeTeamsCount?.count || 0) === 1 ? '' : 's'}`
-        : `${teamsCount} team${teamsCount === 1 ? '' : 's'}`,
-      changeLabel: user?.role === 'employee' ? "you're in" : "across your teams",
+      color: "bg-info",
+      change: user?.role === 'employee' ? "teams you're part of" : "total staff members",
+      changeLabel: "",
       testId: "card-team-members"
     }
   ];
+
+  const renderIcon = (icon: any, color: string) => {
+    if (icon === BarChart3) return <BarChart3 className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === CheckCircle) return <CheckCircle className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === AlertTriangle) return <AlertTriangle className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === Users) return <Users className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    return null;
+  };
+
+  const renderCard = (card: any) => {
+    if (card.hasModal) {
+      return (
+        <MilestoneDetailModal
+          type={card.modalType}
+          trigger={
+            <Card className="cursor-pointer hover:shadow-md transition-shadow">
+              <CardContent className={`${isMobile ? 'p-4' : 'p-6'}`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-600">{card.title}</p>
+                    <p className="text-2xl font-bold text-gray-900">{card.value}</p>
+                    <p className="text-sm text-gray-500">{card.change}</p>
+                  </div>
+                  <div className={`${isMobile ? 'w-8 h-8' : 'w-10 h-10 sm:w-12 sm:h-12'} ${card.color} rounded-lg flex items-center justify-center`}>
+                    {renderIcon(card.icon, card.color)}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          }
+        />
+      );
+    }
+
+    return (
+      <Card>
+        <CardContent className={`${isMobile ? 'p-4' : 'p-6'}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-600">{card.title}</p>
+              <p className="text-2xl font-bold text-gray-900">{card.value}</p>
+              <p className="text-sm text-gray-500">{card.change}</p>
+            </div>
+            <div className={`${isMobile ? 'w-8 h-8' : 'w-10 h-10 sm:w-12 sm:h-12'} ${card.color} rounded-lg flex items-center justify-center`}>
+              {renderIcon(card.icon, card.color)}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className={`grid gap-4 sm:gap-6 mb-6 sm:mb-8 ${
       isMobile ? 'grid-cols-2' : isTablet ? 'grid-cols-2' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4'
     }`}>
-      {cards.map((card) => {
-        const Icon = card.icon;
-        return (
-          <Card key={card.title} className="bg-surface border border-gray-200 hover:shadow-md transition-shadow" data-testid={card.testId}>
-            <CardContent className={`${isMobile ? 'p-4' : 'p-5 sm:p-6'}`}>
-              <div className="flex items-center justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium text-gray-600 truncate`} data-testid={`text-${card.testId}-title`}>
-                    {isMobile && card.title === "Milestones Completed" ? "Completed" : 
-                     isMobile && card.title === "Overdue Milestones" ? "Overdue" :
-                     isMobile && card.title.includes("Members") ? "Members" :
-                     card.title}
-                  </p>
-                  <p className={`${isMobile ? 'text-xl' : 'text-2xl sm:text-3xl'} font-bold text-gray-900 mt-1`} data-testid={`text-${card.testId}-value`}>
-                    {card.value}
-                  </p>
-                </div>
-                <div className={`${isMobile ? 'p-2' : 'p-2 sm:p-3'} ${card.color} bg-opacity-10 rounded-lg flex-shrink-0`}>
-                  <Icon className={`${isMobile ? 'h-4 w-4' : 'h-5 w-5 sm:h-6 sm:w-6'} ${card.color.replace('bg-', 'text-')}`} />
-                </div>
-              </div>
-              <div className={`${isMobile ? 'mt-2' : 'mt-3 sm:mt-4'} flex items-start`}>
-                <div className="min-w-0 flex-1">
-                  <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium ${card.isNegative ? 'text-error' : 'text-success'} truncate block`}>
-                    {card.change}
-                  </span>
-                  {card.changeLabel && (
-                    <span className={`text-gray-600 ${isMobile ? 'text-xs' : 'text-sm'} block truncate`}>
-                      {card.changeLabel}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
+      {cards.map((card, index) => (
+        <div key={index}>
+          {renderCard(card)}
+        </div>
+      ))}
     </div>
   );
 }

@@ -10,9 +10,11 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx scripts/seed-data.ts",
-    "setup:admin": "tsx scripts/setup-admin.ts",
-    "import:info": "tsx scripts/import-information-sheet.ts",
-    "db:reset": "tsx scripts/reset-data.ts"
+            "setup:admin": "tsx scripts/setup-admin.ts",
+        "import:info": "tsx scripts/import-information-sheet.ts",
+        "db:reset": "tsx scripts/reset-data.ts",
+        "db:migrate": "tsx scripts/migrate-schema.ts",
+        "db:migrate:teams": "tsx scripts/migrate-team-segments.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

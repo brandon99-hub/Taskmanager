@@ -4,8 +4,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useParams } from "wouter";
 import Navigation from "@/components/layout/navigation";
-import TaskCard from "@/components/tasks/task-card";
 import CreateProjectModal from "@/components/projects/create-project-modal";
+import MilestoneTable from "@/components/projects/milestone-table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -19,10 +19,7 @@ import {
   ArrowLeft, 
   Edit,
   Trash2,
-  CheckCircle,
-  Clock,
-  AlertTriangle,
-  User
+  CheckCircle
 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -78,15 +75,15 @@ export default function ProjectDetail() {
     enabled: !!isAuthenticated && !!projectId,
   });
 
-  const handleDeleteProject = async () => {
+  const handleTerminateProject = async () => {
     if (!project) return;
-    const confirmed = window.confirm(`Delete project "${project.name}"? This cannot be undone.`);
+    const confirmed = window.confirm(`Terminate project "${project.name}"? This will mark the project as terminated.`);
     if (!confirmed) return;
     
     try {
-      await apiRequest('DELETE', `/api/projects/${project.id}`);
+      await apiRequest('PUT', `/api/projects/${project.id}/terminate`);
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      toast({ title: 'Project deleted', description: `${project.name} was removed.` });
+      toast({ title: 'Project terminated', description: `${project.name} has been terminated.` });
       setLocation('/projects');
     } catch (error: any) {
       if (isUnauthorizedError(error)) {
@@ -94,8 +91,14 @@ export default function ProjectDetail() {
         setTimeout(() => { window.location.href = '/login'; }, 500);
         return;
       }
-      toast({ title: 'Failed to delete', description: error?.message || 'Unknown error', variant: 'destructive' });
+      toast({ title: 'Failed to terminate', description: error?.message || 'Unknown error', variant: 'destructive' });
     }
+  };
+
+  const handleEditMilestone = (milestone: any) => {
+    // For now, we'll use the existing CreateProjectModal to edit milestones
+    // This can be enhanced later with a dedicated milestone edit modal
+    setEditingProject({ ...project, milestoneToEdit: milestone });
   };
 
   useEffect(() => {
@@ -178,7 +181,7 @@ export default function ProjectDetail() {
     .filter((m: any) => m.billingStatus === 'paid')
     .reduce((sum: number, m: any) => sum + parseFloat(m.feeAmount || '0'), 0);
 
-  // Milestone status counts
+  // Milestone status counts for summary cards
   const milestoneStats = {
     total: milestones.length,
     todo: milestones.filter((m: any) => m.status === 'todo').length,
@@ -186,21 +189,6 @@ export default function ProjectDetail() {
     review: milestones.filter((m: any) => m.status === 'review').length,
     done: milestones.filter((m: any) => m.status === 'done').length,
   };
-
-  // Group milestones by status for Kanban display
-  const milestonesByStatus = {
-    todo: milestones.filter((m: any) => m.status === 'todo'),
-    in_progress: milestones.filter((m: any) => m.status === 'in_progress'),
-    review: milestones.filter((m: any) => m.status === 'review'),
-    done: milestones.filter((m: any) => m.status === 'done'),
-  };
-
-  const statusConfig = [
-    { key: 'todo', label: 'To Do', color: 'bg-gray-100', icon: Clock },
-    { key: 'in_progress', label: 'In Progress', color: 'bg-blue-100', icon: AlertTriangle },
-    { key: 'review', label: 'Review', color: 'bg-yellow-100', icon: User },
-    { key: 'done', label: 'Done', color: 'bg-green-100', icon: CheckCircle },
-  ];
 
   return (
     <div className="min-h-screen bg-background-page">
@@ -235,11 +223,11 @@ export default function ProjectDetail() {
               </Button>
               <Button 
                 variant="outline" 
-                onClick={handleDeleteProject}
+                onClick={handleTerminateProject}
                 className="text-red-600 hover:text-red-700"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Delete
+                Terminate
               </Button>
             </div>
           )}
@@ -380,58 +368,30 @@ export default function ProjectDetail() {
           </CardContent>
         </Card>
 
-        {/* Milestones Kanban Board */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Milestones</CardTitle>
-            <CardDescription>
-              Track progress across all project milestones
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {milestonesLoading ? (
-              <div className="grid grid-cols-4 gap-6">
-                {[...Array(4)].map((_, i) => (
-                  <div key={i} className="space-y-4">
-                    <div className="h-6 bg-gray-200 rounded animate-pulse"></div>
-                    <div className="space-y-2">
-                      {[...Array(2)].map((_, j) => (
-                        <div key={j} className="h-32 bg-gray-200 rounded animate-pulse"></div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+        {/* Milestones Table */}
+        {milestonesLoading ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Milestones</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="animate-pulse space-y-4">
+                <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+                <div className="space-y-2">
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="h-16 bg-gray-200 rounded"></div>
+                  ))}
+                </div>
               </div>
-            ) : milestones.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">
-                <CheckCircle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <p>No milestones found for this project.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {statusConfig.map(({ key, label, color, icon: Icon }) => (
-                  <div key={key} className="space-y-4">
-                    <div className={`flex items-center justify-between p-3 rounded-lg ${color}`}>
-                      <div className="flex items-center space-x-2">
-                        <Icon className="h-4 w-4" />
-                        <h3 className="font-medium">{label}</h3>
-                      </div>
-                      <Badge variant="secondary">
-                        {milestonesByStatus[key as keyof typeof milestonesByStatus].length}
-                      </Badge>
-                    </div>
-                    
-                    <div className="space-y-3">
-                      {milestonesByStatus[key as keyof typeof milestonesByStatus].map((milestone: any) => (
-                        <TaskCard key={milestone.id} task={milestone} />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ) : (
+          <MilestoneTable 
+            milestones={milestones}
+            projectSegment={project.segment || 'private'}
+            onEdit={handleEditMilestone}
+          />
+        )}
 
         {/* Edit Project Modal */}
         {editingProject && (

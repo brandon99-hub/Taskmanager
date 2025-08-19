@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useScreenSize } from "@/hooks/use-mobile";
 import Navigation from "@/components/layout/navigation";
 import MetricsCards from "@/components/dashboard/metrics-cards";
+import InvoiceReport from "@/components/dashboard/invoice-report";
 import KanbanBoard from "@/components/dashboard/kanban-board";
 import UpcomingDeadlines from "@/components/dashboard/upcoming-deadlines";
 import TeamWorkload from "@/components/dashboard/team-workload";
@@ -42,6 +43,9 @@ export default function Dashboard() {
 
         {/* Metrics Cards */}
         <MetricsCards />
+
+        {/* Invoice Report Section - Above Critical Milestones Board */}
+        <InvoiceReport />
 
         {/* Main Content */}
         <div className={`grid gap-6 lg:gap-8 ${isMobile ? 'grid-cols-1' : isTablet ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-3'}`}>

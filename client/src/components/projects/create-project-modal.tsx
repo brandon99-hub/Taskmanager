@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Download, X, CalendarDays, UserCircle2 } from "lucide-react";
+import { Plus, Download, X, CalendarDays, UserCircle2, Users, DollarSign } from "lucide-react";
 import { useLocation, useSearch } from "wouter";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
@@ -23,7 +23,8 @@ const createProjectSchema = z.object({
   client: z.string().optional(),
   startDate: z.string().min(1, "Start date is required"),
   endDate: z.string().min(1, "End date is required"),
-  teamId: z.string().optional(),
+  segment: z.enum(["academic", "parastals", "private"]).default("private"),
+  teamId: z.string().optional().or(z.literal("none")),
   budget: z.string().optional(),
   status: z.enum(["planning", "active", "on_hold", "completed", "cancelled"]).optional(),
 }).refine((data) => {
@@ -45,7 +46,8 @@ type NewTaskRow = {
   dueDate?: string;
   assignedUserId?: string;
   feeAmount?: string;
-  errors?: { startDate?: string; dueDate?: string; name?: string; feeAmount?: string };
+  expectedInvoiceDate?: string;
+  errors?: { startDate?: string; dueDate?: string; name?: string; feeAmount?: string; expectedInvoiceDate?: string };
 };
 
 export default function CreateProjectModal({ project, onClose }: { project?: any; onClose?: () => void }) {
@@ -75,7 +77,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       client: "",
       startDate: "",
       endDate: "",
-      teamId: "",
+      segment: "private",
+      teamId: "none",
       budget: "",
       status: "planning",
     },
@@ -91,7 +94,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         client: project.client || "",
         startDate: project.startDate ? new Date(project.startDate).toISOString().slice(0, 10) : "",
         endDate: project.endDate ? new Date(project.endDate).toISOString().slice(0, 10) : "",
-        teamId: project.teamId || "",
+        segment: project.segment || "private",
+        teamId: project.teamId || "none",
         budget: project.budget ? String(project.budget) : "",
         status: project.status || "planning",
       });
@@ -114,13 +118,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     queryKey: ['/api/team-members', form.watch('teamId')],
     queryFn: async () => {
       const teamId = form.getValues('teamId');
-      if (!teamId) return [];
+      if (!teamId || teamId === 'none') return [];
       const res = await fetch(`/api/teams/${teamId}`, { credentials: 'include', cache: 'no-store' });
       if (!res.ok) return [];
       const json = await res.json();
       return json.members?.map((m: any) => m.user) ?? [];
     },
-    enabled: isOpen && !!form.watch('teamId'),
+    enabled: isOpen && !!form.watch('teamId') && form.watch('teamId') !== 'none',
   });
 
   // Load existing milestones in edit mode
@@ -135,6 +139,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         dueDate: m.dueDate ? new Date(m.dueDate).toISOString().slice(0, 10) : '',
         assignedUserId: m.assignedUserId || undefined,
         feeAmount: m.feeAmount ? String(m.feeAmount) : '',
+        expectedInvoiceDate: m.expectedInvoiceDate ? new Date(m.expectedInvoiceDate).toISOString().slice(0, 10) : '',
         status: m.status,
         billingStatus: m.billingStatus,
       }));
@@ -149,7 +154,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         budget: data.budget ? String(data.budget) : undefined,
         startDate: new Date(data.startDate),
         endDate: new Date(data.endDate),
-        teamId: data.teamId || undefined,
+        teamId: data.teamId === "none" ? undefined : data.teamId || undefined,
         client: data.client || undefined,
       };
       
@@ -262,53 +267,127 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     });
   };
 
-  // New function to handle milestone processing with batch processing and retry logic
+  // New function to detect changes in milestones
+  const detectMilestoneChanges = (currentTasks: NewTaskRow[], existingMilestones: any[]) => {
+    const changes: { type: 'create' | 'update' | 'delete'; milestone: any; original?: any }[] = [];
+    
+    // Create a map of existing milestones by ID
+    const existingMap = new Map(existingMilestones.map(m => [m.id, m]));
+    const currentMap = new Map(currentTasks.filter(t => (t as any).id).map(t => [(t as any).id, t]));
+    
+    // Check for updates and creations
+    currentTasks.forEach(task => {
+      if ((task as any).id) {
+        // Existing milestone - check for changes
+        const existing = existingMap.get((task as any).id);
+        if (existing) {
+          const hasChanges = 
+            task.name !== existing.name ||
+            task.description !== (existing.description || '') ||
+            task.priority !== existing.priority ||
+            task.startDate !== (existing.startDate ? new Date(existing.startDate).toISOString().slice(0, 10) : '') ||
+            task.dueDate !== (existing.dueDate ? new Date(existing.dueDate).toISOString().slice(0, 10) : '') ||
+            task.assignedUserId !== existing.assignedUserId ||
+            task.feeAmount !== String(existing.feeAmount || '') ||
+            task.expectedInvoiceDate !== (existing.expectedInvoiceDate ? new Date(existing.expectedInvoiceDate).toISOString().slice(0, 10) : '');
+          
+          if (hasChanges) {
+            changes.push({
+              type: 'update',
+              milestone: task,
+              original: existing
+            });
+          }
+        }
+      } else {
+        // New milestone
+        changes.push({
+          type: 'create',
+          milestone: task
+        });
+      }
+    });
+    
+    // Check for deletions
+    existingMilestones.forEach(existing => {
+      if (!currentMap.has(existing.id)) {
+        changes.push({
+          type: 'delete',
+          milestone: existing
+        });
+      }
+    });
+    
+    return changes;
+  };
+
+  // Enhanced milestone processing with change detection
   const processMilestones = async (validated: any[], project: any, isEditMode: boolean) => {
-    const batchSize = 3; // Process 3 milestones at a time
-    const maxRetries = 3;
-    const results: { milestone: any; success: boolean; error?: string; retries: number }[] = [];
-    
-    setIsProcessingMilestones(true);
-    setMilestoneProgress({ current: 0, total: validated.length, message: 'Starting milestone updates...' });
-    
-    try {
-      // Process milestones in batches
-      for (let i = 0; i < validated.length; i += batchSize) {
-        const batch = validated.slice(i, i + batchSize);
+    if (isEditMode && existingMilestones.length > 0) {
+      // Use change detection for better performance
+      const changes = detectMilestoneChanges(validated, existingMilestones);
+      console.log(`🔄 Processing ${changes.length} changes instead of ${validated.length} total milestones`);
+      
+      if (changes.length === 0) {
+        console.log('✅ No changes detected, skipping milestone processing');
+        return;
+      }
+      
+      setIsProcessingMilestones(true);
+      setMilestoneProgress({ current: 0, total: changes.length, message: 'Processing milestone changes...' });
+      
+      const results: { milestone: any; success: boolean; error?: string; retries: number }[] = [];
+      
+      // Process changes in smaller batches for better performance
+      const batchSize = 2;
+      for (let i = 0; i < changes.length; i += batchSize) {
+        const batch = changes.slice(i, i + batchSize);
         const batchNumber = Math.floor(i / batchSize) + 1;
-        const totalBatches = Math.ceil(validated.length / batchSize);
+        const totalBatches = Math.ceil(changes.length / batchSize);
         
         setMilestoneProgress({ 
           current: i, 
-          total: validated.length, 
+          total: changes.length, 
           message: `Processing batch ${batchNumber}/${totalBatches}...` 
         });
         
-        // Process each milestone in the current batch
-        const batchPromises = batch.map(async (t) => {
+        const batchPromises = batch.map(async (change) => {
           let retries = 0;
           let success = false;
           let error = '';
           
-          while (retries < maxRetries && !success) {
+          while (retries < 3 && !success) {
             try {
-              const payload = {
-                name: t.name,
-                description: t.description || undefined,
-                priority: t.priority,
-                projectId: project.id,
-                assignedUserId: t.assignedUserId || undefined,
-                startDate: t.startDate ? new Date(t.startDate).toISOString() : undefined,
-                dueDate: t.dueDate ? new Date(t.dueDate).toISOString() : undefined,
-                feeAmount: t.feeAmount ? Number(t.feeAmount) : undefined,
-              };
-
-              if (isEditMode && (t as any).id) {
-                // Update existing milestone
-                await apiRequest('PUT', `/api/tasks/${(t as any).id}`, payload);
-              } else {
-                // Create new milestone
+              if (change.type === 'create') {
+                const payload = {
+                  name: change.milestone.name,
+                  description: change.milestone.description || undefined,
+                  priority: change.milestone.priority,
+                  projectId: project.id,
+                  assignedUserId: change.milestone.assignedUserId || undefined,
+                  startDate: change.milestone.startDate ? new Date(change.milestone.startDate).toISOString() : undefined,
+                  dueDate: change.milestone.dueDate ? new Date(change.milestone.dueDate).toISOString() : undefined,
+                  feeAmount: change.milestone.feeAmount ? Number(change.milestone.feeAmount) : undefined,
+                  expectedInvoiceDate: change.milestone.expectedInvoiceDate ? new Date(change.milestone.expectedInvoiceDate).toISOString() : undefined,
+                };
                 await apiRequest('POST', '/api/tasks', payload);
+                console.log(`✅ Created milestone: ${change.milestone.name}`);
+              } else if (change.type === 'update') {
+                const payload = {
+                  name: change.milestone.name,
+                  description: change.milestone.description || undefined,
+                  priority: change.milestone.priority,
+                  assignedUserId: change.milestone.assignedUserId || undefined,
+                  startDate: change.milestone.startDate ? new Date(change.milestone.startDate).toISOString() : undefined,
+                  dueDate: change.milestone.dueDate ? new Date(change.milestone.dueDate).toISOString() : undefined,
+                  feeAmount: change.milestone.feeAmount ? Number(change.milestone.feeAmount) : undefined,
+                  expectedInvoiceDate: change.milestone.expectedInvoiceDate ? new Date(change.milestone.expectedInvoiceDate).toISOString() : undefined,
+                };
+                await apiRequest('PUT', `/api/tasks/${(change.milestone as any).id}`, payload);
+                console.log(`✅ Updated milestone: ${change.milestone.name}`);
+              } else if (change.type === 'delete') {
+                await apiRequest('DELETE', `/api/tasks/${change.milestone.id}`);
+                console.log(`✅ Deleted milestone: ${change.milestone.name}`);
               }
               
               success = true;
@@ -316,87 +395,147 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
               retries++;
               error = e?.message || 'Unknown error';
               
-              if (retries < maxRetries) {
-                // Wait a bit before retrying (exponential backoff)
+              if (retries < 3) {
                 await new Promise(resolve => setTimeout(resolve, 1000 * retries));
               }
             }
           }
           
-          return { milestone: t, success, error, retries };
+          return { milestone: change.milestone, success, error, retries };
         });
         
-        // Wait for all milestones in the current batch to complete
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
         
-        // Small delay between batches to avoid overwhelming the server
-        if (i + batchSize < validated.length) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+        if (i + batchSize < changes.length) {
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
       }
       
-      // Process deletion of removed milestones in edit mode
-      if (isEditMode && existingMilestones.length > 0) {
-        const currentMilestoneIds = validated.map((t: any) => t.id).filter(Boolean);
-        const milestonesToDelete = existingMilestones.filter((m: any) => 
-          !currentMilestoneIds.includes(m.id)
-        );
-        
-        if (milestonesToDelete.length > 0) {
-          console.log(`🗑️ Processing ${milestonesToDelete.length} milestones for deletion`);
-          
-          for (const milestone of milestonesToDelete) {
-            try {
-              await apiRequest('DELETE', `/api/tasks/${milestone.id}`);
-              console.log(`✅ Deleted milestone: ${milestone.name}`);
-            } catch (e: any) {
-              console.error('Failed to delete milestone:', e);
-              toast({ title: 'Warning', description: `Failed to delete milestone: ${milestone.name}`, variant: 'destructive' });
-            }
-          }
-        }
-      }
-      
-      // Generate comprehensive results report
+      // Generate results report
       const successful = results.filter(r => r.success);
       const failed = results.filter(r => !r.success);
       
-      // Show detailed results to user
       if (failed.length === 0) {
         toast({
           title: 'Success',
-          description: `All ${successful.length} milestones processed successfully!`,
+          description: `All ${successful.length} milestone changes processed successfully!`,
         });
       } else if (failed.length < successful.length) {
-        // Partial success
         toast({
           title: 'Partial Success',
-          description: `${successful.length} milestones updated, ${failed.length} failed.`,
+          description: `${successful.length} changes processed, ${failed.length} failed.`,
           variant: 'default',
         });
       } else {
-        // Mostly failed
         toast({
           title: 'Update Failed',
-          description: `${failed.length} out of ${results.length} milestones failed to update. Please try again.`,
+          description: `${failed.length} out of ${results.length} changes failed. Please try again.`,
           variant: 'destructive',
         });
       }
       
-      // Invalidate queries to refresh data
+      setIsProcessingMilestones(false);
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-    } catch (error) {
-      console.error('Error processing milestones:', error);
-      toast({
-        title: 'Error',
-        description: 'An unexpected error occurred while processing milestones. Please try again.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsProcessingMilestones(false);
-      setMilestoneProgress({ current: 0, total: 0, message: '' });
+      
+    } else {
+      // Original logic for new projects (no change detection needed)
+      const batchSize = 3;
+      const maxRetries = 3;
+      const results: { milestone: any; success: boolean; error?: string; retries: number }[] = [];
+      
+      setIsProcessingMilestones(true);
+      setMilestoneProgress({ current: 0, total: validated.length, message: 'Starting milestone creation...' });
+      
+      try {
+        for (let i = 0; i < validated.length; i += batchSize) {
+          const batch = validated.slice(i, i + batchSize);
+          const batchNumber = Math.floor(i / batchSize) + 1;
+          const totalBatches = Math.ceil(validated.length / batchSize);
+          
+          setMilestoneProgress({ 
+            current: i, 
+            total: validated.length, 
+            message: `Processing batch ${batchNumber}/${totalBatches}...` 
+          });
+          
+          const batchPromises = batch.map(async (t) => {
+            let retries = 0;
+            let success = false;
+            let error = '';
+            
+            while (retries < maxRetries && !success) {
+              try {
+                const payload = {
+                  name: t.name,
+                  description: t.description || undefined,
+                  priority: t.priority,
+                  projectId: project.id,
+                  assignedUserId: t.assignedUserId || undefined,
+                  startDate: t.startDate ? new Date(t.startDate).toISOString() : undefined,
+                  dueDate: t.dueDate ? new Date(t.dueDate).toISOString() : undefined,
+                  feeAmount: t.feeAmount ? Number(t.feeAmount) : undefined,
+                  expectedInvoiceDate: t.expectedInvoiceDate ? new Date(t.expectedInvoiceDate).toISOString() : undefined,
+                };
+
+                await apiRequest('POST', '/api/tasks', payload);
+                success = true;
+              } catch (e: any) {
+                retries++;
+                error = e?.message || 'Unknown error';
+                
+                if (retries < maxRetries) {
+                  await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+                }
+              }
+            }
+            
+            return { milestone: t, success, error, retries };
+          });
+          
+          const batchResults = await Promise.all(batchPromises);
+          results.push(...batchResults);
+          
+          if (i + batchSize < validated.length) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+        
+        const successful = results.filter(r => r.success);
+        const failed = results.filter(r => !r.success);
+        
+        if (failed.length === 0) {
+          toast({
+            title: 'Success',
+            description: `All ${successful.length} milestones created successfully!`,
+          });
+        } else if (failed.length < successful.length) {
+          toast({
+            title: 'Partial Success',
+            description: `${successful.length} milestones created, ${failed.length} failed.`,
+            variant: 'default',
+          });
+        } else {
+          toast({
+            title: 'Creation Failed',
+            description: `${failed.length} out of ${results.length} milestones failed to create. Please try again.`,
+            variant: 'destructive',
+          });
+        }
+        
+        queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      } catch (error) {
+        console.error('Error processing milestones:', error);
+        toast({
+          title: 'Error',
+          description: 'An unexpected error occurred while processing milestones. Please try again.',
+          variant: 'destructive',
+        });
+      } finally {
+        setIsProcessingMilestones(false);
+      }
     }
   };
 
@@ -460,7 +599,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="modal-create-project">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto" data-testid="modal-create-project">
         <DialogHeader>
           <DialogTitle>{isEditMode ? 'Edit Project' : 'Create New Project'}</DialogTitle>
           <DialogDescription>
@@ -469,263 +608,498 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         </DialogHeader>
         
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Project Name *</FormLabel>
-                    <FormControl>
-                      <Input 
-                        placeholder="Enter project name" 
-                        {...field} 
-                        data-testid="input-project-name"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+            
+            {/* Basic Project Information Section */}
+            <div className="space-y-6">
+              <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <UserCircle2 className="h-5 w-5 text-blue-600" />
+                  Basic Information
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">Core project details and description</p>
+              </div>
               
-              <FormField
-                control={form.control}
-                name="client"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Client</FormLabel>
-                    <FormControl>
-                      <Input 
-                        placeholder="Client name (optional)" 
-                        {...field} 
-                        data-testid="input-project-client"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Description *</FormLabel>
-                  <FormControl>
-                    <Textarea 
-                      placeholder="Describe the project goals and requirements" 
-                      rows={3}
-                      {...field} 
-                      data-testid="textarea-project-description"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <FormField
-                control={form.control}
-                name="startDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Start Date *</FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="date" 
-                        {...field} 
-                        data-testid="input-project-start-date"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              
-              <FormField
-                control={form.control}
-                name="endDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>End Date *</FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="date" 
-                        {...field} 
-                        data-testid="input-project-end-date"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <FormField
-                control={form.control}
-                name="teamId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Assigned Team</FormLabel>
-                    <Select 
-                      onValueChange={(value) => field.onChange(value === 'none' ? '' : value)} 
-                      value={field.value || 'none'}
-                    >
-                      <FormControl>
-                        <SelectTrigger data-testid="select-project-team">
-                          <SelectValue placeholder="Select team (optional)" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="none">No team assigned</SelectItem>
-                        {teams.map((team: any) => (
-                          <SelectItem key={team.id} value={team.id}>
-                            {team.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              
-              <FormField
-                control={form.control}
-                name="budget"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Budget</FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="number" 
-                        placeholder="0" 
-                        min="0" 
-                        step="0.01"
-                        {...field} 
-                        data-testid="input-project-budget"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              
-              {/* Status field - only show in edit mode */}
-              {isEditMode && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FormField
                   control={form.control}
-                  name="status"
+                  name="name"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Project Status</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Project Name *</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="Enter project name" 
+                          className="h-11"
+                          {...field} 
+                          data-testid="input-project-name"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                
+                <FormField
+                  control={form.control}
+                  name="client"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Client</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="Client name (optional)" 
+                          className="h-11"
+                          {...field} 
+                          data-testid="input-project-client"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-medium text-gray-700">Description *</FormLabel>
+                    <FormControl>
+                      <Textarea 
+                        placeholder="Describe the project goals, requirements, and expected outcomes" 
+                        rows={4}
+                        className="resize-none"
+                        {...field} 
+                        data-testid="textarea-project-description"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            {/* Project Organization Section */}
+            <div className="space-y-6">
+              <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-green-600" />
+                  Organization & Team
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">Team assignment and project categorization</p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField
+                  control={form.control}
+                  name="segment"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Project Segment *</FormLabel>
                       <Select 
                         onValueChange={field.onChange} 
-                        value={field.value || 'planning'}
+                        value={field.value || 'private'}
                       >
                         <FormControl>
-                          <SelectTrigger data-testid="select-project-status">
-                            <SelectValue placeholder="Select status" />
+                          <SelectTrigger className="h-11" data-testid="select-project-segment">
+                            <SelectValue placeholder="Select segment" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="planning">Planning</SelectItem>
-                          <SelectItem value="active">Active</SelectItem>
-                          <SelectItem value="on_hold">On Hold</SelectItem>
-                          <SelectItem value="completed">Completed</SelectItem>
-                          <SelectItem value="cancelled">Cancelled</SelectItem>
+                          <SelectItem value="academic">Academic</SelectItem>
+                          <SelectItem value="parastals">Parastals</SelectItem>
+                          <SelectItem value="private">Private</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              )}
+                
+                <FormField
+                  control={form.control}
+                  name="teamId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Team Assignment</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className="h-11" data-testid="select-project-team">
+                            <SelectValue placeholder="Select team (optional)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="none">No team assigned</SelectItem>
+                          {teams.map((team) => (
+                            <SelectItem key={team.id} value={team.id}>
+                              {team.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </div>
 
-            {/* Milestones Builder */}
-            <div className="space-y-4">
+            {/* Timeline Section */}
+            <div className="space-y-6">
+              <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <CalendarDays className="h-5 w-5 text-purple-600" />
+                  Project Timeline
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">Start and end dates for the project</p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField
+                  control={form.control}
+                  name="startDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Start Date *</FormLabel>
+                      <FormControl>
+                        <Input 
+                          type="date" 
+                          className="h-11"
+                          {...field} 
+                          data-testid="input-project-start-date"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                
+                <FormField
+                  control={form.control}
+                  name="endDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">End Date *</FormLabel>
+                      <FormControl>
+                        <Input 
+                          type="date" 
+                          className="h-11"
+                          {...field} 
+                          data-testid="input-project-end-date"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
+            {/* Financial & Status Section */}
+            <div className="space-y-6">
+              <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <DollarSign className="h-5 w-5 text-orange-600" />
+                  Financial & Status
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">Budget and project status information</p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField
+                  control={form.control}
+                  name="budget"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Budget (KSh)</FormLabel>
+                      <FormControl>
+                        <Input 
+                          type="number" 
+                          placeholder="0.00" 
+                          min="0" 
+                          step="0.01"
+                          className="h-11"
+                          {...field} 
+                          data-testid="input-project-budget"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                
+                {/* Status field - only show in edit mode */}
+                {isEditMode && (
+                  <FormField
+                    control={form.control}
+                    name="status"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-sm font-medium text-gray-700">Project Status</FormLabel>
+                        <Select 
+                          onValueChange={field.onChange} 
+                          value={field.value || 'planning'}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="h-11" data-testid="select-project-status">
+                              <SelectValue placeholder="Select status" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="planning">Planning</SelectItem>
+                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="on_hold">On Hold</SelectItem>
+                            <SelectItem value="completed">Completed</SelectItem>
+                            <SelectItem value="cancelled">Cancelled</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Milestones Section */}
+            <div className="space-y-6">
+              <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <Plus className="h-5 w-5 text-indigo-600" />
+                  {isEditMode ? 'Edit Milestones' : 'Create Milestones'}
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">Define project milestones and assign team members</p>
+              </div>
+              
               <div className="flex items-center justify-between">
-                <h4 className="font-medium">{isEditMode ? 'Edit Milestones' : 'Create Milestones'}</h4>
-                <Button type="button" variant="outline" onClick={() => setTasks((prev) => [...prev, { name: '', description: '', priority: 'medium' } as NewTaskRow])}>
+                <div>
+                  <h4 className="text-lg font-medium text-gray-900">Project Milestones</h4>
+                  <p className="text-sm text-gray-600">Define the key deliverables and timeline for your project</p>
+                </div>
+                <Button 
+                  type="button" 
+                  variant="default" 
+                  onClick={() => setTasks((prev) => [...prev, { name: '', description: '', priority: 'medium' } as NewTaskRow])}
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
                   <Plus className="h-4 w-4 mr-2" /> Add Milestone
                 </Button>
               </div>
               {tasks.length === 0 ? (
-                <p className="text-sm text-gray-500">{isEditMode ? 'No milestones found.' : 'No milestones added yet.'}</p>
+                <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50">
+                  <div className="text-gray-400 mb-4">
+                    <Plus className="h-16 w-16 mx-auto" />
+                  </div>
+                  <h4 className="text-lg font-medium text-gray-900 mb-2">
+                    {isEditMode ? 'No milestones found' : 'No milestones added yet'}
+                  </h4>
+                  <p className="text-sm text-gray-600 mb-4">
+                    {isEditMode ? 'This project doesn\'t have any milestones defined.' : 'Start by adding your first project milestone.'}
+                  </p>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setTasks((prev) => [...prev, { name: '', description: '', priority: 'medium' } as NewTaskRow])}
+                    className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                  >
+                    <Plus className="h-4 w-4 mr-2" /> Add Your First Milestone
+                  </Button>
+                </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-6">
                   {tasks.map((t, idx) => (
-                    <div key={idx} className="p-3 border rounded-md space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm text-gray-600">Milestone #{idx + 1}</span>
-                          {isEditMode && (t as any).id && (
-                            <Badge variant="outline" className="text-xs">
-                              {(t as any).status} • {(t as any).billingStatus || 'none'}
-                            </Badge>
-                          )}
+                    <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-6 space-y-6">
+                      {/* Milestone Header */}
+                      <div className="flex items-center justify-between border-b border-gray-200 pb-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                            <span className="text-sm font-semibold text-blue-700">{idx + 1}</span>
+                          </div>
+                          <div>
+                            <h4 className="font-medium text-gray-900">Milestone #{idx + 1}</h4>
+                            {isEditMode && (t as any).id && (
+                              <div className="flex items-center space-x-2 mt-1">
+                                <Badge variant="outline" className="text-xs">
+                                  {(t as any).status}
+                                </Badge>
+                                <Badge variant="outline" className="text-xs">
+                                  {(t as any).billingStatus || 'none'}
+                                </Badge>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => setTasks((prev) => prev.filter((_, i) => i !== idx))}><X className="h-4 w-4" /></Button>
+                        <Button 
+                          type="button" 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => setTasks((prev) => prev.filter((_, i) => i !== idx))}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div>
-                                                      <Input placeholder="Milestone name *" value={t.name} onChange={(e) => setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], name: e.target.value, errors: { ...c[idx].errors, name: undefined } }; return c; })} />
-                          {t.errors?.name && <p className="text-xs text-error mt-1">{t.errors.name}</p>}
+
+                      {/* Basic Milestone Info */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Milestone Name *</label>
+                            <Input 
+                              placeholder="Enter milestone name" 
+                              value={t.name} 
+                              onChange={(e) => setTasks((prev)=>{ 
+                                const c=[...prev]; 
+                                c[idx] = { ...c[idx], name: e.target.value, errors: { ...c[idx].errors, name: undefined } }; 
+                                return c; 
+                              })} 
+                              className="h-11"
+                            />
+                            {t.errors?.name && <p className="text-xs text-red-600 mt-1">{t.errors.name}</p>}
+                          </div>
+                          
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                            <Select value={t.priority} onValueChange={(v)=> setTasks((prev)=>{ 
+                              const c=[...prev]; 
+                              c[idx] = { ...c[idx], priority: v as NewTaskRow['priority'] }; 
+                              return c; 
+                            })}>
+                              <SelectTrigger className="h-11">
+                                <SelectValue placeholder="Select priority" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="low">Low Priority</SelectItem>
+                                <SelectItem value="medium">Medium Priority</SelectItem>
+                                <SelectItem value="high">High Priority</SelectItem>
+                                <SelectItem value="critical">Critical Priority</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
-                        <Select value={t.priority} onValueChange={(v)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], priority: v as NewTaskRow['priority'] }; return c; })}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Priority" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="low">Low</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="high">High</SelectItem>
-                            <SelectItem value="critical">Critical</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Textarea placeholder="Milestone description" value={t.description || ''} onChange={(e)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], description: e.target.value }; return c; })} className="md:col-span-2" />
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:col-span-2">
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <CalendarDays className="h-4 w-4 text-gray-400" />
-                              <Input type="date" value={t.startDate || ''} onChange={(e)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], startDate: e.target.value, errors: { ...c[idx].errors, startDate: undefined } }; return c; })} placeholder="Start (optional)" />
-                            </div>
-                            {t.errors?.startDate && <p className="text-xs text-error">{t.errors.startDate}</p>}
+
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Fee Amount (KSh) *</label>
+                            <Input 
+                              type="number" 
+                              min="0" 
+                              step="0.01" 
+                              placeholder="0.00" 
+                              value={t.feeAmount || ''} 
+                              onChange={(e)=> setTasks((prev)=>{ 
+                                const c=[...prev]; 
+                                c[idx] = { ...c[idx], feeAmount: e.target.value, errors: { ...c[idx].errors, feeAmount: undefined } }; 
+                                return c; 
+                              })} 
+                              className="h-11"
+                            />
+                            {t.errors?.feeAmount && <p className="text-xs text-red-600 mt-1">{t.errors.feeAmount}</p>}
                           </div>
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <CalendarDays className="h-4 w-4 text-gray-400" />
-                              <Input type="date" value={t.dueDate || ''} onChange={(e)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], dueDate: e.target.value, errors: { ...c[idx].errors, dueDate: undefined } }; return c; })} placeholder="Deadline *" />
-                            </div>
-                            {t.errors?.dueDate && <p className="text-xs text-error">{t.errors.dueDate}</p>}
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <Input type="number" min="0" step="0.01" placeholder="Fee amount *" value={t.feeAmount || ''} onChange={(e)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], feeAmount: e.target.value, errors: { ...c[idx].errors, feeAmount: undefined } }; return c; })} />
-                            </div>
-                            {t.errors?.feeAmount && <p className="text-xs text-error">{t.errors.feeAmount}</p>}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <UserCircle2 className="h-4 w-4 text-gray-400" />
-                            <Select value={t.assignedUserId || 'none'} onValueChange={(v)=> setTasks((prev)=>{ const c=[...prev]; c[idx] = { ...c[idx], assignedUserId: v === 'none' ? undefined : v }; return c; })}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Assign to" />
+                          
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Assign To</label>
+                            <Select value={t.assignedUserId || 'none'} onValueChange={(v)=> setTasks((prev)=>{ 
+                              const c=[...prev]; 
+                              c[idx] = { ...c[idx], assignedUserId: v === 'none' ? undefined : v }; 
+                              return c; 
+                            })}>
+                              <SelectTrigger className="h-11">
+                                <SelectValue placeholder="Select team member" />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="none">Unassigned</SelectItem>
                                 {teamMembers.map((m: any) => (
-                                  <SelectItem key={m.id} value={m.id}>{m.firstName && m.lastName ? `${m.firstName} ${m.lastName}` : m.email}</SelectItem>
+                                  <SelectItem key={m.id} value={m.id}>
+                                    {m.firstName && m.lastName ? `${m.firstName} ${m.lastName}` : m.email}
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
                           </div>
                         </div>
+                      </div>
+
+                      {/* Description */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                        <Textarea 
+                          placeholder="Describe what this milestone involves..." 
+                          value={t.description || ''} 
+                          onChange={(e)=> setTasks((prev)=>{ 
+                            const c=[...prev]; 
+                            c[idx] = { ...c[idx], description: e.target.value }; 
+                            return c; 
+                          })} 
+                          rows={3}
+                          className="resize-none"
+                        />
+                      </div>
+
+                      {/* Timeline & Financial */}
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Start Date (Optional)</label>
+                          <div className="relative">
+                            <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input 
+                              type="date" 
+                              value={t.startDate || ''} 
+                              onChange={(e)=> setTasks((prev)=>{ 
+                                const c=[...prev]; 
+                                c[idx] = { ...c[idx], startDate: e.target.value, errors: { ...c[idx].errors, startDate: undefined } }; 
+                                return c; 
+                              })} 
+                              className="h-11 pl-10"
+                            />
+                          </div>
+                          {t.errors?.startDate && <p className="text-xs text-red-600 mt-1">{t.errors.startDate}</p>}
+                        </div>
+                        
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Deadline *</label>
+                          <div className="relative">
+                            <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input 
+                              type="date" 
+                              value={t.dueDate || ''} 
+                              onChange={(e)=> setTasks((prev)=>{ 
+                                const c=[...prev]; 
+                                c[idx] = { ...c[idx], dueDate: e.target.value, errors: { ...c[idx].errors, dueDate: undefined } }; 
+                                return c; 
+                              })} 
+                              className="h-11 pl-10"
+                            />
+                          </div>
+                          {t.errors?.dueDate && <p className="text-xs text-red-600 mt-1">{t.errors.dueDate}</p>}
+                        </div>
+                        
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Expected Invoice Date</label>
+                          <div className="relative">
+                            <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input 
+                              type="date" 
+                              value={t.expectedInvoiceDate || ''} 
+                              onChange={(e)=> setTasks((prev)=>{ 
+                                const c=[...prev]; 
+                                c[idx] = { ...c[idx], expectedInvoiceDate: e.target.value, errors: { ...c[idx].errors, expectedInvoiceDate: undefined } }; 
+                                return c; 
+                              })} 
+                              className="h-11 pl-10"
+                            />
+                          </div>
+                          {t.errors?.expectedInvoiceDate && <p className="text-xs text-red-600 mt-1">{t.errors.expectedInvoiceDate}</p>}
+                        </div>
+                      </div>
+
+                      {/* Collection Date Note */}
+                      <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+                        <p className="text-sm text-blue-800">
+                          <span className="font-medium">Note:</span> Collection date will be automatically calculated as 30 days after the invoice date.
+                        </p>
                       </div>
                     </div>
                   ))}

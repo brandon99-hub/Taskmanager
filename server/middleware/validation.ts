@@ -161,7 +161,7 @@ export function assessPasswordStrength(password: string): {
   
   return {
     score: result.score,
-    feedback: [...new Set(feedback)], // Remove duplicates
+    feedback: Array.from(new Set(feedback)), // Remove duplicates
     isValid: result.score >= 3 && password.length >= 12
   };
 }

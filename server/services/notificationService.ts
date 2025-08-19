@@ -203,7 +203,7 @@ export class NotificationService {
         const userTasks = await this.storageInstance.getTasksByUser(user.id);
         
         for (const task of userTasks) {
-          if (task.status === 'completed') continue;
+          if (task.status === 'done') continue;
           
           // Calculate if task needs a due soon notification
           if (this.shouldSendDueSoonNotification(task)) {
@@ -212,7 +212,7 @@ export class NotificationService {
             const hasRecentReminder = recentNotifications.some(n => 
               n.type === NotificationType.TASK_DUE_SOON && 
               n.relatedId === task.id &&
-              new Date().getTime() - new Date(n.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000 // 7 days
+              new Date().getTime() - (task.completedAt ? new Date(task.completedAt).getTime() : 0) < 7 * 24 * 60 * 60 * 1000 // 7 days
             );
             
             if (!hasRecentReminder) {
@@ -250,7 +250,7 @@ export class NotificationService {
         const userTasks = await this.storageInstance.getTasksByUser(user.id);
         
         for (const task of userTasks) {
-          if (task.status === 'completed') continue;
+          if (task.status === 'done') continue;
           
           // Check if task is overdue
           if (this.isTaskOverdue(task)) {
@@ -259,7 +259,7 @@ export class NotificationService {
             const hasRecentAlert = recentNotifications.some(n => 
               n.type === NotificationType.TASK_OVERDUE && 
               n.relatedId === task.id &&
-              new Date().getTime() - new Date(n.createdAt).getTime() < 24 * 60 * 60 * 1000 // 24 hours
+              new Date().getTime() - (n.createdAt ? new Date(n.createdAt).getTime() : 0) < 24 * 60 * 60 * 1000 // 24 hours
             );
             
             if (!hasRecentAlert) {
@@ -304,7 +304,7 @@ export class NotificationService {
         const userTasks = await this.storageInstance.getTasksByUser(user.id);
         
         for (const task of userTasks) {
-          if (task.status === 'completed') continue;
+          if (task.status === 'done') continue;
           processed++;
           
           if (this.shouldSendDueSoonNotification(task)) {
@@ -312,7 +312,7 @@ export class NotificationService {
             const hasRecentReminder = recentNotifications.some(n => 
               n.type === NotificationType.TASK_DUE_SOON && 
               n.relatedId === task.id &&
-              new Date().getTime() - new Date(n.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000
+              new Date().getTime() - (task.completedAt ? new Date(task.completedAt).getTime() : 0) < 7 * 24 * 60 * 60 * 1000
             );
             
             if (!hasRecentReminder) {
@@ -356,7 +356,7 @@ export class NotificationService {
         const userTasks = await this.storageInstance.getTasksByUser(user.id);
         
         for (const task of userTasks) {
-          if (task.status === 'completed') continue;
+          if (task.status === 'done') continue;
           processed++;
           
           if (this.isTaskOverdue(task)) {
@@ -364,7 +364,7 @@ export class NotificationService {
             const hasRecentAlert = recentNotifications.some(n => 
               n.type === NotificationType.TASK_OVERDUE && 
               n.relatedId === task.id &&
-              new Date().getTime() - new Date(n.createdAt).getTime() < 24 * 60 * 60 * 1000
+              new Date().getTime() - (n.createdAt ? new Date(n.createdAt).getTime() : 0) < 24 * 60 * 60 * 1000
             );
             
             if (!hasRecentAlert) {
@@ -404,7 +404,7 @@ export class NotificationService {
       let overdueCount = 0;
 
       for (const task of userTasks) {
-        if (task.status === 'completed') continue;
+        if (task.status === 'done') continue;
 
         // Check for due soon notifications
         if (this.shouldSendDueSoonNotification(task)) {
@@ -412,7 +412,7 @@ export class NotificationService {
           const hasRecentReminder = recentNotifications.some(n => 
             n.type === NotificationType.TASK_DUE_SOON && 
             n.relatedId === task.id &&
-            new Date().getTime() - new Date(n.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000
+            new Date().getTime() - (task.completedAt ? new Date(task.completedAt).getTime() : 0) < 7 * 24 * 60 * 60 * 1000
           );
 
           if (!hasRecentReminder && (preferences.emailTaskDueSoon || preferences.inAppTaskDueSoon)) {
@@ -431,7 +431,7 @@ export class NotificationService {
           const hasRecentAlert = recentNotifications.some(n => 
             n.type === NotificationType.TASK_OVERDUE && 
             n.relatedId === task.id &&
-            new Date().getTime() - new Date(n.createdAt).getTime() < 24 * 60 * 60 * 1000
+            new Date().getTime() - (n.createdAt ? new Date(n.createdAt).getTime() : 0) < 24 * 60 * 60 * 1000
           );
 
           if (!hasRecentAlert && (preferences.emailTaskOverdue || preferences.inAppTaskOverdue)) {
@@ -506,12 +506,12 @@ export class NotificationService {
       projectName: project.name,
       priority: task.priority,
       priorityLabel: task.priority ? task.priority.charAt(0).toUpperCase() + task.priority.slice(1) : 'Medium',
-      dueDate: new Date(task.dueDate).toLocaleDateString('en-US', { 
+      dueDate: task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-US', { 
         weekday: 'long', 
         year: 'numeric', 
         month: 'long', 
         day: 'numeric' 
-      }),
+      }) : 'Not set',
       feeAmount: task.feeAmount ? parseFloat(task.feeAmount).toLocaleString() : undefined,
       assignedBy: assignedBy ? `${assignedBy.firstName} ${assignedBy.lastName}` : 'Project Manager',
       progressPercent: task.progressPercent || 0,

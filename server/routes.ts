@@ -125,6 +125,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Invoice report endpoint
+  app.get('/api/dashboard/invoice-report', isAuthenticated, async (req: any, res) => {
+    try {
+      console.log('🔥🔥🔥 ROUTE HANDLER EXECUTED! 🔥🔥🔥');
+      process.stdout.write('🔥🔥🔥 ROUTE HANDLER EXECUTED! 🔥🔥🔥\n');
+      
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const month = req.query.month ? parseInt(req.query.month as string) : undefined;
+      
+      console.log(`🔥🔥🔥 Calling storage.getInvoiceReport(${year}, ${month}) 🔥🔥🔥`);
+      const invoiceData = await storage.getInvoiceReport(year, month);
+      console.log(`🔥🔥🔥 Got invoice data:`, invoiceData);
+      res.json(invoiceData);
+    } catch (error) {
+      console.error("Error fetching invoice report:", error);
+      res.status(500).json({ message: "Failed to fetch invoice report" });
+    }
+  });
+
+  // Monthly targets calculation endpoint
+  app.post('/api/dashboard/calculate-monthly-targets', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const year = parseInt(req.body.year) || new Date().getFullYear();
+      await storage.calculateMonthlyTargets(year);
+      res.json({ message: 'Monthly targets calculated successfully' });
+    } catch (error) {
+      console.error("Error calculating monthly targets:", error);
+      res.status(500).json({ message: "Failed to calculate monthly targets" });
+    }
+  });
+
+  // Completed milestones endpoint for modal
+  app.get('/api/dashboard/completed-milestones', isAuthenticated, async (req: any, res) => {
+    try {
+      const completedTasks = req.user.role === 'employee'
+        ? await storage.getTasksByUser(req.user.id)
+        : await storage.getTasks();
+      
+      // Filter for completed tasks with project and user details
+      const completed = completedTasks.filter((task: any) => task.status === 'done');
+      res.json(completed);
+    } catch (error) {
+      console.error("Error fetching completed milestones:", error);
+      res.status(500).json({ message: "Failed to fetch completed milestones" });
+    }
+  });
+
   // Export routes
   app.post('/api/reports/export', isAuthenticated, async (req: any, res) => {
     try {
@@ -216,6 +271,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/teams/:id', isAuthenticated, async (req, res) => {
     try {
+      // Handle "none" teamId case
+      if (req.params.id === 'none') {
+        return res.json({
+          team: null,
+          members: [],
+          projects: [],
+          totalTasks: 0
+        });
+      }
+      
       const teamWithWorkload = await storage.getTeamWithWorkload(req.params.id);
       res.json(teamWithWorkload);
     } catch (error) {
@@ -268,25 +333,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/teams/:id', isAuthenticated, async (req: any, res) => {
-    try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
-        return res.status(403).json({ message: 'Forbidden' });
-      }
-      await storage.deleteTeam(req.params.id);
-      res.status(204).send();
-    } catch (error) {
-      console.error("Error deleting team:", error);
-      res.status(500).json({ message: "Failed to delete team" });
-    }
-  });
+
 
   // Project routes
   app.get('/api/projects', isAuthenticated, async (req: any, res) => {
     try {
-      const projects = req.user.role === 'employee'
+      const { segment, status } = req.query;
+      let projects = req.user.role === 'employee'
         ? await storage.getProjectsForUser(req.user.id)
         : await storage.getProjects();
+      
+      // Apply segment filter if provided
+      if (segment && ['academic', 'parastals', 'private'].includes(segment as string)) {
+        projects = projects.filter((p: any) => p.segment === segment);
+      }
+      
+      // Apply status filter if provided
+      if (status && ['planning', 'active', 'on_hold', 'completed', 'terminated'].includes(status as string)) {
+        projects = projects.filter((p: any) => p.status === status);
+      }
+      
       res.json(projects);
     } catch (error) {
       console.error("Error fetching projects:", error);
@@ -424,16 +490,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/projects/:id', isAuthenticated, async (req: any, res) => {
+  // Project termination endpoint
+  app.put('/api/projects/:id/terminate', isAuthenticated, async (req: any, res) => {
     try {
       if (!['admin', 'manager'].includes(req.user.role)) {
         return res.status(403).json({ message: 'Forbidden' });
       }
-      await storage.deleteProject(req.params.id);
-      res.status(204).send();
+      const project = await storage.terminateProject(req.params.id);
+      res.json({ message: "Project terminated successfully", project });
     } catch (error) {
-      console.error("Error deleting project:", error);
-      res.status(500).json({ message: "Failed to delete project" });
+      console.error("Error terminating project:", error);
+      res.status(500).json({ message: "Failed to terminate project" });
     }
   });
 
@@ -489,6 +556,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (cleaned.feeAmount == null || String(cleaned.feeAmount).trim() === '' || isNaN(Number(cleaned.feeAmount))) {
         return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['feeAmount'], message: 'Milestone fee is required' }] });
+      }
+
+      // Handle invoice and collection dates
+      if (req.body.expectedInvoiceDate) {
+        const invoiceDate = new Date(req.body.expectedInvoiceDate);
+        if (Number.isNaN(invoiceDate.getTime())) {
+          return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['expectedInvoiceDate'], message: 'Invalid expected invoice date' }] });
+        }
+        cleaned.expectedInvoiceDate = invoiceDate;
+        
+        // Auto-calculate collection date (30 days after invoice)
+        const collectionDate = new Date(invoiceDate);
+        collectionDate.setDate(collectionDate.getDate() + 30);
+        cleaned.expectedCollectionDate = collectionDate;
       }
 
       // Default progress for status if not provided
@@ -585,6 +666,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           payload.dueDate = new Date(req.body.dueDate);
         } else {
           payload.dueDate = null;
+        }
+      }
+
+      // Handle invoice and collection dates
+      if (req.body.expectedInvoiceDate !== undefined) {
+        if (req.body.expectedInvoiceDate) {
+          const invoiceDate = new Date(req.body.expectedInvoiceDate);
+          if (Number.isNaN(invoiceDate.getTime())) {
+            return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['expectedInvoiceDate'], message: 'Invalid expected invoice date' }] });
+          }
+          payload.expectedInvoiceDate = invoiceDate;
+          
+          // Auto-calculate collection date (30 days after invoice)
+          const collectionDate = new Date(invoiceDate);
+          collectionDate.setDate(collectionDate.getDate() + 30);
+          payload.expectedCollectionDate = collectionDate;
+        } else {
+          payload.expectedInvoiceDate = null;
+          payload.expectedCollectionDate = null;
         }
       }
 
@@ -1004,6 +1104,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to disconnect calendar" });
     }
   });
+
+
+
+
 
   const httpServer = createServer(app);
   return httpServer;

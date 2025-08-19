@@ -13,6 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -22,6 +23,7 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 const createTeamSchema = z.object({
   name: z.string().min(1, "Team name is required").max(100, "Team name too long"),
   description: z.string().optional(),
+  segment: z.enum(["academic", "parastals", "private"]).default("private"),
   members: z.array(z.string()).optional(),
 });
 
@@ -229,6 +231,29 @@ export default function Team() {
                                 {...field} 
                                 data-testid="textarea-team-description"
                               />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="segment"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Team Segment *</FormLabel>
+                            <FormControl>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <SelectTrigger data-testid="select-team-segment">
+                                  <SelectValue placeholder="Select team segment" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="private">Private</SelectItem>
+                                  <SelectItem value="academic">Academic</SelectItem>
+                                  <SelectItem value="parastals">Parastals</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </FormControl>
                             <FormMessage />
                           </FormItem>

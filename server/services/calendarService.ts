@@ -48,7 +48,7 @@ export class GoogleCalendarService {
    */
   async getTokensFromCode(code: string): Promise<CalendarCredentials> {
     try {
-      const { tokens } = await this.oauth2Client.getAccessToken(code);
+      const { tokens } = await this.oauth2Client.getToken(code);
       
       if (!tokens.access_token || !tokens.refresh_token) {
         throw new Error('Failed to obtain required tokens');

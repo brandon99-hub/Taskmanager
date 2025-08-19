@@ -53,9 +53,8 @@ export function setupCSRFProtection(app: Express) {
 export function validateCSRFToken(req: Request): boolean {
   try {
     const token = req.get('X-CSRF-Token') || req.body._csrf;
-    const secret = req.session?.csrfSecret;
     
-    if (!token || !secret) {
+    if (!token) {
       return false;
     }
     

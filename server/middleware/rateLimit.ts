@@ -17,7 +17,7 @@ export function setupRateLimiting(app: Express) {
     // Skip rate limiting for certain IPs if needed (e.g., monitoring services)
     skip: (req: Request) => {
       const trustedIPs = process.env.TRUSTED_IPS?.split(',') || [];
-      return trustedIPs.includes(req.ip);
+      return req.ip ? trustedIPs.includes(req.ip) : false;
     },
     keyGenerator: (req: Request) => {
       // Use forwarded IP if behind proxy, otherwise use connection IP
@@ -41,10 +41,11 @@ export function setupRateLimiting(app: Express) {
     keyGenerator: (req: Request) => {
       // For auth, we can also rate limit by email if provided
       const email = req.body?.email;
+      const ip = req.ip || 'unknown';
       if (email && typeof email === 'string') {
-        return `auth:${req.ip}:${email.toLowerCase()}`;
+        return `auth:${ip}:${email.toLowerCase()}`;
       }
-      return `auth:${req.ip}`;
+      return `auth:${ip}`;
     },
   });
   
@@ -54,7 +55,7 @@ export function setupRateLimiting(app: Express) {
     delayAfter: 50, // Allow 50 requests per windowMs without delay
     delayMs: () => 250, // Add 250ms delay per request after delayAfter (new API)
     maxDelayMs: 5000, // Maximum delay of 5 seconds
-    keyGenerator: (req: Request) => req.ip,
+    keyGenerator: (req: Request) => req.ip || 'unknown',
     validate: {
       delayMs: false // Disable the deprecation warning
     }
