@@ -25,14 +25,14 @@ const statusColumns = [
   },
   { 
     id: 'highPriorityTodo', 
-    title: 'High Priority Todo', 
+    title: 'High Priority Milestones', 
     mobileTitle: 'Priority',
     color: 'bg-orange-50', 
     icon: Zap 
   },
   { 
     id: 'review', 
-    title: 'Review', 
+    title: 'Client Review', 
     mobileTitle: 'Review',
     color: 'bg-blue-50', 
     icon: Eye 
@@ -64,7 +64,7 @@ export default function KanbanBoard() {
   const itemsPerPage = 3;
 
   // Enhanced kanban task fetching
-  const { data: kanbanTasks, isLoading } = useQuery<{
+  const { data: kanbanTasks, isLoading, error } = useQuery<{
     overdue: any[];
     review: any[];
     recentlyDone: any[];
@@ -72,6 +72,8 @@ export default function KanbanBoard() {
   }>({
     queryKey: ['/api/dashboard/kanban-tasks'],
   });
+
+
 
   const updateTaskMutation = useMutation({
     mutationFn: async ({ taskId, status }: { taskId: string; status: string }) => {
@@ -113,7 +115,7 @@ export default function KanbanBoard() {
     const statusMapping: Record<string, string> = {
       'overdue': 'todo', // Overdue tasks are typically todo tasks that are past due
       'highPriorityTodo': 'todo',
-      'review': 'review',
+      'review': 'client_review', // Map review column to client_review status
       'recentlyDone': 'done'
     };
     
@@ -129,6 +131,8 @@ export default function KanbanBoard() {
     acc[column.id] = kanbanTasks?.[column.id as keyof typeof kanbanTasks] || [];
     return acc;
   }, {} as Record<string, any[]>);
+
+
 
   // Get board title based on user role
   const getBoardTitle = () => {
@@ -381,7 +385,7 @@ export default function KanbanBoard() {
                             const statusMapping: Record<string, string> = {
                               'overdue': 'todo',
                               'highPriorityTodo': 'todo',
-                              'review': 'review',
+                              'clientReview': 'client_review',
                               'recentlyDone': 'done'
                             };
                             
@@ -391,7 +395,7 @@ export default function KanbanBoard() {
                             // Get the correct icon based on the actual status
                             const Icon = actualStatus === 'todo' ? ClipboardList : 
                                         actualStatus === 'in_progress' ? Zap : 
-                                        actualStatus === 'review' ? Eye : 
+                                        actualStatus === 'client_review' ? Eye : 
                                         actualStatus === 'done' ? CheckCircle : ClipboardList;
                             
                             // Hide "done" status button for employees

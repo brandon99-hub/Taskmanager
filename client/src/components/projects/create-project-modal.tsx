@@ -18,15 +18,16 @@ import { useLocation, useSearch } from "wouter";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
 const createProjectSchema = z.object({
-  name: z.string().min(1, "Project name is required").max(200, "Project name too long"),
-  description: z.string().min(1, "Description is required"),
-  client: z.string().optional(),
+  client: z.string().min(1, "Client name is required").max(200, "Client name too long"),
+  contactPerson: z.string().min(1, "Contact person is required").max(200, "Contact person name too long"),
+  contactPhone: z.string().min(1, "Contact phone is required").max(50, "Contact phone too long"),
+  contactEmail: z.string().email("Invalid contact email").max(200, "Contact email too long"),
   startDate: z.string().min(1, "Start date is required"),
   endDate: z.string().min(1, "End date is required"),
   segment: z.enum(["academic", "parastals", "private"]).default("private"),
   teamId: z.string().optional().or(z.literal("none")),
   budget: z.string().optional(),
-  status: z.enum(["planning", "active", "on_hold", "completed", "cancelled"]).optional(),
+  status: z.enum(["planning", "active", "on_hold", "completed", "on_support", "inactive"]).optional(),
 }).refine((data) => {
   const start = new Date(data.startDate);
   const end = new Date(data.endDate);
@@ -72,9 +73,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   const form = useForm<CreateProjectData>({
     resolver: zodResolver(createProjectSchema),
     defaultValues: {
-      name: "",
-      description: "",
       client: "",
+      contactPerson: "",
+      contactPhone: "",
+      contactEmail: "",
       startDate: "",
       endDate: "",
       segment: "private",
@@ -89,9 +91,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     if (project) {
       setIsOpen(true);
       form.reset({
-        name: project.name || "",
-        description: project.description || "",
         client: project.client || "",
+        contactPerson: project.contactPerson || "",
+        contactPhone: project.contactPhone || "",
+        contactEmail: project.contactEmail || "",
         startDate: project.startDate ? new Date(project.startDate).toISOString().slice(0, 10) : "",
         endDate: project.endDate ? new Date(project.endDate).toISOString().slice(0, 10) : "",
         segment: project.segment || "private",
@@ -623,32 +626,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FormField
                   control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-sm font-medium text-gray-700">Project Name *</FormLabel>
-                      <FormControl>
-                        <Input 
-                          placeholder="Enter project name" 
-                          className="h-11"
-                          {...field} 
-                          data-testid="input-project-name"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                
-                <FormField
-                  control={form.control}
                   name="client"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-sm font-medium text-gray-700">Client</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Client *</FormLabel>
                       <FormControl>
                         <Input 
-                          placeholder="Client name (optional)" 
+                          placeholder="Enter client name" 
                           className="h-11"
                           {...field} 
                           data-testid="input-project-client"
@@ -658,27 +642,68 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                     </FormItem>
                   )}
                 />
+                
+                <FormField
+                  control={form.control}
+                  name="contactPerson"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Contact Person *</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="Enter contact person name" 
+                          className="h-11"
+                          {...field} 
+                          data-testid="input-project-contact-person"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
 
-              <FormField
-                control={form.control}
-                name="description"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-sm font-medium text-gray-700">Description *</FormLabel>
-                    <FormControl>
-                      <Textarea 
-                        placeholder="Describe the project goals, requirements, and expected outcomes" 
-                        rows={4}
-                        className="resize-none"
-                        {...field} 
-                        data-testid="textarea-project-description"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField
+                  control={form.control}
+                  name="contactPhone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Contact Phone *</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="Enter contact phone number" 
+                          className="h-11"
+                          {...field} 
+                          data-testid="input-project-contact-phone"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                
+                <FormField
+                  control={form.control}
+                  name="contactEmail"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Contact Email</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="Enter contact email (optional)" 
+                          className="h-11"
+                          {...field} 
+                          data-testid="input-project-contact-email"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Removed description field - no longer needed */}
             </div>
 
             {/* Project Organization Section */}
@@ -813,7 +838,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                   name="budget"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-sm font-medium text-gray-700">Budget (KSh)</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Contract Amount (KSh)</FormLabel>
                       <FormControl>
                         <Input 
                           type="number" 
@@ -852,7 +877,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                             <SelectItem value="active">Active</SelectItem>
                             <SelectItem value="on_hold">On Hold</SelectItem>
                             <SelectItem value="completed">Completed</SelectItem>
-                            <SelectItem value="cancelled">Cancelled</SelectItem>
+                            <SelectItem value="on_support">On Support</SelectItem>
+                            <SelectItem value="inactive">Inactive</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />

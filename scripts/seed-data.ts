@@ -417,8 +417,39 @@ async function updateProjectProgress() {
     
     if (projectTasks.length === 0) continue;
     
-    const completedTasks = projectTasks.filter(task => task.status === 'done').length;
-    const progress = Math.round((completedTasks / projectTasks.length) * 100);
+    // Calculate progress based on priority weights instead of simple count
+    // Weights: low=1, medium=2, high=3, critical=4
+    let totalWeight = 0;
+    let completedWeight = 0;
+
+    for (const task of projectTasks) {
+      // Calculate weight based on priority
+      let weight = 2; // default medium weight
+      switch (task.priority) {
+        case 'low':
+          weight = 1;
+          break;
+        case 'medium':
+          weight = 2;
+          break;
+        case 'high':
+          weight = 3;
+          break;
+        case 'critical':
+          weight = 4;
+          break;
+      }
+
+      totalWeight += weight;
+      
+      // If task is completed, add its weight to completed total
+      if (task.status === 'done') {
+        completedWeight += weight;
+      }
+    }
+
+    // Calculate percentage based on weight completion
+    const progress = totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 0;
     
     await db.update(projects)
       .set({ progress })

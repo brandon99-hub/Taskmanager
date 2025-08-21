@@ -122,15 +122,15 @@ export default function Tasks() {
   const tasksByStatus = {
     todo: filteredTasks.filter((task: any) => task.status === 'todo'),
     in_progress: filteredTasks.filter((task: any) => task.status === 'in_progress'),
-    review: filteredTasks.filter((task: any) => task.status === 'review'),
+    client_review: filteredTasks.filter((task: any) => task.status === 'client_review'),
     done: filteredTasks.filter((task: any) => task.status === 'done'),
   };
 
   const getStatusTitle = (status: string) => {
     switch (status) {
-      case 'todo': return 'To Do';
+      case 'todo': return 'Not Started';
       case 'in_progress': return 'In Progress';
-      case 'review': return 'Review';
+      case 'client_review': return 'Client Review';
       case 'done': return 'Done';
       default: return status;
     }
@@ -140,7 +140,7 @@ export default function Tasks() {
     switch (status) {
       case 'todo': return 'bg-gray-100';
       case 'in_progress': return 'bg-blue-50';
-      case 'review': return 'bg-yellow-50';
+      case 'client_review': return 'bg-yellow-50';
       case 'done': return 'bg-green-50';
       default: return 'bg-gray-100';
     }
@@ -201,9 +201,9 @@ export default function Tasks() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="todo">To Do</SelectItem>
+                                          <SelectItem value="todo">Not Started</SelectItem>
                   <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="review">Review</SelectItem>
+                                          <SelectItem value="client_review">Client Review</SelectItem>
                   <SelectItem value="done">Done</SelectItem>
                 </SelectContent>
               </Select>

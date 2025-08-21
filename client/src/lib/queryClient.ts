@@ -113,9 +113,45 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       staleTime: Infinity,
       retry: false,
+      onError: (error: any) => {
+        console.error('Query error:', error);
+        
+        // Handle database connection errors and security issues
+        if (error?.message?.includes('ETIMEDOUT') || 
+            error?.message?.includes('ECONNREFUSED') ||
+            error?.message?.includes('500') ||
+            error?.message?.includes('Internal Server Error')) {
+          
+          // Clear any cached data and redirect to login
+          queryClient.clear();
+          localStorage.removeItem('taskflow-auth');
+          sessionStorage.clear();
+          
+          // Redirect to login page
+          window.location.href = '/login';
+        }
+      },
     },
     mutations: {
       retry: false,
+      onError: (error: any) => {
+        console.error('Mutation error:', error);
+        
+        // Handle database connection errors and security issues
+        if (error?.message?.includes('ETIMEDOUT') || 
+            error?.message?.includes('ECONNREFUSED') ||
+            error?.message?.includes('500') ||
+            error?.message?.includes('Internal Server Error')) {
+          
+          // Clear any cached data and redirect to login
+          queryClient.clear();
+          localStorage.removeItem('taskflow-auth');
+          sessionStorage.clear();
+          
+          // Redirect to login page
+          window.location.href = '/login';
+        }
+      },
     },
   },
 });

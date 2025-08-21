@@ -128,7 +128,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Invoice report endpoint
   app.get('/api/dashboard/invoice-report', isAuthenticated, async (req: any, res) => {
     try {
-      console.log('🔥🔥🔥 ROUTE HANDLER EXECUTED! 🔥🔥🔥');
+
       process.stdout.write('🔥🔥🔥 ROUTE HANDLER EXECUTED! 🔥🔥🔥\n');
       
       if (!['admin', 'manager'].includes(req.user.role)) {
@@ -138,9 +138,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
       const month = req.query.month ? parseInt(req.query.month as string) : undefined;
       
-      console.log(`🔥🔥🔥 Calling storage.getInvoiceReport(${year}, ${month}) 🔥🔥🔥`);
       const invoiceData = await storage.getInvoiceReport(year, month);
-      console.log(`🔥🔥🔥 Got invoice data:`, invoiceData);
       res.json(invoiceData);
     } catch (error) {
       console.error("Error fetching invoice report:", error);
@@ -161,6 +159,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error calculating monthly targets:", error);
       res.status(500).json({ message: "Failed to calculate monthly targets" });
+    }
+  });
+
+  // Monthly progress comparison endpoint
+  app.get('/api/dashboard/monthly-progress', isAuthenticated, async (req: any, res) => {
+    try {
+      const progressData = await storage.getMonthlyProgressComparison();
+      res.json(progressData);
+    } catch (error) {
+      console.error("Error fetching monthly progress:", error);
+      res.status(500).json({ message: "Failed to fetch monthly progress" });
     }
   });
 
@@ -188,7 +197,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { reportType, format = 'excel', filters = {} } = req.body;
-      console.log('Export request:', { reportType, format, filters });
+      
 
       // Generate filename with timestamp
       const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
@@ -269,6 +278,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Segment leaders route
+  app.get('/api/segment-leaders/:segment', isAuthenticated, async (req: any, res) => {
+    try {
+      const { segment } = req.params;
+      if (!['academic', 'parastals', 'private'].includes(segment)) {
+        return res.status(400).json({ message: 'Invalid segment' });
+      }
+      
+      const leader = await storage.getSegmentLeader(segment as "academic" | "parastals" | "private");
+      res.json(leader);
+    } catch (error) {
+      console.error("Error fetching segment leader:", error);
+      res.status(500).json({ message: "Failed to fetch segment leader" });
+    }
+  });
+
+  // Save segment leaders route
+  app.post('/api/segment-leaders', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
+      const { academic, parastals, private: privateSegment, financeEmail, accountManagerEmail } = req.body;
+      
+      // Update segment leaders in database
+      await storage.updateSegmentLeaders({
+        academic,
+        parastals,
+        private: privateSegment,
+        financeEmail,
+        accountManagerEmail
+      });
+
+      res.json({ message: 'Segment leaders updated successfully' });
+    } catch (error) {
+      console.error("Error updating segment leaders:", error);
+      res.status(500).json({ message: "Failed to update segment leaders" });
+    }
+  });
+
+  // Get finance and account manager emails route
+  app.get('/api/system-config/emails', isAuthenticated, async (req: any, res) => {
+    try {
+      const emails = await storage.getFinanceAndAccountManagerEmails();
+      res.json(emails);
+    } catch (error) {
+      console.error("Error fetching emails:", error);
+      res.status(500).json({ message: "Failed to fetch emails" });
+    }
+  });
+
   app.get('/api/teams/:id', isAuthenticated, async (req, res) => {
     try {
       // Handle "none" teamId case
@@ -299,10 +360,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const teamData = insertTeamSchema.parse(rest);
       const team = await storage.createTeam(teamData);
 
-      if (Array.isArray(members) && members.length > 0) {
-        const uniqueMembers = Array.from(new Set(members as string[]));
-        for (const userId of uniqueMembers) {
-          await storage.addTeamMember({ teamId: team.id, userId, role: 'member' });
+      // Add team members with specific roles
+      const { roleAssignments } = req.body;
+      
+      if (roleAssignments) {
+        const { bcDevs, consultants, portalDev, accountManager, projectLeader } = roleAssignments;
+        
+        if (Array.isArray(bcDevs) && bcDevs.length > 0) {
+          for (const userId of bcDevs) {
+            await storage.addTeamMember({ teamId: team.id, userId, role: 'BC Developer' });
+          }
+        }
+        
+        if (Array.isArray(consultants) && consultants.length > 0) {
+          for (const userId of consultants) {
+            await storage.addTeamMember({ teamId: team.id, userId, role: 'Functional Consultant' });
+          }
+        }
+        
+        if (portalDev) {
+          await storage.addTeamMember({ teamId: team.id, userId: portalDev, role: 'Portal Developer' });
+        }
+        
+        if (accountManager) {
+          await storage.addTeamMember({ teamId: team.id, userId: accountManager, role: 'Account Manager' });
+        }
+        
+        if (projectLeader && projectLeader !== 'segment_leader') {
+          await storage.addTeamMember({ teamId: team.id, userId: projectLeader, role: 'Project Leader' });
         }
       }
 
@@ -385,9 +470,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const payload: any = {
-        name: String(req.body.name || '').trim(),
-        description: String(req.body.description || '').trim(),
-        client: req.body.client ? String(req.body.client).trim() : undefined,
+        name: String(req.body.client || '').trim(), // Set project name to client name
+        client: String(req.body.client || '').trim(),
+        contactPerson: String(req.body.contactPerson || '').trim(),
+        contactPhone: String(req.body.contactPhone || '').trim(),
+        contactEmail: req.body.contactEmail ? String(req.body.contactEmail).trim() : undefined,
         startDate: start,
         endDate: end,
         status: req.body.status || undefined,
@@ -398,8 +485,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         managerId: req.user.id,
       };
 
-      if (!payload.name || !payload.description) {
-        return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['name','description'], message: 'Name and description are required' }] });
+      if (!payload.client || !payload.contactPerson || !payload.contactPhone) {
+        return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['client','contactPerson','contactPhone'], message: 'Client name, contact person, and contact phone are required' }] });
       }
 
       const project = await storage.createProject(payload);
@@ -417,13 +504,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const payload: any = {
-        name: req.body.name ? String(req.body.name).trim() : undefined,
-        description: req.body.description ? String(req.body.description).trim() : undefined,
+        name: req.body.client ? String(req.body.client).trim() : undefined, // Update project name when client changes
         client: req.body.client ? String(req.body.client).trim() : undefined,
+        contactPerson: req.body.contactPerson ? String(req.body.contactPerson).trim() : undefined,
+        contactPhone: req.body.contactPhone ? String(req.body.contactPhone).trim() : undefined,
+        contactEmail: req.body.contactEmail ? String(req.body.contactEmail).trim() : undefined,
         budget: req.body.budget ? String(req.body.budget) : undefined,
         managerId: req.body.managerId || undefined,
         teamId: req.body.teamId || undefined,
         status: req.body.status || undefined,
+        segment: req.body.segment || undefined,
       };
 
       // Handle dates manually
@@ -446,6 +536,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validate business rules
       if (payload.startDate && payload.endDate && payload.endDate < payload.startDate) {
         return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['endDate'], message: 'End date must be after start date' }] });
+      }
+
+      // Validate segment
+      if (payload.segment && !['academic', 'parastals', 'private'].includes(payload.segment)) {
+        return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['segment'], message: 'Segment must be academic, parastals, or private' }] });
       }
 
       // Remove undefined values to avoid updating fields with undefined
@@ -698,15 +793,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Default progress mapping if status supplied without explicit progress
       if (payload.status && payload.progressPercent == null) {
-        const statusMap: Record<string, number> = { todo: 0, in_progress: 50, review: 75, done: 100 };
+        const statusMap: Record<string, number> = { todo: 0, in_progress: 50, client_review: 75, done: 100 }; // Removed 'review', using 'client_review'
         payload.progressPercent = statusMap[payload.status] ?? 0;
       }
       
-      // Manager/Admin sets done -> mark billing to_send
+      // Manager/Admin sets done -> mark billing to_send ONLY if not already paid or sent
       try {
         const reqAny = req as any;
         if (reqAny.user?.role !== 'employee' && payload.status === 'done') {
-          payload.billingStatus = 'to_send';
+          // Only set billing status to 'to_send' if it's not already 'paid' or 'sent'
+          // This preserves existing billing status and prevents overwriting paid invoices
+          if (!payload.billingStatus || (payload.billingStatus !== 'paid' && payload.billingStatus !== 'sent')) {
+            payload.billingStatus = 'to_send';
+          }
         }
       } catch {}
       
@@ -781,8 +880,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const assignedUser = task.assignedUserId ? await storage.getUser(task.assignedUserId) : null;
         
         if (project && assignedUser) {
-          // Notify when task is moved to review
-          if (payload.status === 'review' && existing?.status !== 'review') {
+          // Notify when task is moved to client review
+          if (payload.status === 'client_review' && existing?.status !== 'client_review') { // Changed from 'review' to 'client_review'
             await notificationService.sendTaskAssignedNotification({
               task: task,
               project: project,
@@ -1105,8 +1204,128 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Executive Dashboard endpoint
+  app.get('/api/dashboard/executive', isAuthenticated, async (req: any, res) => {
+    try {
+      // Only admin and manager can access executive dashboard
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
 
+      const projects = await storage.getProjects();
+      const tasks = await storage.getTasks();
 
+      // Calculate executive metrics
+      const onTrackProjects = projects.filter((p: any) => p.status === 'active' && p.progress >= 80).length;
+      const atRiskProjects = projects.filter((p: any) => p.status === 'active' && p.progress < 50).length;
+      const onHoldProjects = projects.filter((p: any) => p.status === 'on_hold').length;
+      const completedProjects = projects.filter((p: any) => p.status === 'completed').length;
+      const onSupportProjects = projects.filter((p: any) => p.status === 'on_support').length;
+      const closedSupportProjects = projects.filter((p: any) => p.status === 'completed' && p.progress === 100).length;
+
+      const totalMilestones = tasks.length;
+      const completedMilestones = tasks.filter((t: any) => t.status === 'done').length;
+      const overdueMilestones = tasks.filter((t: any) => {
+        if (t.dueDate && t.status !== 'done') {
+          return new Date(t.dueDate) < new Date();
+        }
+        return false;
+      }).length;
+
+      // Calculate revenue metrics
+      const totalRevenue = tasks.reduce((sum: number, t: any) => sum + parseFloat(t.feeAmount || '0'), 0);
+      const collectedRevenue = tasks.filter((t: any) => t.billingStatus === 'sent') // Changed from 'paid' to 'sent' - count revenue when invoice sent
+        .reduce((sum: number, t: any) => sum + parseFloat(t.feeAmount || '0'), 0);
+      const pendingRevenue = totalRevenue - collectedRevenue;
+
+      // Calculate segment performance
+      const segmentPerformance: any = {};
+      ['academic', 'parastals', 'private'].forEach(segment => {
+        const segmentProjects = projects.filter((p: any) => p.segment === segment);
+        const segmentTasks = tasks.filter((t: any) => {
+          const project = projects.find((p: any) => p.id === t.projectId);
+          return project && project.segment === segment;
+        });
+        
+        const completion = segmentTasks.length > 0 
+          ? Math.round((segmentTasks.filter((t: any) => t.status === 'done').length / segmentTasks.length) * 100)
+          : 0;
+        const revenue = segmentTasks.reduce((sum: number, t: any) => sum + parseFloat(t.feeAmount || '0'), 0);
+        
+        segmentPerformance[segment] = { completion, revenue };
+      });
+
+      const executiveData = {
+        onTrackProjects,
+        atRiskProjects,
+        onHoldProjects,
+        completedProjects,
+        onSupportProjects,
+        closedSupportProjects,
+        totalMilestones,
+        completedMilestones,
+        overdueMilestones,
+        totalRevenue,
+        collectedRevenue,
+        pendingRevenue,
+        teamPerformance: segmentPerformance
+      };
+
+      res.json(executiveData);
+    } catch (error) {
+      console.error("Error fetching executive dashboard data:", error);
+      res.status(500).json({ message: "Failed to fetch executive dashboard data" });
+    }
+  });
+
+  // Automated invoice status update middleware
+  const updateInvoiceStatusesAutomatically = async () => {
+    try {
+      const tasks = await storage.getTasks();
+      const now = new Date();
+      let updatedCount = 0;
+
+      for (const task of tasks) {
+        if (task.billingStatus === 'sent' && task.invoiceSentAt) {
+          const invoiceDate = new Date(task.invoiceSentAt);
+          const daysSinceInvoice = Math.floor((now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
+          
+          // If 3 days have passed since invoice was sent, automatically update to processing
+          if (daysSinceInvoice >= 3) {
+            await storage.updateTask(task.id, { 
+              billingStatus: 'processing'
+            });
+            updatedCount++;
+          }
+        }
+      }
+
+      if (updatedCount > 0) {
+        console.log(`🔄 Automatically updated ${updatedCount} invoice statuses from 'sent' to 'processing'`);
+      }
+    } catch (error) {
+      console.error("Error in automatic invoice status update:", error);
+    }
+  };
+
+  // Apply automation to relevant endpoints
+  app.use('/api/tasks', async (req, res, next) => {
+    // Run automation before processing task requests
+    await updateInvoiceStatusesAutomatically();
+    next();
+  });
+
+  app.use('/api/projects', async (req, res, next) => {
+    // Run automation before processing project requests
+    await updateInvoiceStatusesAutomatically();
+    next();
+  });
+
+  app.use('/api/dashboard', async (req, res, next) => {
+    // Run automation before processing dashboard requests
+    await updateInvoiceStatusesAutomatically();
+    next();
+  });
 
 
   const httpServer = createServer(app);
@@ -1213,7 +1432,7 @@ async function getFinancialExportData(storage: any, filters: any) {
   const financialData = projects.map((project: any) => {
     const projectTasks = tasks.filter((task: any) => task.projectId === project.id);
     const totalFees = projectTasks.reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
-    const paidFees = projectTasks.filter((task: any) => task.billingStatus === 'paid').reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
+    const paidFees = projectTasks.filter((task: any) => task.billingStatus === 'sent').reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0); // Changed from 'paid' to 'sent'
     const pendingFees = projectTasks.filter((task: any) => ['to_send', 'sent'].includes(task.billingStatus)).reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
     
     return {
@@ -1226,7 +1445,7 @@ async function getFinancialExportData(storage: any, filters: any) {
       'Outstanding (KSh)': (totalFees - paidFees).toLocaleString(),
       'Payment Completion (%)': totalFees > 0 ? Math.round((paidFees / totalFees) * 100) : 0,
       'Milestones Count': projectTasks.length,
-      'Paid Milestones': projectTasks.filter((task: any) => task.billingStatus === 'paid').length,
+      'Paid Milestones': projectTasks.filter((task: any) => task.billingStatus === 'sent').length, // Changed from 'paid' to 'sent'
       'Invoices to Send': projectTasks.filter((task: any) => task.billingStatus === 'to_send').length,
       'Invoices Sent': projectTasks.filter((task: any) => task.billingStatus === 'sent').length,
       'Project Start': project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A',

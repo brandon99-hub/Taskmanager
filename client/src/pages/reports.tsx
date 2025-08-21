@@ -187,7 +187,7 @@ export default function Reports() {
   const tasksByStatus = {
     todo: tasks.filter((t: any) => t.status === 'todo').length,
     in_progress: tasks.filter((t: any) => t.status === 'in_progress').length,
-    review: tasks.filter((t: any) => t.status === 'review').length,
+                            client_review: tasks.filter((t: any) => t.status === 'client_review').length,
     done: tasks.filter((t: any) => t.status === 'done').length,
   };
 
@@ -450,13 +450,13 @@ export default function Reports() {
                       const statusColors = {
                         todo: 'bg-gray-500',
                         in_progress: 'bg-primary',
-                        review: 'bg-warning',
+                        client_review: 'bg-warning',
                         done: 'bg-success'
                       };
                       const statusLabels = {
-                        todo: 'To Do',
+                        todo: 'Not Started',
                         in_progress: 'In Progress',
-                        review: 'Review',
+                        client_review: 'Client Review',
                         done: 'Done'
                       };
                       

@@ -31,13 +31,19 @@ export const users = pgTable("users", {
   email: varchar("email").unique().notNull(),
   password: varchar("password").notNull(), // Added for local auth
   firstName: varchar("first_name"),
+  middleName: varchar("middle_name"), // Added for personnel import
   lastName: varchar("last_name"),
+  phoneNumber: varchar("phone_number"), // Added for personnel import
+  idNumber: varchar("id_number"), // Added for personnel import
   profileImageUrl: varchar("profile_image_url"),
   role: varchar("role", { length: 20 }).notNull().default("employee"),
   isActive: boolean("is_active").notNull().default(true), // Added for account management
   lastLoginAt: timestamp("last_login_at"),
   resetToken: text("reset_token"), // Added for password reset
   resetTokenExpiry: timestamp("reset_token_expiry"), // Added for password reset
+  // New credential fields
+  temporaryPassword: varchar("temporary_password"),
+  passwordGeneratedAt: timestamp("password_generated_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -50,6 +56,7 @@ export const projectStatusEnum = pgEnum("project_status", [
   "completed",
   "cancelled",
   "terminated", // Added terminated status
+  "on_support", // Added on_support status
 ]);
 
 // Project segments for categorization
@@ -67,21 +74,79 @@ export const taskPriorityEnum = pgEnum("task_priority", [
 ]);
 
 export const taskStatusEnum = pgEnum("task_status", [
-  "todo",
+  "todo", // Will display as "Not Started" in frontend
   "in_progress",
-  "review",
-  "done",
+  "qa", // Added QA status
+  "client_review", // Added client review status
+  "done", // Will display as "Completed" in frontend
+  "delayed", // Added delayed status
+  "on_hold", // Added on hold status
+  "cancelled", // Added cancelled status
 ]);
 
-// Billing lifecycle for milestones
+// Billing lifecycle for milestones (keeping as billingStatus in DB, will display as Invoice Status in frontend)
 export const billingStatusEnum = pgEnum("billing_status", [
-  "none",       // default, not actionable
+  "none",       // Will display as "Not Sent" in frontend
   "to_send",    // milestone completed, invoice should be sent
   "sent",       // invoice sent
   "paid",       // payment received
   "overdue",    // 30 days passed since invoice sent
   "processing", // payment being processed
 ]);
+
+// Segment leaders table
+export const segmentLeaders = pgTable("segment_leaders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  segment: projectSegmentEnum("segment").notNull(),
+  leaderEmail: varchar("leader_email").notNull(),
+  leaderName: varchar("leader_name").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  uniqueSegment: index("unique_segment").on(table.segment),
+}));
+
+// Employee roles table
+export const employeeRoles = pgTable("employee_roles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  roleName: varchar("role_name").notNull().unique(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Team member roles table
+export const teamMemberRoles = pgTable("team_member_roles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  teamMemberId: varchar("team_member_id").references(() => teamMembers.id, { onDelete: 'cascade' }).notNull(),
+  roleId: varchar("role_id").references(() => employeeRoles.id, { onDelete: 'cascade' }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  uniqueTeamMemberRole: index("unique_team_member_role").on(table.teamMemberId, table.roleId),
+}));
+
+// External notification recipients table
+export const externalNotificationRecipients = pgTable("external_notification_recipients", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: varchar("type", { length: 50 }).notNull(), // 'finance' or 'account_manager'
+  email: varchar("email").notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  uniqueTypeEmail: index("unique_type_email").on(table.type, table.email),
+}));
+
+// System configuration table for storing global settings
+export const systemConfig = pgTable("system_config", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: varchar("key", { length: 100 }).notNull().unique(),
+  value: text("value").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  uniqueKey: index("unique_key").on(table.key),
+}));
 
 // Teams table
 export const teams = pgTable("teams", {
@@ -92,17 +157,21 @@ export const teams = pgTable("teams", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Projects table
+// Projects table (keeping existing structure, adding new contact fields)
 export const projects = pgTable("projects", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name", { length: 200 }).notNull(),
-  description: text("description").notNull(),
+  name: varchar("name", { length: 200 }).notNull(), // Keep existing name field
+  description: text("description").notNull(), // Keep existing description field
   client: varchar("client", { length: 200 }),
+  // New contact fields
+  contactPerson: varchar("contact_person"),
+  contactPhone: varchar("contact_phone"),
+  contactEmail: varchar("contact_email"),
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date").notNull(),
   status: projectStatusEnum("status").notNull().default("planning"),
   segment: projectSegmentEnum("segment").notNull().default("private"), // Added segment field
-  budget: decimal("budget", { precision: 12, scale: 2 }),
+  budget: decimal("budget", { precision: 12, scale: 2 }), // Keep as budget in DB, will display as Contract Amount in frontend
   teamId: varchar("team_id").references(() => teams.id),
   managerId: varchar("manager_id").references(() => users.id).notNull(),
   progress: integer("progress").notNull().default(0), // percentage 0-100
@@ -110,7 +179,7 @@ export const projects = pgTable("projects", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Tasks table
+// Tasks table (keeping existing structure, adding weight field)
 export const tasks = pgTable("tasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 200 }).notNull(),
@@ -124,6 +193,8 @@ export const tasks = pgTable("tasks", {
   // Financials / assignment additions for milestones
   feeAmount: decimal("fee_amount", { precision: 12, scale: 2 }),
   billingStatus: billingStatusEnum("billing_status").notNull().default("none"),
+  // New weight field for milestone calculations
+  weight: integer("weight").default(2), // Calculated from priority: low=1, medium=2, high=3, critical=4
   // Invoice and collection dates
   expectedInvoiceDate: timestamp("expected_invoice_date"), // Added expected invoice date
   expectedCollectionDate: timestamp("expected_collection_date"), // Added expected collection date
@@ -272,7 +343,7 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   collections: many(invoiceCollections),
 }));
 
-export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
+export const teamMembersRelations = relations(teamMembers, ({ one, many }) => ({
   team: one(teams, {
     fields: [teamMembers.teamId],
     references: [teams.id],
@@ -281,6 +352,34 @@ export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
     fields: [teamMembers.userId],
     references: [users.id],
   }),
+  roles: many(teamMemberRoles),
+}));
+
+export const teamMemberRolesRelations = relations(teamMemberRoles, ({ one }) => ({
+  teamMember: one(teamMembers, {
+    fields: [teamMemberRoles.teamMemberId],
+    references: [teamMembers.id],
+  }),
+  role: one(employeeRoles, {
+    fields: [teamMemberRoles.roleId],
+    references: [employeeRoles.id],
+  }),
+}));
+
+export const employeeRolesRelations = relations(employeeRoles, ({ many }) => ({
+  teamMemberRoles: many(teamMemberRoles),
+}));
+
+export const segmentLeadersRelations = relations(segmentLeaders, ({ many }) => ({
+  projects: many(projects, { relationName: "segmentLeader" }),
+}));
+
+export const externalNotificationRecipientsRelations = relations(externalNotificationRecipients, ({ one }) => ({
+  // No direct relations needed for now
+}));
+
+export const systemConfigRelations = relations(systemConfig, ({ one }) => ({
+  // No direct relations needed for now
 }));
 
 export const projectAttachmentsRelations = relations(projectAttachments, ({ one }) => ({
@@ -380,6 +479,12 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
   createdAt: true,
 });
 
+export const insertSystemConfigSchema = createInsertSchema(systemConfig).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -413,6 +518,9 @@ export type InsertUserNotificationPreferences = typeof userNotificationPreferenc
 export type UserCalendarSettings = typeof userCalendarSettings.$inferSelect;
 export type InsertUserCalendarSettings = typeof userCalendarSettings.$inferInsert;
 
+export type SystemConfig = typeof systemConfig.$inferSelect;
+export type InsertSystemConfig = z.infer<typeof insertSystemConfigSchema>;
+
 export type InvoiceReport = typeof invoiceReports.$inferSelect;
 export type InsertInvoiceReport = typeof invoiceReports.$inferInsert;
 
@@ -424,6 +532,19 @@ export type InsertInvoiceCollection = typeof invoiceCollections.$inferInsert;
 
 export type RegisterUser = z.infer<typeof registerUserSchema>;
 export type LoginUser = z.infer<typeof loginUserSchema>;
+
+// New types for new tables
+export type SegmentLeader = typeof segmentLeaders.$inferSelect;
+export type InsertSegmentLeader = typeof segmentLeaders.$inferInsert;
+
+export type EmployeeRole = typeof employeeRoles.$inferSelect;
+export type InsertEmployeeRole = typeof employeeRoles.$inferInsert;
+
+export type TeamMemberRole = typeof teamMemberRoles.$inferSelect;
+export type InsertTeamMemberRole = typeof teamMemberRoles.$inferInsert;
+
+export type ExternalNotificationRecipient = typeof externalNotificationRecipients.$inferSelect;
+export type InsertExternalNotificationRecipient = typeof externalNotificationRecipients.$inferInsert;
 
 // Invoice reports table for tracking sent invoices
 export const invoiceReports = pgTable("invoice_reports", {

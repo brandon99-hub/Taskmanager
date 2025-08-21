@@ -401,7 +401,18 @@ export default function Navigation() {
                       <span>Profile</span>
                     </DropdownMenuItem>
                   </Link>
-                  <DropdownMenuSeparator />
+                  {/* Executive Dashboard - Only for Admin and Manager */}
+                  {['admin', 'manager'].includes(user?.role) && (
+                    <>
+                      <Link href="/executive-dashboard">
+                        <DropdownMenuItem data-testid="menu-executive-dashboard">
+                          <BarChart3 className="mr-2 h-4 w-4" />
+                          <span>Executive Dashboard</span>
+                        </DropdownMenuItem>
+                      </Link>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
                   <DropdownMenuItem 
                     onClick={async () => {
                       try {

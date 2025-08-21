@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useScreenSize } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
-import { BarChart3, CheckCircle, AlertTriangle, Users } from "lucide-react";
+import { BarChart3, CheckCircle, AlertTriangle, Users, Eye } from "lucide-react";
 import MilestoneDetailModal from "./milestone-detail-modal";
 
 export default function MetricsCards() {
@@ -25,6 +25,11 @@ export default function MetricsCards() {
 
   const { data: upcoming = [] } = useQuery<any[]>({
     queryKey: ['/api/dashboard/upcoming-tasks'],
+  });
+
+  // Get projects data to calculate onSupportProjects
+  const { data: projects = [] } = useQuery<any[]>({
+    queryKey: ['/api/projects'],
   });
 
   // For employees, get their team count
@@ -77,6 +82,11 @@ export default function MetricsCards() {
   const teamsCount = Array.isArray(teams) ? teams.length : 0;
   const upcomingCount = Array.isArray(upcoming) ? upcoming.length : 0;
   
+  // Calculate onSupportProjects locally
+  const onSupportProjects = Array.isArray(projects) 
+    ? projects.filter((p: any) => p.status === 'on_support').length 
+    : 0;
+  
   // Get total staff members for admin/manager, teams count for employee
   const staffOrTeamsCount = user?.role === 'employee' 
     ? (employeeTeamsCount?.count || 0)
@@ -85,11 +95,13 @@ export default function MetricsCards() {
   const cards = [
     {
       title: "Active Projects",
-      value: metrics?.activeProjects || 0,
+      value: projects.filter((p: any) => p.status === 'active').length,
       icon: BarChart3,
       color: "bg-primary",
-      change: `${teamsCount} team${teamsCount === 1 ? '' : 's'}`,
-      changeLabel: "you're part of",
+      change: "",
+      changeLabel: "",
+      detail: `${projects.length} total projects`,
+      detailColor: "text-blue-600",
       testId: "card-active-projects"
     },
     {
@@ -99,6 +111,8 @@ export default function MetricsCards() {
       color: "bg-success",
       change: `+${completedThisWeek}`,
       changeLabel: "this week",
+      detail: `${tasks.length} total milestones`,
+      detailColor: "text-green-600",
       testId: "card-completed-tasks",
       hasModal: true,
       modalType: "completed"
@@ -110,19 +124,23 @@ export default function MetricsCards() {
       color: "bg-error",
       change: `${metrics?.overdueTasks || 0} overdue · ${upcomingCount} due soon`,
       changeLabel: "",
+      detail: "",
+      detailColor: "text-red-600",
       isNegative: true,
       testId: "card-overdue-tasks",
       hasModal: true,
       modalType: "overdue"
     },
     {
-      title: user?.role === 'employee' ? "Teams You're Part Of" : "Total Staff Members",
-      value: staffOrTeamsCount,
-      icon: Users,
+      title: "On Support Projects",
+      value: onSupportProjects,
+      icon: Eye,
       color: "bg-info",
-      change: user?.role === 'employee' ? "teams you're part of" : "total staff members",
+      change: "",
       changeLabel: "",
-      testId: "card-team-members"
+      detail: `${projects.filter((p: any) => p.status === 'active').length} active projects`,
+      detailColor: "text-indigo-600",
+      testId: "card-on-support-projects"
     }
   ];
 
@@ -131,6 +149,7 @@ export default function MetricsCards() {
     if (icon === CheckCircle) return <CheckCircle className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === AlertTriangle) return <AlertTriangle className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === Users) return <Users className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === Eye) return <Eye className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     return null;
   };
 
@@ -146,7 +165,14 @@ export default function MetricsCards() {
                   <div className="flex-1">
                     <p className="text-sm font-medium text-gray-600">{card.title}</p>
                     <p className="text-2xl font-bold text-gray-900">{card.value}</p>
-                    <p className="text-sm text-gray-500">{card.change}</p>
+                    <p className={`text-sm ${card.isNegative ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+                      {card.change}
+                    </p>
+                    {card.detail && (
+                      <p className={`text-xs font-medium ${card.detailColor} mt-1`}>
+                        {card.detail}
+                      </p>
+                    )}
                   </div>
                   <div className={`${isMobile ? 'w-8 h-8' : 'w-10 h-10 sm:w-12 sm:h-12'} ${card.color} rounded-lg flex items-center justify-center`}>
                     {renderIcon(card.icon, card.color)}
@@ -166,7 +192,14 @@ export default function MetricsCards() {
             <div className="flex-1">
               <p className="text-sm font-medium text-gray-600">{card.title}</p>
               <p className="text-2xl font-bold text-gray-900">{card.value}</p>
-              <p className="text-sm text-gray-500">{card.change}</p>
+              <p className={`text-sm ${card.isNegative ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+                {card.change}
+              </p>
+              {card.detail && (
+                <p className={`text-xs font-medium ${card.detailColor} mt-1`}>
+                  {card.detail}
+                </p>
+              )}
             </div>
             <div className={`${isMobile ? 'w-8 h-8' : 'w-10 h-10 sm:w-12 sm:h-12'} ${card.color} rounded-lg flex items-center justify-center`}>
               {renderIcon(card.icon, card.color)}

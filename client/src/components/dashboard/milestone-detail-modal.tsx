@@ -49,7 +49,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
       case 'done': return 'bg-green-100 text-green-800';
       case 'overdue': return 'bg-red-100 text-red-800';
       case 'in_progress': return 'bg-blue-100 text-blue-800';
-      case 'review': return 'bg-yellow-100 text-yellow-800';
+      case 'client_review': return 'bg-yellow-100 text-yellow-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -89,7 +89,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
   const totalMilestones = milestones.length;
   const totalValue = milestones.reduce((sum: number, m: any) => sum + (parseFloat(m.feeAmount || '0')), 0);
   const paidValue = milestones.reduce((sum: number, m: any) => 
-    sum + (m.billingStatus === 'paid' ? parseFloat(m.feeAmount || '0') : 0), 0
+    sum + (m.billingStatus === 'sent' ? parseFloat(m.feeAmount || '0') : 0), 0 // Changed from 'paid' to 'sent'
   );
   const pendingValue = totalValue - paidValue;
 
@@ -302,7 +302,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                               <span>Paid Amount:</span>
                               <span className="font-medium text-green-600">
                                 {formatCurrency(projectGroup.milestones.reduce((sum: number, m: any) => 
-                                  sum + (m.billingStatus === 'paid' ? parseFloat(m.feeAmount || '0') : 0), 0
+                                  sum + (m.billingStatus === 'sent' ? parseFloat(m.feeAmount || '0') : 0), 0
                                 ))}
                               </span>
                             </div>

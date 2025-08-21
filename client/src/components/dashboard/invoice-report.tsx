@@ -352,14 +352,7 @@ export default function InvoiceReport() {
                     return (
                       <tr key={month.month} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="p-3 font-medium text-gray-900">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                              <span className="text-xs font-semibold text-gray-700">
-                                {month.month.slice(0, 3)}
-                              </span>
-                            </div>
-                            {month.month}
-                          </div>
+                          {month.month}
                         </td>
                         <td className="p-3 text-center">
                           <div className="space-y-1">
@@ -485,7 +478,6 @@ export default function InvoiceReport() {
                       <XAxis 
                         dataKey="month" 
                         tick={{ fontSize: 12, fill: '#6b7280' }}
-                        tickFormatter={(value) => typeof value === 'string' ? value.slice(0, 3) : value}
                         axisLine={{ stroke: '#d1d5db' }}
                       />
                       <YAxis 
@@ -494,10 +486,10 @@ export default function InvoiceReport() {
                         axisLine={{ stroke: '#d1d5db' }}
                       />
                       <Tooltip 
-                        formatter={(value: any, name: any) => [
-                          `KSh ${value.toLocaleString()}`, 
-                          name === 'academic' ? 'Academic' : name === 'parastals' ? 'Parastals' : 'Private'
-                        ]}
+                        formatter={(value: any, name: any) => {
+                          const label = typeof name === 'string' ? name : '';
+                          return [`KSh ${Number(value).toLocaleString()}`, label];
+                        }}
                         labelFormatter={(label) => `Month: ${label}`}
                         contentStyle={{
                           backgroundColor: 'rgba(255, 255, 255, 0.95)',
@@ -618,9 +610,7 @@ export default function InvoiceReport() {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center">
-                            <span className="text-sm font-semibold text-gray-700">
-                              {month.month.slice(0, 3)}
-                            </span>
+                            {/* Removed month abbreviation - just show month name */}
                           </div>
                           <div>
                             <p className="font-medium text-gray-900">{month.month}</p>
@@ -695,7 +685,6 @@ export default function InvoiceReport() {
                       <XAxis 
                         dataKey="month" 
                         tick={{ fontSize: 12, fill: '#6b7280' }}
-                        tickFormatter={(value) => typeof value === 'string' ? value.slice(0, 3) : value}
                         axisLine={{ stroke: '#d1d5db' }}
                       />
                       <YAxis 
@@ -712,10 +701,19 @@ export default function InvoiceReport() {
                         axisLine={{ stroke: '#d1d5db' }}
                       />
                       <Tooltip 
-                        formatter={(value: any, name: any) => [
-                          name === 'achievement' ? `${value}%` : `KSh ${value.toLocaleString()}`,
-                          name === 'achievement' ? 'Achievement %' : name === 'target' ? 'Target' : name === 'actual' ? 'Actual' : 'Gap to Target'
-                        ]}
+                        formatter={(value: any, name: any) => {
+                          const map: Record<string, string> = {
+                            target: 'Target (KES)',
+                            actual: 'Actual (KES)',
+                            gap: 'Gap to Target (KES)',
+                            achievement: 'Achievement %'
+                          };
+                          const label = map[String(name)] || String(name);
+                          const formatted = name === 'achievement' 
+                            ? `${Number(value)}%`
+                            : `KSh ${Number(value).toLocaleString()}`;
+                          return [formatted, label];
+                        }}
                         labelFormatter={(label) => `Month: ${label}`}
                         contentStyle={{
                           backgroundColor: 'rgba(255, 255, 255, 0.95)',

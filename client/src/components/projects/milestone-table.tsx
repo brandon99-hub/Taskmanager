@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Edit, Search, Filter, CalendarDays, DollarSign, User, Clock, AlertTriangle, UserCheck, CheckCircle } from 'lucide-react';
+import { Edit, Search, Filter, CalendarDays, DollarSign, User, Clock, AlertTriangle, UserCheck, CheckCircle, X } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { isUnauthorizedError } from '@/lib/authUtils';
@@ -16,7 +16,7 @@ interface Milestone {
   name: string;
   description?: string;
   priority: 'low' | 'medium' | 'high' | 'critical';
-  status: 'todo' | 'in_progress' | 'review' | 'done';
+  status: 'todo' | 'in_progress' | 'client_review' | 'done';
   billingStatus: 'none' | 'to_send' | 'sent' | 'paid' | 'overdue' | 'processing';
   startDate?: string;
   dueDate?: string;
@@ -80,11 +80,11 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
       if (currentMilestone) {
         // Allow moving backwards from 'done' to other statuses, but prevent going back to 'todo'
         if (currentMilestone.status === 'done' && status === 'todo') {
-          throw new Error('Cannot move completed milestone back to "To Do" status');
+          throw new Error('Cannot move completed milestone back to "Not Started" status');
         }
-        // Prevent setting to 'done' without going through 'review'
-        if (status === 'done' && currentMilestone.status !== 'review') {
-          throw new Error('Milestone must go through review before being marked as done');
+        // Prevent setting to 'done' without going through 'client_review'
+        if (status === 'done' && currentMilestone.status !== 'client_review') {
+          throw new Error('Milestone must go through client review before being marked as done');
         }
       }
       
@@ -213,7 +213,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
         return true;
       }
       // Prevent setting to 'done' without going through 'review'
-      if (newStatus === 'done' && milestone.status !== 'review') {
+              if (newStatus === 'done' && milestone.status !== 'client_review') {
         return true;
       }
       
@@ -261,20 +261,12 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
     switch (status) {
       case 'todo': return 'bg-gray-100 text-gray-800';
       case 'in_progress': return 'bg-blue-100 text-blue-800';
-      case 'review': return 'bg-yellow-100 text-yellow-800';
+      case 'qa': return 'bg-purple-100 text-purple-800';
+      case 'client_review': return 'bg-indigo-100 text-indigo-800';
       case 'done': return 'bg-green-100 text-green-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getBillingStatusColor = (status: string) => {
-    switch (status) {
-      case 'none': return 'bg-gray-100 text-gray-800';
-      case 'to_send': return 'bg-orange-100 text-orange-800';
-      case 'sent': return 'bg-blue-100 text-blue-800';
-      case 'paid': return 'bg-green-100 text-green-800';
-      case 'overdue': return 'bg-red-100 text-red-800';
-      case 'processing': return 'bg-purple-100 text-purple-800';
+      case 'delayed': return 'bg-orange-100 text-orange-800';
+      case 'on_hold': return 'bg-red-100 text-red-800';
+      case 'cancelled': return 'bg-gray-100 text-gray-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -283,8 +275,12 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
     switch (status) {
       case 'todo': return <Clock className="h-4 w-4" />;
       case 'in_progress': return <AlertTriangle className="h-4 w-4" />;
-      case 'review': return <UserCheck className="h-4 w-4" />;
+      case 'qa': return <UserCheck className="h-4 w-4" />;
+      case 'client_review': return <UserCheck className="h-4 w-4" />;
       case 'done': return <CheckCircle className="h-4 w-4" />;
+      case 'delayed': return <Clock className="h-4 w-4" />;
+      case 'on_hold': return <AlertTriangle className="h-4 w-4" />;
+      case 'cancelled': return <X className="h-4 w-4" />;
       default: return <Clock className="h-4 w-4" />;
     }
   };
@@ -347,9 +343,9 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="todo">To Do</SelectItem>
+                                        <SelectItem value="todo">Not Started</SelectItem>
                 <SelectItem value="in_progress">In Progress</SelectItem>
-                <SelectItem value="review">Review</SelectItem>
+                                        <SelectItem value="client_review">Client Review</SelectItem>
                 <SelectItem value="done">Done</SelectItem>
               </SelectContent>
             </Select>
@@ -420,11 +416,16 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                         <>
                           {/* Only show 'todo' if no completed milestones are selected */}
                           {!hasCompletedMilestones && (
-                            <SelectItem value="todo">To Do</SelectItem>
+                            <SelectItem value="todo">Not Started</SelectItem>
                           )}
                           <SelectItem value="in_progress">In Progress</SelectItem>
-                          <SelectItem value="review">Review</SelectItem>
-                          <SelectItem value="done">Done</SelectItem>
+                          <SelectItem value="qa">QA</SelectItem>
+                          <SelectItem value="client_review">Client Review</SelectItem>
+                          <SelectItem value="client_review">Client Review</SelectItem>
+                          <SelectItem value="done">Completed</SelectItem>
+                          <SelectItem value="delayed">Delayed</SelectItem>
+                          <SelectItem value="on_hold">On Hold</SelectItem>
+                          <SelectItem value="cancelled">Cancelled</SelectItem>
                         </>
                       );
                     })()}
@@ -471,7 +472,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                   onClick={() => handleSort('name')}
                 >
                   <div className="flex items-center space-x-1">
-                    <span>Milestone Name</span>
+                    <span>Milestone</span>
                     {sortField === 'name' && (
                       <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                     )}
@@ -533,7 +534,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                 >
                   <div className="flex items-center space-x-1">
                     <DollarSign className="h-4 w-4" />
-                    <span>Budget</span>
+                    <span>Amount</span>
                     {sortField === 'feeAmount' && (
                       <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                     )}
@@ -555,7 +556,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                   onClick={() => handleSort('billingStatus')}
                 >
                   <div className="flex items-center space-x-1">
-                    <span>Billing Status</span>
+                    <span>Invoice Status</span>
                     {sortField === 'billingStatus' && (
                       <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                     )}
@@ -623,7 +624,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                      >
                        <SelectTrigger className={`w-32 relative ${
                          updateStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
-                       } ${milestone.status === 'done' ? 'bg-green-50 border-green-200' : milestone.status === 'review' ? 'bg-yellow-50 border-yellow-200' : milestone.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
+                       } ${milestone.status === 'done' ? 'bg-green-50 border-green-200' : milestone.status === 'client_review' ? 'bg-yellow-50 border-yellow-200' : milestone.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
                          {updateStatusMutation.isPending ? (
                            <div className="flex items-center">
                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
@@ -636,11 +637,15 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                        <SelectContent>
                          {/* Show all statuses except 'todo' if milestone is completed */}
                          {milestone.status !== 'done' && (
-                           <SelectItem value="todo">To Do</SelectItem>
+                           <SelectItem value="todo">Not Started</SelectItem>
                          )}
                          <SelectItem value="in_progress">In Progress</SelectItem>
-                         <SelectItem value="review">Review</SelectItem>
-                         <SelectItem value="done">Done</SelectItem>
+                         <SelectItem value="qa">QA</SelectItem>
+                         <SelectItem value="client_review">Client Review</SelectItem>
+                         <SelectItem value="done">Completed</SelectItem>
+                         <SelectItem value="delayed">Delayed</SelectItem>
+                         <SelectItem value="on_hold">On Hold</SelectItem>
+                         <SelectItem value="cancelled">Cancelled</SelectItem>
                        </SelectContent>
                      </Select>
                    </td>
@@ -666,7 +671,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                          )}
                        </SelectTrigger>
                        <SelectContent>
-                         <SelectItem value="none">None</SelectItem>
+                         <SelectItem value="none">Not Sent</SelectItem>
                          <SelectItem value="to_send">To Send</SelectItem>
                          <SelectItem value="sent">Sent</SelectItem>
                          <SelectItem value="paid">Paid</SelectItem>
@@ -706,7 +711,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
             <div className="flex items-center space-x-2">
               <span>Paid:</span>
               <span className="font-medium text-green-600">
-                {formatCurrency(milestones.filter(m => m.billingStatus === 'paid').reduce((sum, m) => sum + parseFloat(m.feeAmount || '0'), 0).toString())}
+                {formatCurrency(milestones.filter(m => m.billingStatus === 'sent').reduce((sum, m) => sum + parseFloat(m.feeAmount || '0'), 0).toString())} {/* Changed from 'paid' to 'sent' */}
               </span>
             </div>
           </div>

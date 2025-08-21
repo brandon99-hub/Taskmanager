@@ -75,23 +75,34 @@ export default function ProjectDetail() {
     enabled: !!isAuthenticated && !!projectId,
   });
 
-  const handleTerminateProject = async () => {
+  // Fetch segment leader based on project segment
+  const { data: segmentLeader } = useQuery<any>({
+    queryKey: ['/api/segment-leaders', project?.segment],
+    queryFn: async () => {
+      if (!project?.segment) return null;
+      const res = await fetch(`/api/segment-leaders/${project.segment}`, { 
+        credentials: 'include' 
+      });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!isAuthenticated && !!project?.segment,
+  });
+
+  const handleDeactivateProject = async () => {
     if (!project) return;
-    const confirmed = window.confirm(`Terminate project "${project.name}"? This will mark the project as terminated.`);
+    
+    const confirmed = window.confirm(`Deactivate project "${project.name}"? This will mark the project as inactive.`);
     if (!confirmed) return;
     
     try {
       await apiRequest('PUT', `/api/projects/${project.id}/terminate`);
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      toast({ title: 'Project terminated', description: `${project.name} has been terminated.` });
-      setLocation('/projects');
+      
+      toast({ title: 'Project deactivated', description: `${project.name} has been deactivated.` });
     } catch (error: any) {
-      if (isUnauthorizedError(error)) {
-        toast({ title: 'Unauthorized', description: 'You are logged out. Logging in again...', variant: 'destructive' });
-        setTimeout(() => { window.location.href = '/login'; }, 500);
-        return;
-      }
-      toast({ title: 'Failed to terminate', description: error?.message || 'Unknown error', variant: 'destructive' });
+      console.error('Error deactivating project:', error);
+      toast({ title: 'Failed to deactivate', description: error?.message || 'Unknown error', variant: 'destructive' });
     }
   };
 
@@ -178,7 +189,7 @@ export default function ProjectDetail() {
   // Calculate financial metrics
   const totalProjectValue = parseFloat(project.budget || '0');
   const paidAmount = milestones
-    .filter((m: any) => m.billingStatus === 'paid')
+    .filter((m: any) => m.billingStatus === 'sent') // Changed from 'paid' to 'sent'
     .reduce((sum: number, m: any) => sum + parseFloat(m.feeAmount || '0'), 0);
 
   // Milestone status counts for summary cards
@@ -186,7 +197,7 @@ export default function ProjectDetail() {
     total: milestones.length,
     todo: milestones.filter((m: any) => m.status === 'todo').length,
     inProgress: milestones.filter((m: any) => m.status === 'in_progress').length,
-    review: milestones.filter((m: any) => m.status === 'review').length,
+    client_review: milestones.filter((m: any) => m.status === 'client_review').length,
     done: milestones.filter((m: any) => m.status === 'done').length,
   };
 
@@ -208,7 +219,7 @@ export default function ProjectDetail() {
               Back to Projects
             </Button>
             <div className="text-sm text-gray-500">
-              Projects / {project.name}
+              Projects / {project.client || project.name}
             </div>
           </div>
           
@@ -223,11 +234,11 @@ export default function ProjectDetail() {
               </Button>
               <Button 
                 variant="outline" 
-                onClick={handleTerminateProject}
+                onClick={handleDeactivateProject}
                 className="text-red-600 hover:text-red-700"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Terminate
+                Deactivate
               </Button>
             </div>
           )}
@@ -239,7 +250,7 @@ export default function ProjectDetail() {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <div className="flex items-center space-x-3 mb-2">
-                  <CardTitle className="text-2xl">{project.name}</CardTitle>
+                  <CardTitle className="text-2xl">{project.client || project.name}</CardTitle>
                   <Badge className={getStatusColor(project.status)}>
                     {formatStatus(project.status)}
                   </Badge>
@@ -271,9 +282,9 @@ export default function ProjectDetail() {
                   </span>
                 </div>
 
-                <div className="flex items-center text-sm">
-                  <DollarSign className="h-4 w-4 mr-2 text-gray-400" />
-                  <span>KSh {totalProjectValue.toLocaleString()} total value</span>
+                <div className="flex items-center justify-between text-sm">
+                  <span>Contract Value:</span>
+                  <span className="font-medium">KSh {totalProjectValue.toLocaleString()}</span>
                 </div>
               </div>
 
@@ -282,7 +293,7 @@ export default function ProjectDetail() {
                 <h4 className="font-medium text-gray-900">Financial Status</h4>
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span>Total Value:</span>
+                    <span>Contract Value:</span>
                     <span className="font-medium">KSh {totalProjectValue.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between text-sm">
@@ -334,23 +345,16 @@ export default function ProjectDetail() {
               <div className="space-y-4">
                 <h4 className="font-medium text-gray-900">Team</h4>
                 
-                {project.manager && (
+                {segmentLeader && (
                   <div className="flex items-center space-x-2">
                     <Avatar className="w-6 h-6">
-                      <AvatarImage src={project.manager.profileImageUrl} />
                       <AvatarFallback className="text-xs">
-                        {getInitials(project.manager.firstName && project.manager.lastName 
-                          ? `${project.manager.firstName} ${project.manager.lastName}`
-                          : project.manager.email
-                        )}
+                        {getInitials(segmentLeader.leaderName || 'SL')}
                       </AvatarFallback>
                     </Avatar>
                     <div>
                       <p className="text-sm font-medium">
-                        {project.manager.firstName && project.manager.lastName 
-                          ? `${project.manager.firstName} ${project.manager.lastName}`
-                          : project.manager.email
-                        }
+                        {segmentLeader.leaderName}
                       </p>
                       <p className="text-xs text-gray-500">Project Manager</p>
                     </div>
@@ -360,7 +364,7 @@ export default function ProjectDetail() {
                 {project.team && (
                   <div className="text-sm">
                     <p className="font-medium">{project.team.name}</p>
-                    <p className="text-gray-500">Project Team</p>
+                    <p className="text-xs text-gray-500">Project Team</p>
                   </div>
                 )}
               </div>

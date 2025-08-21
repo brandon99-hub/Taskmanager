@@ -108,7 +108,7 @@ export default function TaskCard({ task }: TaskCardProps) {
     switch (status) {
       case 'todo': return 'bg-gray-100 text-gray-800';
       case 'in_progress': return 'bg-blue-100 text-blue-800';
-      case 'review': return 'bg-yellow-100 text-yellow-800';
+      case 'client_review': return 'bg-yellow-100 text-yellow-800';
       case 'done': return 'bg-green-100 text-green-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -116,9 +116,9 @@ export default function TaskCard({ task }: TaskCardProps) {
 
   const getStatusLabel = (status: string) => {
     switch (status) {
-      case 'todo': return 'To Do';
+      case 'todo': return 'Not Started';
       case 'in_progress': return 'In Progress';
-      case 'review': return 'Review';
+      case 'client_review': return 'Client Review';
       case 'done': return 'Done';
       default: return status;
     }
@@ -254,9 +254,9 @@ export default function TaskCard({ task }: TaskCardProps) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="todo">To Do</SelectItem>
+                                      <SelectItem value="todo">Not Started</SelectItem>
               <SelectItem value="in_progress">In Progress</SelectItem>
-              <SelectItem value="review">Review</SelectItem>
+                                      <SelectItem value="client_review">Client Review</SelectItem>
               {user?.role !== 'employee' && (
                 <SelectItem value="done">Done</SelectItem>
               )}

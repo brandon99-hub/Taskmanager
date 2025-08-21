@@ -15,6 +15,8 @@ import ProjectDetail from "@/pages/project-detail";
 import Tasks from "@/pages/tasks";
 import Reports from "@/pages/reports";
 import Team from "@/pages/team";
+import ExecutiveDashboard from "@/pages/executive-dashboard";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 function Router() {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -44,7 +46,10 @@ function Router() {
           <Route path="/projects/:id" component={ProjectDetail} />
           <Route path="/tasks" component={Tasks} />
           {isAuthenticated && (user as any)?.role !== 'employee' && (
-            <Route path="/reports" component={Reports} />
+            <>
+              <Route path="/reports" component={Reports} />
+              <Route path="/executive-dashboard" component={ExecutiveDashboard} />
+            </>
           )}
           <Route path="/team" component={Team} />
         </>
@@ -56,12 +61,14 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Router />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

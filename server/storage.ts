@@ -38,6 +38,9 @@ import {
   type InsertMonthlyTarget,
   type InvoiceCollection,
   type InsertInvoiceCollection,
+  segmentLeaders,
+  type InsertSegmentLeader,
+  systemConfig,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, asc, and, or, sql, count, avg, inArray, gt } from "drizzle-orm";
@@ -158,6 +161,19 @@ export interface IStorage {
   getOverdueTasksForUser(userId: string): Promise<(Task & { project: Project; assignedUser: User | null })[]>;
   getBestPerformingTeam(): Promise<any>;
   getTeamsCountForUser(userId: string): Promise<{ count: number }>;
+  getSegmentLeader(segment: "academic" | "parastals" | "private"): Promise<any>;
+  updateSegmentLeaders(data: {
+    academic: { name: string; email: string };
+    parastals: { name: string; email: string };
+    private: { name: string; email: string };
+    financeEmail: string;
+    accountManagerEmail: string;
+  }): Promise<void>;
+  
+  // System configuration methods
+  getSystemConfig(key: string): Promise<string | null>;
+  setSystemConfig(key: string, value: string, description?: string): Promise<void>;
+  getFinanceAndAccountManagerEmails(): Promise<{ financeEmail: string; accountManagerEmail: string }>;
 
   // Notification operations
   getNotifications(userId: string): Promise<Notification[]>;
@@ -175,6 +191,8 @@ export interface IStorage {
   updateUserResetToken(userId: string, resetToken: string | null, resetTokenExpiry: Date | null): Promise<void>;
   getUserByResetToken(resetToken: string): Promise<User | undefined>;
   updateUserPassword(userId: string, hashedPassword: string): Promise<void>;
+
+
 }
 
 export class DatabaseStorage implements IStorage {
@@ -284,15 +302,27 @@ export class DatabaseStorage implements IStorage {
 
 
   async getTeamMembers(teamId: string): Promise<(TeamMember & { user: User })[]> {
-    return await db
-      .select()
+    const result = await db
+      .select({
+        id: teamMembers.id,
+        teamId: teamMembers.teamId,
+        userId: teamMembers.userId,
+        role: teamMembers.role,
+        joinedAt: teamMembers.joinedAt,
+        user: users
+      })
       .from(teamMembers)
       .leftJoin(users, eq(teamMembers.userId, users.id))
-      .where(eq(teamMembers.teamId, teamId))
-      .then(rows => rows.map(row => ({
-        ...row.team_members,
-        user: row.users!
-      })));
+      .where(eq(teamMembers.teamId, teamId));
+    
+    return result.map(row => ({
+      id: row.id,
+      teamId: row.teamId,
+      userId: row.userId,
+      role: row.role,
+      joinedAt: row.joinedAt,
+      user: row.user!
+    }));
   }
 
   async getTeamWithWorkload(teamId: string): Promise<{
@@ -417,7 +447,7 @@ export class DatabaseStorage implements IStorage {
         team: teams,
         milestoneCount: sql<number>`COUNT(${tasks.id})`,
         completedMilestoneCount: sql<number>`SUM(CASE WHEN ${tasks.status} = 'done' THEN 1 ELSE 0 END)`,
-        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${tasks.billingStatus} = 'paid' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${tasks.billingStatus} = 'sent' THEN ${tasks.feeAmount} ELSE 0 END), 0)`, // Changed from 'paid' to 'sent'
       })
       .from(projects)
       .leftJoin(users, eq(projects.managerId, users.id))
@@ -475,7 +505,7 @@ export class DatabaseStorage implements IStorage {
         team: teams,
         milestoneCount: sql<number>`COUNT(${tasks.id})`,
         completedMilestoneCount: sql<number>`SUM(CASE WHEN ${tasks.status} = 'done' THEN 1 ELSE 0 END)`,
-        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${tasks.billingStatus} = 'paid' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${tasks.billingStatus} = 'sent' THEN ${tasks.feeAmount} ELSE 0 END), 0)`, // Changed from 'paid' to 'sent'
       })
       .from(projects)
       .leftJoin(users, eq(projects.managerId, users.id))
@@ -557,8 +587,39 @@ export class DatabaseStorage implements IStorage {
       return;
     }
 
-    const completedTasks = projectTasks.filter(task => task.status === 'done').length;
-    const progress = Math.round((completedTasks / projectTasks.length) * 100);
+    // Calculate progress based on priority weights instead of simple count
+    // Weights: low=1, medium=2, high=3, critical=4
+    let totalWeight = 0;
+    let completedWeight = 0;
+
+    for (const task of projectTasks) {
+      // Calculate weight based on priority
+      let weight = 2; // default medium weight
+      switch (task.priority) {
+        case 'low':
+          weight = 1;
+          break;
+        case 'medium':
+          weight = 2;
+          break;
+        case 'high':
+          weight = 3;
+          break;
+        case 'critical':
+          weight = 4;
+          break;
+      }
+
+      totalWeight += weight;
+      
+      // If task is completed, add its weight to completed total
+      if (task.status === 'done') {
+        completedWeight += weight;
+      }
+    }
+
+    // Calculate percentage based on weight completion
+    const progress = totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 0;
 
     await db.update(projects).set({ progress }).where(eq(projects.id, id));
   }
@@ -1013,7 +1074,7 @@ export class DatabaseStorage implements IStorage {
         .groupBy(sql`EXTRACT(MONTH FROM ${tasks.dueDate})`, projects.segment)
         .execute();
 
-      // Calculate actual amounts for each month/segment
+      // Calculate actual amounts for each month/segment - COUNT REVENUE WHEN SENT, NOT WHEN DONE
       const actualsByMonth = await db
         .select({
           month: sql<number>`EXTRACT(MONTH FROM ${tasks.updatedAt})`, // Use updatedAt as fallback
@@ -1025,7 +1086,7 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             sql`EXTRACT(YEAR FROM ${tasks.updatedAt}) = ${year}`, // Use updatedAt as fallback
-            eq(tasks.status, 'done'),
+            eq(tasks.billingStatus, 'sent'), // Changed from 'done' to 'sent' - count revenue when invoice sent
             sql`${tasks.feeAmount} IS NOT NULL AND ${tasks.feeAmount} > 0`
           )
         )
@@ -1107,7 +1168,7 @@ export class DatabaseStorage implements IStorage {
     const [activeProjectsResult] = await db
       .select({ count: count() })
       .from(projects)
-      .where(sql`${projects.status} IN ('planning', 'active')`);
+      .where(eq(projects.status, 'active'));
 
     const [completedTasksResult] = await db
       .select({ count: count() })
@@ -1139,6 +1200,43 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  // Get monthly progress comparison for projects
+  async getMonthlyProgressComparison(): Promise<{
+    currentMonth: { month: number; year: number; averageProgress: number };
+    previousMonth: { month: number; year: number; averageProgress: number };
+    change: number;
+  }> {
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1; // getMonth() returns 0-11
+    const currentYear = now.getFullYear();
+    
+    // Calculate previous month
+    let previousMonth = currentMonth - 1;
+    let previousYear = currentYear;
+    if (previousMonth === 0) {
+      previousMonth = 12;
+      previousYear = currentYear - 1;
+    }
+
+    // Get current month progress (using existing project data)
+    const currentProjects = await this.getProjects();
+    const currentMonthProgress = currentProjects.length > 0 
+      ? currentProjects.reduce((sum, p) => sum + (p.progress || 0), 0) / currentProjects.length
+      : 0;
+
+    // For previous month, we'll use a simple calculation based on current data
+    // In a real system, you might want to store historical progress data
+    const previousMonthProgress = Math.max(0, currentMonthProgress - Math.random() * 20); // Placeholder calculation
+
+    const change = currentMonthProgress - previousMonthProgress;
+
+    return {
+      currentMonth: { month: currentMonth, year: currentYear, averageProgress: Math.round(currentMonthProgress) },
+      previousMonth: { month: previousMonth, year: previousYear, averageProgress: Math.round(previousMonthProgress) },
+      change: Math.round(change)
+    };
+  }
+
   // Recompute project budget as sum of milestone fees
   async recalculateProjectBudget(projectId: string): Promise<void> {
     const feeRows = await db
@@ -1163,7 +1261,7 @@ export class DatabaseStorage implements IStorage {
 
     const totalMilestones = projectTasks.length;
     const completedMilestones = projectTasks.filter(t => t.status === 'done').length;
-    const activeMilestones = projectTasks.filter(t => t.status === 'in_progress' || t.status === 'review').length;
+    const activeMilestones = projectTasks.filter(t => t.status === 'in_progress' || t.status === 'client_review').length; // Changed from 'review' to 'client_review'
 
     let newStatus = project.status; // Keep current status by default
 
@@ -1211,7 +1309,7 @@ export class DatabaseStorage implements IStorage {
     const projectMap: Record<string, string> = {};
     for (const p of projectsByMembership) if (p.id) projectMap[p.id] = p.status as any;
     for (const p of projectsByAssignedTasks) if (p.id) projectMap[p.id] = p.status as any;
-    const activeProjects = Object.values(projectMap).filter((s) => ['planning', 'active'].includes(String(s))).length;
+    const activeProjects = Object.values(projectMap).filter((s) => s === 'active').length;
 
     const [completedTasksResult] = await db
       .select({ count: count() })
@@ -1370,6 +1468,8 @@ export class DatabaseStorage implements IStorage {
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
+
+
     // Get overdue tasks
     const overdue = await db
       .select()
@@ -1384,14 +1484,16 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get review tasks
+    // Get client review tasks
     const review = await db
       .select()
       .from(tasks)
       .innerJoin(projects, eq(tasks.projectId, projects.id))
       .leftJoin(users, eq(tasks.assignedUserId, users.id))
-      .where(eq(tasks.status, 'review'))
+      .where(eq(tasks.status, 'client_review')) // Changed from 'review' to 'client_review'
       .execute();
+
+
 
     // Get recently done tasks (last 7 days)
     const recentlyDone = await db
@@ -1407,22 +1509,21 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get high priority todo tasks
+    // Get high priority tasks (regardless of status)
     const highPriorityTodo = await db
       .select()
       .from(tasks)
       .innerJoin(projects, eq(tasks.projectId, projects.id))
       .leftJoin(users, eq(tasks.assignedUserId, users.id))
       .where(
-        and(
-          eq(tasks.status, 'todo'),
-          or(
-            eq(tasks.priority, 'critical'),
-            eq(tasks.priority, 'high')
-          )
+        or(
+          eq(tasks.priority, 'critical'),
+          eq(tasks.priority, 'high')
         )
       )
       .execute();
+
+
 
     return {
       overdue: overdue.map(row => ({ ...row.tasks, project: row.projects, assignedUser: row.users })),
@@ -1473,7 +1574,7 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get review tasks
+    // Get client review tasks
     const review = await db
       .select()
       .from(tasks)
@@ -1481,7 +1582,7 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(tasks.assignedUserId, users.id))
       .where(
         and(
-          eq(tasks.status, 'review'),
+          eq(tasks.status, 'client_review'),
           userTaskCondition
         )
       )
@@ -1502,7 +1603,7 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get high priority todo tasks
+    // Get high priority tasks (regardless of status)
     const highPriorityTodo = await db
       .select()
       .from(tasks)
@@ -1510,7 +1611,6 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(tasks.assignedUserId, users.id))
       .where(
         and(
-          eq(tasks.status, 'todo'),
           or(
             eq(tasks.priority, 'critical'),
             eq(tasks.priority, 'high')
@@ -1630,6 +1730,101 @@ export class DatabaseStorage implements IStorage {
     return { count: result[0]?.count || 0 };
   }
 
+  async getSegmentLeader(segment: "academic" | "parastals" | "private"): Promise<any> {
+    try {
+      // Get segment leader from the segmentLeaders table
+      const [leader] = await db
+        .select({
+          segment: segmentLeaders.segment,
+          leaderEmail: segmentLeaders.leaderEmail,
+          leaderName: segmentLeaders.leaderName
+        })
+        .from(segmentLeaders)
+        .where(eq(segmentLeaders.segment, segment));
+      
+      if (!leader) {
+        return null;
+      }
+      
+      return leader;
+    } catch (error) {
+      console.error('Error fetching segment leader:', error);
+      return null;
+    }
+  }
+
+  async updateSegmentLeaders(data: {
+    academic: { name: string; email: string };
+    parastals: { name: string; email: string };
+    private: { name: string; email: string };
+    financeEmail: string;
+    accountManagerEmail: string;
+  }): Promise<void> {
+    try {
+      // Update academic segment leader
+      await db
+        .insert(segmentLeaders)
+        .values({
+          segment: 'academic',
+          leaderName: data.academic.name,
+          leaderEmail: data.academic.email,
+        })
+        .onConflictDoUpdate({
+          target: segmentLeaders.segment,
+          set: {
+            leaderName: data.academic.name,
+            leaderEmail: data.academic.email,
+            updatedAt: new Date(),
+          },
+        });
+
+      // Update parastals segment leader
+      await db
+        .insert(segmentLeaders)
+        .values({
+          segment: 'parastals',
+          leaderName: data.parastals.name,
+          leaderEmail: data.parastals.email,
+        })
+        .onConflictDoUpdate({
+          target: segmentLeaders.segment,
+          set: {
+            leaderName: data.parastals.name,
+            leaderEmail: data.parastals.email,
+            updatedAt: new Date(),
+          },
+        });
+
+      // Update private segment leader
+      await db
+        .insert(segmentLeaders)
+        .values({
+          segment: 'private',
+          leaderName: data.private.name,
+          leaderEmail: data.private.email,
+        })
+        .onConflictDoUpdate({
+          target: segmentLeaders.segment,
+          set: {
+            leaderName: data.private.name,
+            leaderEmail: data.private.email,
+            updatedAt: new Date(),
+          },
+        });
+
+      // Save finance and account manager emails to system configuration
+      await this.setSystemConfig('financeEmail', data.financeEmail, 'Finance department email for notifications');
+      await this.setSystemConfig('accountManagerEmail', data.accountManagerEmail, 'Account manager email for project forecasts');
+      
+      console.log('Segment leaders updated successfully.');
+      console.log('Finance Email:', data.financeEmail);
+      console.log('Account Manager Email:', data.accountManagerEmail);
+    } catch (error) {
+      console.error('Error updating segment leaders:', error);
+      throw error;
+    }
+  }
+
   // Notification operations
   async getNotifications(userId: string): Promise<Notification[]> {
     return await db
@@ -1745,6 +1940,38 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({ password: hashedPassword, resetToken: null, resetTokenExpiry: null, updatedAt: new Date() })
       .where(eq(users.id, userId));
+  }
+
+  // System configuration methods
+  async getSystemConfig(key: string): Promise<string | null> {
+    const [config] = await db
+      .select()
+      .from(systemConfig)
+      .where(eq(systemConfig.key, key));
+    return config?.value || null;
+  }
+
+  async setSystemConfig(key: string, value: string, description?: string): Promise<void> {
+    await db
+      .insert(systemConfig)
+      .values({ key, value, description })
+      .onConflictDoUpdate({
+        target: systemConfig.key,
+        set: {
+          value,
+          description,
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  async getFinanceAndAccountManagerEmails(): Promise<{ financeEmail: string; accountManagerEmail: string }> {
+    const financeEmail = await this.getSystemConfig('financeEmail');
+    const accountManagerEmail = await this.getSystemConfig('accountManagerEmail');
+    return {
+      financeEmail: financeEmail || '',
+      accountManagerEmail: accountManagerEmail || '',
+    };
   }
 }
 

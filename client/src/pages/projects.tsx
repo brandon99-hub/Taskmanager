@@ -115,22 +115,20 @@ export default function Projects() {
     return overdueTasks.filter((task: any) => task.projectId === projectId).length;
   };
 
-  const handleTerminateProject = async (e: React.MouseEvent, project: any) => {
+  const handleDeactivateProject = async (e: React.MouseEvent, project: any) => {
     e.stopPropagation();
-    const confirmed = window.confirm(`Terminate project "${project.name}"? This will mark the project as terminated.`);
+    
+    const confirmed = window.confirm(`Deactivate project "${project.name}"? This will mark the project as inactive.`);
     if (!confirmed) return;
+    
     try {
       await apiRequest('PUT', `/api/projects/${project.id}/terminate`);
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/dashboard/metrics'] });
-      toast({ title: 'Project terminated', description: `${project.name} has been terminated.` });
+      
+      toast({ title: 'Project deactivated', description: `${project.name} has been deactivated.` });
     } catch (error: any) {
-      if (isUnauthorizedError(error)) {
-        toast({ title: 'Unauthorized', description: 'You are logged out. Logging in again...', variant: 'destructive' });
-        setTimeout(() => { window.location.href = '/login'; }, 500);
-        return;
-      }
-      toast({ title: 'Failed to terminate', description: error?.message || 'Unknown error', variant: 'destructive' });
+      console.error('Error deactivating project:', error);
+      toast({ title: 'Failed to deactivate', description: error?.message || 'Unknown error', variant: 'destructive' });
     }
   };
 
@@ -173,13 +171,24 @@ export default function Projects() {
       case 'planning': return 'bg-warning text-warning-foreground';
       case 'completed': return 'bg-primary text-primary-foreground';
       case 'on_hold': return 'bg-error text-error-foreground';
+      case 'on_support': return 'bg-purple-500 text-white';
+      case 'inactive': return 'bg-gray-500 text-white';
       case 'cancelled': return 'bg-gray-500 text-white';
       default: return 'bg-gray-500 text-white';
     }
   };
 
   const formatStatus = (status: string) => {
-    return status.split('_').map(word => 
+    const statusMap: { [key: string]: string } = {
+      'planning': 'Planning',
+      'active': 'Active',
+      'on_hold': 'On Hold',
+      'completed': 'Completed',
+      'on_support': 'On Support',
+      'inactive': 'Inactive'
+    };
+    
+    return statusMap[status] || status.split('_').map(word => 
       word.charAt(0).toUpperCase() + word.slice(1)
     ).join(' ');
   };
@@ -269,7 +278,8 @@ export default function Projects() {
                     <SelectItem value="active">Active</SelectItem>
                     <SelectItem value="on_hold">On Hold</SelectItem>
                     <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="terminated">Terminated</SelectItem>
+                    <SelectItem value="on_support">On Support</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -332,18 +342,18 @@ export default function Projects() {
           /* Table View */
           <div className="overflow-x-auto">
             <table className="w-full border-collapse bg-white rounded-lg overflow-hidden shadow-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Segment</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Progress</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Client</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Budget</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Paid</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Milestones</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dates</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left p-3">Client</th>
+                  <th className="text-left p-3">Segment</th>
+                  <th className="text-left p-3">Status</th>
+                  <th className="text-left p-3">Progress</th>
+                  <th className="text-left p-3">Client Email</th>
+                  <th className="text-left p-3">Contract Amount</th>
+                  <th className="text-left p-3">Paid</th>
+                  <th className="text-left p-3">Milestones</th>
+                  <th className="text-left p-3">Dates</th>
+                  <th className="text-left p-3">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -353,17 +363,64 @@ export default function Projects() {
                   const completionRate = milestoneCount > 0 ? Math.round((completedMilestoneCount / milestoneCount) * 100) : 0;
                   
                   return (
-                    <Tooltip key={project.id}>
-                      <TooltipTrigger asChild>
-                        <tr 
-                          className="hover:bg-gray-50 transition-colors cursor-pointer"
-                          onClick={() => setLocation(`/projects/${project.id}`)}
-                        >
+                    <tr 
+                      key={project.id}
+                      className="hover:bg-gray-50 transition-colors cursor-pointer"
+                      onClick={() => setLocation(`/projects/${project.id}`)}
+                    >
                       <td className="px-4 py-4">
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{project.name}</div>
-                          <div className="text-sm text-gray-500">{project.description}</div>
-                        </div>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">{project.client || project.name}</div>
+                              {project.description && project.description.trim() !== '' && project.description !== project.client && (
+                                <div className="text-sm text-gray-500">{project.description}</div>
+                              )}
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent 
+                            side="top" 
+                            align="start"
+                            className="max-w-md p-4"
+                            sideOffset={5}
+                          >
+                            <div className="space-y-3">
+                              <div>
+                                <h4 className="font-semibold text-gray-900 mb-1">{project.client || project.name}</h4>
+                                {project.description && project.description.trim() !== '' && project.description !== project.client && (
+                                  <p className="text-sm text-gray-600 line-clamp-3">{project.description}</p>
+                                )}
+                              </div>
+                              
+                              <div className="space-y-2 text-sm">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="capitalize">
+                                    {project.segment || 'private'}
+                                  </Badge>
+                                  <Badge className={getStatusColor(project.status)}>
+                                    {formatStatus(project.status)}
+                                  </Badge>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-gray-600">Progress:</span>
+                                  <span className="font-medium">{project.progress}%</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-gray-600">Contract Amount:</span>
+                                  <span className="font-medium">
+                                    {project.budget ? `KSh ${parseFloat(project.budget).toLocaleString()}` : 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-gray-600">Milestones:</span>
+                                  <span className="font-medium">
+                                    {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
                       </td>
                       <td className="px-4 py-4">
                         <Badge variant="outline" className="capitalize">
@@ -381,8 +438,9 @@ export default function Projects() {
                           <span className="text-sm text-gray-600">{project.progress}%</span>
                         </div>
                       </td>
+
                       <td className="px-4 py-4 text-sm text-gray-900">
-                        {project.client || 'N/A'}
+                        {project.contactEmail || 'N/A'}
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-900">
                         {project.budget ? `KSh ${parseFloat(project.budget).toLocaleString()}` : 'N/A'}
@@ -415,69 +473,15 @@ export default function Projects() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={(e) => handleTerminateProject(e, project)}
+                              onClick={(e) => handleDeactivateProject(e, project)}
                               className="text-red-600 hover:text-red-700"
                             >
-                              Terminate
+                              Deactivate
                             </Button>
                           )}
                         </div>
                       </td>
                     </tr>
-                      </TooltipTrigger>
-                      <TooltipContent 
-                        side="top" 
-                        align="start"
-                        className="max-w-md p-4"
-                        sideOffset={5}
-                      >
-                        <div className="space-y-3">
-                          <div>
-                            <h4 className="font-semibold text-gray-900 mb-1">{project.name}</h4>
-                            <p className="text-sm text-gray-600 line-clamp-3">{project.description}</p>
-                          </div>
-                          
-                          <div className="space-y-2 text-sm">
-                            <div className="flex items-center gap-2">
-                              <Users className="h-4 w-4 text-gray-500" />
-                              <span className="text-gray-700">
-                                <span className="font-medium">Manager:</span> {project.manager?.firstName || project.manager?.email}
-                              </span>
-                            </div>
-                            
-                            {project.team && (
-                              <div className="flex items-center gap-2">
-                                <Users className="h-4 w-4 text-gray-500" />
-                                <span className="text-gray-700">
-                                  <span className="font-medium">Team:</span> {project.team.name} ({project.team.segment})
-                                </span>
-                              </div>
-                            )}
-                            
-                            <div className="flex items-center gap-2">
-                              <DollarSign className="h-4 w-4 text-gray-500" />
-                              <span className="text-gray-700">
-                                <span className="font-medium">Financial:</span> Budget KSh {(project.budget || 0).toLocaleString()} | Paid KSh {(project.paidAmount || 0).toLocaleString()} | Outstanding KSh {(parseFloat(project.budget || '0') - (project.paidAmount || 0)).toLocaleString()}
-                              </span>
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                              <Calendar className="h-4 w-4 text-gray-500" />
-                              <span className="text-gray-700">
-                                <span className="font-medium">Milestones:</span> {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
-                              </span>
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                              <Calendar className="h-4 w-4 text-gray-500" />
-                              <span className="text-gray-700">
-                                <span className="font-medium">Timeline:</span> {new Date(project.startDate).toLocaleDateString()} to {new Date(project.endDate).toLocaleDateString()}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
                   );
                 })}
               </tbody>
@@ -503,7 +507,7 @@ export default function Projects() {
                       <div className="flex-1">
                         <div className="flex items-center space-x-2 mb-2">
                           <CardTitle className="text-lg" data-testid={`text-project-name-${project.id}`}>
-                            {project.name}
+                            {project.client || project.name}
                           </CardTitle>
                           {overdueCount > 0 && (
                             <Tooltip>
@@ -519,9 +523,11 @@ export default function Projects() {
                             </Tooltip>
                           )}
                         </div>
-                        <CardDescription className="line-clamp-2" data-testid={`text-project-description-${project.id}`}>
-                          {project.description}
-                        </CardDescription>
+                        {project.description && project.description.trim() !== '' && project.description !== project.client && (
+                          <CardDescription className="line-clamp-2" data-testid={`text-project-description-${project.id}`}>
+                            {project.description}
+                          </CardDescription>
+                        )}
                       </div>
                       <div className="flex items-center space-x-2">
                         <Tooltip>
@@ -555,10 +561,10 @@ export default function Projects() {
                             <Button 
                               variant="ghost" 
                               size="sm"
-                              onClick={(e) => handleTerminateProject(e, project)}
+                              onClick={(e) => handleDeactivateProject(e, project)}
                               data-testid={`button-project-terminate-${project.id}`}
                             >
-                              Terminate
+                              Deactivate
                             </Button>
                           </>
                         )}
