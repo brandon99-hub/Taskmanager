@@ -25,7 +25,7 @@ export const enhancedPasswordSchema = z.string()
     // Check for no common patterns
     return !hasCommonPatterns(password);
   }, 'Password contains common patterns that are not secure')
-  .refine(async (password) => {
+  .refine((password) => {
     // Check password strength using zxcvbn
     const result = zxcvbn(password);
     return result.score >= 3; // Require score of 3 or higher (0-4 scale)

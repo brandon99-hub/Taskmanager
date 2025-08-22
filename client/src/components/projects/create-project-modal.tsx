@@ -40,6 +40,7 @@ const createProjectSchema = z.object({
 type CreateProjectData = z.infer<typeof createProjectSchema>;
 
 type NewTaskRow = {
+  id?: string; // For edit mode
   name: string;
   description?: string;
   priority: 'low' | 'medium' | 'high' | 'critical';
@@ -48,6 +49,21 @@ type NewTaskRow = {
   assignedUserId?: string;
   feeAmount?: string;
   expectedInvoiceDate?: string;
+  status?: string;
+  billingStatus?: string;
+  subtasks?: Array<{
+    id?: string; // For edit mode
+    name: string;
+    description?: string;
+    status?: string;
+    priority: 'low' | 'medium' | 'high' | 'critical';
+    startDate?: string;
+    dueDate?: string;
+    estimatedHours?: string;
+    estimatedDays?: number;
+    assignedUserId?: string;
+    progressPercent?: number;
+  }>;
   errors?: { startDate?: string; dueDate?: string; name?: string; feeAmount?: string; expectedInvoiceDate?: string };
 };
 
@@ -62,13 +78,6 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   const [isProcessingMilestones, setIsProcessingMilestones] = useState(false);
   const [milestoneProgress, setMilestoneProgress] = useState({ current: 0, total: 0, message: '' });
   const isEditMode = !!project;
-
-  const { data: teams = [] } = useQuery<any[]>({
-    queryKey: ['/api/teams'],
-    enabled: isOpen, // load when modal opens
-    staleTime: 0,
-    refetchOnMount: 'always',
-  });
 
   const form = useForm<CreateProjectData>({
     resolver: zodResolver(createProjectSchema),
@@ -85,6 +94,31 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       status: "planning",
     },
   });
+
+  // Get the current segment value from the form
+  const currentSegment = form.watch('segment');
+  
+  const { data: teams = [] } = useQuery<any[]>({
+    queryKey: ['/api/teams', currentSegment],
+    queryFn: async () => {
+      const res = await fetch(`/api/teams?segment=${currentSegment}`, { 
+        credentials: 'include', 
+        cache: 'no-store' 
+      });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: isOpen, // load when modal opens
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+
+  // Helper function to get team name
+  const getTeamName = (teamId: string | undefined) => {
+    if (!teamId) return 'Team';
+    const team = teams.find(t => t.id === teamId);
+    return team?.name || 'Team';
+  };
 
   // Auto-open modal in edit mode and prefill form
   useEffect(() => {
@@ -105,6 +139,21 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     }
   }, [project]);
 
+  // Reset team selection when segment changes (unless in edit mode)
+  useEffect(() => {
+    if (!isEditMode && currentSegment) {
+      // Check if the currently selected team is still valid for the new segment
+      const currentTeamId = form.getValues('teamId');
+      if (currentTeamId && currentTeamId !== 'none') {
+        const currentTeam = teams.find(team => team.id === currentTeamId);
+        if (!currentTeam || currentTeam.segment !== currentSegment) {
+          // Reset team selection if the current team is not in the new segment
+          form.setValue('teamId', 'none');
+        }
+      }
+    }
+  }, [currentSegment, teams, form, isEditMode]);
+
   // Fetch existing milestones in edit mode
   const { data: existingMilestones = [] } = useQuery<any[]>({
     queryKey: ['/api/projects', project?.id, 'tasks'],
@@ -117,6 +166,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     enabled: isEditMode && isOpen && !!project?.id,
   });
 
+  // Fetch team members for the form's selected team (for new projects or when changing teams)
   const { data: teamMembers = [] } = useQuery<any[]>({
     queryKey: ['/api/team-members', form.watch('teamId')],
     queryFn: async () => {
@@ -128,6 +178,19 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       return json.members?.map((m: any) => m.user) ?? [];
     },
     enabled: isOpen && !!form.watch('teamId') && form.watch('teamId') !== 'none',
+  });
+
+  // Fetch team members for the existing project's team (for edit mode)
+  const { data: projectTeamMembers = [] } = useQuery<any[]>({
+    queryKey: ['/api/project-team-members', project?.teamId],
+    queryFn: async () => {
+      if (!project?.teamId) return [];
+      const res = await fetch(`/api/teams/${project.teamId}`, { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) return [];
+      const json = await res.json();
+      return json.members?.map((m: any) => m.user) ?? [];
+    },
+    enabled: isEditMode && isOpen && !!project?.teamId,
   });
 
   // Load existing milestones in edit mode
@@ -145,6 +208,20 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         expectedInvoiceDate: m.expectedInvoiceDate ? new Date(m.expectedInvoiceDate).toISOString().slice(0, 10) : '',
         status: m.status,
         billingStatus: m.billingStatus,
+        // Include subtasks if they exist
+        subtasks: m.subtasks ? m.subtasks.map((subtask: any) => ({
+          id: subtask.id,
+          name: subtask.name,
+          description: subtask.description || '',
+          status: subtask.status,
+          priority: subtask.priority,
+          startDate: subtask.startDate ? new Date(subtask.startDate).toISOString().slice(0, 10) : '',
+          dueDate: subtask.dueDate ? new Date(subtask.dueDate).toISOString().slice(0, 10) : '',
+          estimatedHours: subtask.estimatedHours ? String(subtask.estimatedHours) : '',
+          estimatedDays: subtask.estimatedDays ? String(subtask.estimatedDays) : '',
+          assignedUserId: subtask.assignedUserId || undefined,
+          progressPercent: subtask.progressPercent || 0
+        })) : []
       }));
       setTasks(milestoneTasks);
     }
@@ -757,11 +834,17 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                         </FormControl>
                         <SelectContent>
                           <SelectItem value="none">No team assigned</SelectItem>
-                          {teams.map((team) => (
-                            <SelectItem key={team.id} value={team.id}>
-                              {team.name}
+                          {teams.length === 0 ? (
+                            <SelectItem value="no-teams" disabled>
+                              No teams available for {currentSegment} segment
                             </SelectItem>
-                          ))}
+                          ) : (
+                            teams.map((team) => (
+                              <SelectItem key={team.id} value={team.id}>
+                                {team.name}
+                              </SelectItem>
+                            ))
+                          )}
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -841,12 +924,26 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                       <FormLabel className="text-sm font-medium text-gray-700">Contract Amount (KSh)</FormLabel>
                       <FormControl>
                         <Input 
-                          type="number" 
+                          type="text" 
                           placeholder="0.00" 
                           min="0" 
-                          step="0.01"
                           className="h-11"
-                          {...field} 
+                          value={field.value || ''}
+                          onChange={(e) => {
+                            // Remove commas and non-numeric characters except decimal point
+                            const rawValue = e.target.value.replace(/[^\d.]/g, '');
+                            
+                            // Format with commas for thousands
+                            let formattedValue = rawValue;
+                            if (rawValue.includes('.')) {
+                              const [whole, decimal] = rawValue.split('.');
+                              formattedValue = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + decimal;
+                            } else if (rawValue.length > 3) {
+                              formattedValue = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                            }
+                            
+                            field.onChange(formattedValue);
+                          }}
                           data-testid="input-project-budget"
                         />
                       </FormControl>
@@ -1010,16 +1107,29 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">Fee Amount (KSh) *</label>
                             <Input 
-                              type="number" 
+                              type="text" 
                               min="0" 
-                              step="0.01" 
                               placeholder="0.00" 
                               value={t.feeAmount || ''} 
-                              onChange={(e)=> setTasks((prev)=>{ 
-                                const c=[...prev]; 
-                                c[idx] = { ...c[idx], feeAmount: e.target.value, errors: { ...c[idx].errors, feeAmount: undefined } }; 
-                                return c; 
-                              })} 
+                              onChange={(e)=> {
+                                // Remove commas and non-numeric characters except decimal point
+                                const rawValue = e.target.value.replace(/[^\d.]/g, '');
+                                
+                                // Format with commas for thousands
+                                let formattedValue = rawValue;
+                                if (rawValue.includes('.')) {
+                                  const [whole, decimal] = rawValue.split('.');
+                                  formattedValue = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + decimal;
+                                } else if (rawValue.length > 3) {
+                                  formattedValue = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                                }
+                                
+                                setTasks((prev)=>{ 
+                                  const c=[...prev]; 
+                                  c[idx] = { ...c[idx], feeAmount: formattedValue, errors: { ...c[idx].errors, feeAmount: undefined } }; 
+                                  return c; 
+                                });
+                              }} 
                               className="h-11"
                             />
                             {t.errors?.feeAmount && <p className="text-xs text-red-600 mt-1">{t.errors.feeAmount}</p>}
@@ -1036,14 +1146,33 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                 <SelectValue placeholder="Select team member" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="none">Unassigned</SelectItem>
+                                <SelectItem value="none">
+                                  {form.watch('teamId') && form.watch('teamId') !== 'none' 
+                                    ? `${getTeamName(form.watch('teamId'))} - Unassigned`
+                                    : 'Unassigned'
+                                  }
+                                </SelectItem>
                                 {teamMembers.map((m: any) => (
                                   <SelectItem key={m.id} value={m.id}>
-                                    {m.firstName && m.lastName ? `${m.firstName} ${m.lastName}` : m.email}
+                                    <div className="flex flex-col items-start">
+                                      <span className="font-medium">
+                                        {m.firstName && m.lastName ? `${m.firstName} ${m.lastName}` : m.email}
+                                      </span>
+                                      {m.role && (
+                                        <span className="text-xs text-gray-500">
+                                          {m.role}
+                                        </span>
+                                      )}
+                                    </div>
                                   </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
+                            {form.watch('teamId') && form.watch('teamId') !== 'none' && (
+                              <p className="text-xs text-gray-500 mt-1">
+                                💡 Team: {getTeamName(form.watch('teamId'))} • {teamMembers.length} member{teamMembers.length === 1 ? '' : 's'} available
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1105,7 +1234,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-2">Expected Invoice Date</label>
                           <div className="relative">
-                            <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/4 h-4 w-4 text-gray-400" />
                             <Input 
                               type="date" 
                               value={t.expectedInvoiceDate || ''} 
@@ -1115,9 +1244,41 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                 return c; 
                               })} 
                               className="h-11 pl-10"
+                              // Set the min attribute to the deadline date to prevent setting invoice date before deadline
+                              min={t.dueDate || undefined}
+                              // Set the default month view to the deadline month when calendar opens
+                              onFocus={(e) => {
+                                if (t.dueDate && !t.expectedInvoiceDate) {
+                                  // If there's a deadline but no invoice date, suggest setting it to deadline + 1 day
+                                  const deadlineDate = new Date(t.dueDate);
+                                  const suggestedInvoiceDate = new Date(deadlineDate);
+                                  suggestedInvoiceDate.setDate(deadlineDate.getDate() + 1);
+                                  
+                                  // Update the task with the suggested invoice date
+                                  setTasks((prev) => {
+                                    const c = [...prev];
+                                    c[idx] = { 
+                                      ...c[idx], 
+                                      expectedInvoiceDate: suggestedInvoiceDate.toISOString().slice(0, 10),
+                                      errors: { ...c[idx].errors, expectedInvoiceDate: undefined }
+                                    };
+                                    return c;
+                                  });
+                                }
+                              }}
                             />
                           </div>
                           {t.errors?.expectedInvoiceDate && <p className="text-xs text-red-600 mt-1">{t.errors.expectedInvoiceDate}</p>}
+                          {t.dueDate && !t.expectedInvoiceDate && (
+                            <p className="text-xs text-blue-600 mt-1">
+                              💡 Click to set invoice date (suggested: {new Date(t.dueDate).toLocaleDateString()})
+                            </p>
+                          )}
+                          {t.dueDate && t.expectedInvoiceDate && (
+                            <p className="text-xs text-green-600 mt-1">
+                              ✅ Invoice date set • Collection date: {new Date(t.expectedInvoiceDate).toLocaleDateString()} + 30 days
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -1126,6 +1287,255 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                         <p className="text-sm text-blue-800">
                           <span className="font-medium">Note:</span> Collection date will be automatically calculated as 30 days after the invoice date.
                         </p>
+                      </div>
+
+                      {/* Subtasks Section */}
+                      <div className="border-t border-gray-200 pt-4">
+                        <div className="flex items-center justify-between mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+                          <div>
+                            <h5 className="text-lg font-semibold text-blue-900 mb-1">Subtasks</h5>
+                            <p className="text-sm text-blue-700">Break down this milestone into smaller, manageable tasks</p>
+                          </div>
+                          <Button 
+                            type="button" 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => {
+                              const newSubtasks = [...(t.subtasks || []), { 
+                                name: '', 
+                                description: '', 
+                                priority: 'medium' as const,
+                                estimatedDays: 0,
+                                startDate: '',
+                                dueDate: '',
+                                assignedUserId: undefined,
+                                progressPercent: 0
+                              }];
+                              setTasks((prev) => {
+                                const c = [...prev];
+                                c[idx] = { ...c[idx], subtasks: newSubtasks };
+                                return c;
+                              });
+                            }}
+                            className="text-blue-600 hover:text-blue-700 border-blue-200 hover:border-blue-300 hover:bg-blue-50 font-medium"
+                          >
+                            <Plus className="h-4 w-4 mr-2" /> Add Subtask
+                          </Button>
+                        </div>
+
+                        {t.subtasks && t.subtasks.length > 0 ? (
+                          <div className="space-y-3">
+                            {t.subtasks.map((subtask, subtaskIdx) => (
+                              <div key={subtaskIdx} className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6 shadow-sm">
+                                <div className="flex items-center justify-between mb-4">
+                                  <div className="flex items-center space-x-3">
+                                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center border-2 border-blue-200">
+                                      <span className="text-sm font-semibold text-blue-700">{subtaskIdx + 1}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-sm font-semibold text-blue-900">Subtask #{subtaskIdx + 1}</span>
+                                      <p className="text-xs text-blue-600">Break down this milestone</p>
+                                    </div>
+                                  </div>
+                                  <Button 
+                                    type="button" 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={() => {
+                                      const newSubtasks = t.subtasks?.filter((_, i) => i !== subtaskIdx) || [];
+                                      setTasks((prev) => {
+                                        const c = [...prev];
+                                        c[idx] = { ...c[idx], subtasks: newSubtasks };
+                                        return c;
+                                      });
+                                    }}
+                                    className="text-red-600 hover:text-red-700 hover:bg-red-50 rounded-full p-2"
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                                  <div className="md:col-span-2">
+                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Subtask Name *</label>
+                                    <Input 
+                                      placeholder="Enter subtask name" 
+                                      value={subtask.name} 
+                                      onChange={(e) => {
+                                        const newSubtasks = [...(t.subtasks || [])];
+                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], name: e.target.value };
+                                        setTasks((prev) => {
+                                          const c = [...prev];
+                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
+                                          return c;
+                                        });
+                                      }}
+                                      className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400"
+                                    />
+                                  </div>
+                                  
+                                  <div>
+                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Priority</label>
+                                    <Select 
+                                      value={subtask.priority} 
+                                      onValueChange={(v) => {
+                                        const newSubtasks = [...(t.subtasks || [])];
+                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], priority: v as 'low' | 'medium' | 'high' | 'critical' };
+                                        setTasks((prev) => {
+                                          const c = [...prev];
+                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
+                                          return c;
+                                        });
+                                      }}
+                                    >
+                                      <SelectTrigger className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400">
+                                        <SelectValue placeholder="Select priority" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="low">Low</SelectItem>
+                                        <SelectItem value="medium">Medium</SelectItem>
+                                        <SelectItem value="high">High</SelectItem>
+                                        <SelectItem value="critical">Critical</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Start Date</label>
+                                    <Input 
+                                      type="date"
+                                      value={subtask.startDate ? new Date(subtask.startDate).toISOString().split('T')[0] : ''} 
+                                      onChange={(e) => {
+                                        const startDate = e.target.value;
+                                        const newSubtasks = [...(t.subtasks || [])];
+                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], startDate };
+                                        
+                                        // Auto-calculate estimated days if both dates are set
+                                        if (startDate && subtask.dueDate) {
+                                          const start = new Date(startDate);
+                                          const due = new Date(subtask.dueDate);
+                                          const days = Math.ceil((due.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                                          if (days > 0) {
+                                            newSubtasks[subtaskIdx].estimatedDays = days;
+                                          }
+                                        }
+                                        
+                                        setTasks((prev) => {
+                                          const c = [...prev];
+                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
+                                          return c;
+                                        });
+                                      }}
+                                      className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Due Date</label>
+                                    <Input 
+                                      type="date"
+                                      value={subtask.dueDate ? new Date(subtask.dueDate).toISOString().split('T')[0] : ''} 
+                                      onChange={(e) => {
+                                        const dueDate = e.target.value;
+                                        const newSubtasks = [...(t.subtasks || [])];
+                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], dueDate };
+                                        
+                                        // Auto-calculate estimated days if both dates are set
+                                        if (subtask.startDate && dueDate) {
+                                          const start = new Date(subtask.startDate);
+                                          const due = new Date(dueDate);
+                                          const days = Math.ceil((due.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                                          if (days > 0) {
+                                            newSubtasks[subtaskIdx].estimatedDays = days;
+                                          }
+                                        }
+                                        
+                                        setTasks((prev) => {
+                                          const c = [...prev];
+                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
+                                          return c;
+                                        });
+                                      }}
+                                      className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Estimated Days</label>
+                                    <Input 
+                                      type="number" 
+                                      min="1" 
+                                      placeholder="Auto-calculated" 
+                                      value={subtask.estimatedDays || ''} 
+                                      readOnly
+                                      className="h-10 text-sm bg-blue-50 text-blue-700 border-blue-200 font-medium"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Assigned Employee</label>
+                                    {(isEditMode ? projectTeamMembers : teamMembers).length > 0 ? (
+                                      <Select 
+                                        value={subtask.assignedUserId || ''} 
+                                        onValueChange={(v) => {
+                                          const newSubtasks = [...(t.subtasks || [])];
+                                          newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], assignedUserId: v || undefined };
+                                          setTasks((prev) => {
+                                            const c = [...prev];
+                                            c[idx] = { ...c[idx], subtasks: newSubtasks };
+                                            return c;
+                                          });
+                                        }}
+                                      >
+                                        <SelectTrigger className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400">
+                                          <SelectValue placeholder="Select employee" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="">Unassigned</SelectItem>
+                                          {(isEditMode ? projectTeamMembers : teamMembers).map((member: any) => (
+                                            <SelectItem key={member.id} value={member.id}>
+                                              {member.name}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    ) : (
+                                      <div className="h-10 px-3 py-2 text-sm text-gray-500 bg-gray-100 border border-gray-200 rounded-md flex items-center">
+                                        <span>{isEditMode ? 'Loading team members...' : 'No team assigned to project'}</span>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="md:col-span-2">
+                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Description</label>
+                                    <Input 
+                                      placeholder="Brief description" 
+                                      value={subtask.description || ''} 
+                                      onChange={(e) => {
+                                        const newSubtasks = [...(t.subtasks || [])];
+                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], description: e.target.value };
+                                        setTasks((prev) => {
+                                          const c = [...prev];
+                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
+                                          return c;
+                                        });
+                                      }}
+                                      className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-8 border-2 border-dashed border-blue-200 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50">
+                            <div className="text-blue-400 mb-3">
+                              <Plus className="h-12 w-12 mx-auto" />
+                            </div>
+                            <p className="text-sm font-medium text-blue-900 mb-1">No subtasks added yet</p>
+                            <p className="text-xs text-blue-600">Break down this milestone into smaller, manageable tasks</p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}

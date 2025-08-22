@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const EMAIL_DEBUG = process.env.EMAIL_DEBUG === 'true';
+
 
 export interface EmailNotificationData {
   to: string;
@@ -44,15 +44,11 @@ export class EmailService {
 
   private setupTransporter() {
     try {
-      if (EMAIL_DEBUG) console.log('EmailService: Setting up transporter...');
-      if (EMAIL_DEBUG) console.log('EmailService: EMAIL_PROVIDER =', process.env.EMAIL_PROVIDER);
+      
       
       if (process.env.EMAIL_PROVIDER === 'gmail') {
-        if (EMAIL_DEBUG) console.log('EmailService: Using Gmail configuration');
         if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
           console.warn('EmailService: Gmail configuration missing. Email service disabled.');
-          if (EMAIL_DEBUG) console.log('EmailService: GMAIL_USER =', process.env.GMAIL_USER ? 'Set' : 'Missing');
-          if (EMAIL_DEBUG) console.log('EmailService: GMAIL_APP_PASSWORD =', process.env.GMAIL_APP_PASSWORD ? 'Set' : 'Missing');
           return;
         }
         
@@ -63,15 +59,11 @@ export class EmailService {
             pass: process.env.GMAIL_APP_PASSWORD
           }
         });
-        if (EMAIL_DEBUG) console.log('EmailService: Gmail transporter created successfully');
+
       } else {
-        if (EMAIL_DEBUG) console.log('EmailService: Using SMTP configuration');
         // SMTP configuration for other providers
         if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
           console.warn('EmailService: SMTP configuration missing. Email service disabled.');
-          if (EMAIL_DEBUG) console.log('EmailService: SMTP_HOST =', process.env.SMTP_HOST ? 'Set' : 'Missing');
-          if (EMAIL_DEBUG) console.log('EmailService: SMTP_USER =', process.env.SMTP_HOST ? 'Set' : 'Missing');
-          if (EMAIL_DEBUG) console.log('EmailService: SMTP_PASS =', process.env.SMTP_PASS ? 'Set' : 'Missing');
           return;
         }
 
@@ -84,11 +76,9 @@ export class EmailService {
             pass: process.env.SMTP_PASS
           }
         });
-        if (EMAIL_DEBUG) console.log('EmailService: SMTP transporter created successfully');
       }
 
       this.isConfigured = true;
-      if (EMAIL_DEBUG) console.log('EmailService: Email service configured successfully');
     } catch (error) {
       console.error('EmailService: Failed to configure email service:', error);
     }
@@ -143,8 +133,6 @@ export class EmailService {
   }
 
   async sendTaskAssignedEmail(data: EmailNotificationData): Promise<boolean> {
-    if (EMAIL_DEBUG) console.log(`EmailService: Attempting to send task assigned email to ${data.to}`);
-    if (EMAIL_DEBUG) console.log(`EmailService: Email service configured: ${this.isConfigured}`);
     if (!this.isConfigured) {
       console.warn(`EmailService: Email service not configured. Cannot send email to ${data.to}`);
       return false;
@@ -195,7 +183,6 @@ export class EmailService {
       };
 
       await this.transporter!.sendMail(mailOptions);
-      if (EMAIL_DEBUG) console.log(`${templateName} email sent successfully to ${data.to}`);
       return true;
     } catch (error) {
       console.error(`Failed to send ${templateName} email to ${data.to}:`, error);
@@ -281,7 +268,6 @@ TaskFlow Team
 
     try {
       await this.transporter!.verify();
-      if (EMAIL_DEBUG) console.log('Email service connection verified successfully');
       return true;
     } catch (error) {
       console.error('Email service connection failed:', error);

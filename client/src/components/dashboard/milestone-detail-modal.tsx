@@ -89,7 +89,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
   const totalMilestones = milestones.length;
   const totalValue = milestones.reduce((sum: number, m: any) => sum + (parseFloat(m.feeAmount || '0')), 0);
   const paidValue = milestones.reduce((sum: number, m: any) => 
-    sum + (m.billingStatus === 'sent' ? parseFloat(m.feeAmount || '0') : 0), 0 // Changed from 'paid' to 'sent'
+    sum + (m.billingStatus === 'paid' ? parseFloat(m.feeAmount || '0') : 0), 0 // FIXED: Only count as paid when actually paid
   );
   const pendingValue = totalValue - paidValue;
 

@@ -21,8 +21,19 @@ export default function TeamWorkload() {
     team: { id: string; name: string; description?: string };
     completionRate: number;
     onTimeDeliveryRate: number;
+    efficiencyScore: number;
+    priorityBonus: number;
     overallScore: number;
-    members: any[];
+    members: {
+      userId: string;
+      user: any;
+      totalTasks: number;
+      completedTasks: number;
+      overdueTasks: number;
+      highPriorityTasks: number;
+      completedHighPriorityTasks: number;
+      workloadPercentage: number;
+    }[];
   } | null>({
     queryKey: ['/api/dashboard/best-team'],
     enabled: user?.role !== 'employee',
@@ -111,9 +122,19 @@ export default function TeamWorkload() {
         <CardContent>
           <div className="mb-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
             <h3 className="font-medium text-amber-900">{bestTeam.team.name}</h3>
-            <div className="flex items-center justify-between mt-2 text-sm">
-              <span className="text-amber-700">Completion: {bestTeam.completionRate}%</span>
-              <span className="text-amber-700">On-Time: {bestTeam.onTimeDeliveryRate}%</span>
+            <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+              <div className="text-amber-700">
+                <span className="font-medium">Completion:</span> {bestTeam.completionRate}%
+              </div>
+              <div className="text-amber-700">
+                <span className="font-medium">On-Time:</span> {bestTeam.onTimeDeliveryRate}%
+              </div>
+              <div className="text-amber-700">
+                <span className="font-medium">Efficiency:</span> {bestTeam.efficiencyScore}%
+              </div>
+              <div className="text-amber-700">
+                <span className="font-medium">Priority Bonus:</span> +{bestTeam.priorityBonus}%
+              </div>
             </div>
           </div>
           
@@ -140,6 +161,11 @@ export default function TeamWorkload() {
                       </p>
                       <p className="text-xs text-gray-600">
                         {member.completedTasks}/{member.totalTasks} tasks
+                        {member.highPriorityTasks > 0 && (
+                          <span className="ml-1 text-orange-600">
+                            ({member.completedHighPriorityTasks}/{member.highPriorityTasks} high priority)
+                          </span>
+                        )}
                       </p>
                     </div>
                   </div>

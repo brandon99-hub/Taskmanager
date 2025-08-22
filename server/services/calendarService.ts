@@ -291,6 +291,48 @@ Managed by TaskFlow - AppKings Solutions Limited
   }
 
   /**
+   * Generate milestone reminder event data (1 week before due date)
+   */
+  static generateMilestoneReminderData(task: any, project: any): CalendarEventData {
+    const taskUrl = `${process.env.FRONTEND_URL || 'http://localhost:5000'}/projects/${project.id}?task=${task.id}`;
+    
+    // Set reminder 1 week before due date at 9 AM
+    const dueDate = new Date(task.dueDate);
+    const reminderDate = new Date(dueDate);
+    reminderDate.setDate(dueDate.getDate() - 7); // 1 week before
+    reminderDate.setHours(9, 0, 0, 0); // 9 AM
+    
+    const reminderEnd = new Date(reminderDate);
+    reminderEnd.setHours(reminderDate.getHours() + 1); // 1 hour duration
+
+    const description = `
+TaskFlow Milestone Reminder
+
+Project: ${project.name}
+Milestone: ${task.name}
+${task.description ? `\nDescription: ${task.description}` : ''}
+Due Date: ${dueDate.toLocaleDateString()} ${dueDate.toLocaleTimeString()}
+Priority: ${task.priority}
+${task.feeAmount ? `Fee: KSh ${task.feeAmount}` : ''}
+
+This milestone is due in 1 week. Please review and update progress.
+
+View milestone details: ${taskUrl}
+
+Managed by TaskFlow - AppKings Solutions Limited
+    `.trim();
+
+    return {
+      summary: `TaskFlow Reminder: ${task.name} (Due in 1 week)`,
+      description: description,
+      start: reminderDate,
+      end: reminderEnd,
+      reminderMinutes: 1440, // 24 hours before reminder
+      attendees: task.assignedUser ? [task.assignedUser.email] : []
+    };
+  }
+
+  /**
    * Encrypt token for database storage
    */
   static encryptToken(token: string): string {

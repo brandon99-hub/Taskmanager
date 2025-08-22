@@ -12,6 +12,7 @@ import {
 import { z } from "zod";
 import { generateExcelBuffer } from "./utils/excelExport";
 import { notificationService } from "./services/notificationService";
+import { calendarService, GoogleCalendarService } from "./services/calendarService";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -27,7 +28,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const role = (req.query.role as string) || undefined;
       const q = (req.query.q as string) || undefined;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
       const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
       const users = await storage.getUsers({ role, q, limit, offset });
       res.json(users);
@@ -268,9 +269,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Team routes
   app.get('/api/teams', isAuthenticated, async (req: any, res) => {
     try {
-      const teams = req.user.role === 'employee'
-        ? await storage.getTeamsForUser(req.user.id)
-        : await storage.getTeams();
+      const segment = req.query.segment as string;
+      
+      let teams;
+      if (req.user.role === 'employee') {
+        teams = await storage.getTeamsForUser(req.user.id);
+      } else {
+        teams = await storage.getTeams();
+      }
+      
+      // Filter teams by segment if specified
+      if (segment && ['academic', 'parastals', 'private'].includes(segment)) {
+        teams = teams.filter(team => team.segment === segment);
+      }
+      
       res.json(teams);
     } catch (error) {
       console.error("Error fetching teams:", error);
@@ -629,7 +641,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/projects/:id/tasks', isAuthenticated, async (req, res) => {
     try {
       const tasks = await storage.getTasksByProject(req.params.id);
-      res.json(tasks);
+      
+      // Include subtasks for each milestone
+      const tasksWithSubtasks = await Promise.all(
+        tasks.map(async (task) => {
+          const subtasks = await storage.getSubtasksByMilestone(task.id);
+          return { ...task, subtasks };
+        })
+      );
+      
+      res.json(tasksWithSubtasks);
     } catch (error) {
       console.error("Error fetching project tasks:", error);
       res.status(500).json({ message: "Failed to fetch project tasks" });
@@ -931,6 +952,145 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Google Calendar reminder endpoint for milestones
+  app.post('/api/tasks/:id/calendar-reminder', isAuthenticated, async (req: any, res) => {
+    try {
+      const taskId = req.params.id;
+      const task = await storage.getTask(taskId);
+      
+      if (!task) {
+        return res.status(404).json({ message: 'Milestone not found' });
+      }
+
+      // Check if user is assigned to this task or has permission
+      if (task.assignedUserId !== req.user.id && !['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'You can only set reminders for your own milestones' });
+      }
+
+      // Get user's calendar settings
+      const calendarSettings = await storage.getUserCalendarSettings(req.user.id);
+      
+      if (!calendarSettings.isConnected) {
+        return res.status(400).json({ message: 'Please connect your Google Calendar first' });
+      }
+
+      // Get project details
+      const project = await storage.getProject(task.projectId);
+      if (!project) {
+        return res.status(404).json({ message: 'Project not found' });
+      }
+
+      // Generate reminder event data
+      const reminderData = GoogleCalendarService.generateMilestoneReminderData(task, project);
+      
+      // Create calendar event
+      const event = await calendarService.createTaskEvent(reminderData, calendarSettings.calendarName || 'primary');
+      
+      res.json({ 
+        message: 'Reminder set successfully', 
+        eventId: event,
+        reminderDate: reminderData.start,
+        dueDate: task.dueDate
+      });
+    } catch (error) {
+      console.error('Error setting calendar reminder:', error);
+      res.status(500).json({ message: 'Failed to set calendar reminder' });
+    }
+  });
+
+  // Subtask routes
+  app.get('/api/tasks/:id/subtasks', isAuthenticated, async (req, res) => {
+    try {
+      const subtasks = await storage.getSubtasksByMilestone(req.params.id);
+      res.json(subtasks);
+    } catch (error) {
+      console.error("Error fetching subtasks:", error);
+      res.status(500).json({ message: "Failed to fetch subtasks" });
+    }
+  });
+
+  app.post('/api/subtasks', isAuthenticated, async (req: any, res) => {
+    try {
+      const cleaned = {
+        ...req.body,
+        startDate: req.body.startDate ? new Date(req.body.startDate) : undefined,
+        dueDate: req.body.dueDate ? new Date(req.body.dueDate) : undefined,
+        createdById: req.user.id,
+      };
+
+      // Validate milestone exists
+      const milestone = await storage.getTask(cleaned.milestoneId);
+      if (!milestone) {
+        return res.status(400).json({ message: 'Milestone not found' });
+      }
+
+      // Validate dates against milestone timeline
+      if (cleaned.startDate && milestone.startDate && cleaned.startDate < milestone.startDate) {
+        return res.status(400).json({ message: 'Subtask start cannot be before milestone start' });
+      }
+      if (cleaned.dueDate && milestone.dueDate && cleaned.dueDate > milestone.dueDate) {
+        return res.status(400).json({ message: 'Subtask due date cannot be after milestone due date' });
+      }
+
+      const subtask = await storage.createSubtask(cleaned);
+      res.status(201).json(subtask);
+    } catch (error) {
+      console.error("Error creating subtask:", error);
+      res.status(500).json({ message: "Failed to create subtask" });
+    }
+  });
+
+  app.put('/api/subtasks/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const payload: any = {};
+      
+      // Handle basic fields
+      if (req.body.name !== undefined) payload.name = String(req.body.name).trim();
+      if (req.body.description !== undefined) payload.description = req.body.description ? String(req.body.description).trim() : null;
+      if (req.body.status !== undefined) payload.status = req.body.status;
+      if (req.body.priority !== undefined) payload.priority = req.body.priority;
+      if (req.body.assignedUserId !== undefined) payload.assignedUserId = req.body.assignedUserId;
+      if (req.body.progressPercent !== undefined) payload.progressPercent = Number(req.body.progressPercent);
+      if (req.body.estimatedHours !== undefined) payload.estimatedHours = Number(req.body.estimatedHours);
+      if (req.body.estimatedDays !== undefined) payload.estimatedDays = Number(req.body.estimatedDays);
+      if (req.body.actualHours !== undefined) payload.actualHours = Number(req.body.actualHours);
+      if (req.body.actualDays !== undefined) payload.actualDays = Number(req.body.actualDays);
+      
+      // Handle dates
+      if (req.body.startDate !== undefined) {
+        payload.startDate = req.body.startDate ? new Date(req.body.startDate) : null;
+      }
+      if (req.body.dueDate !== undefined) {
+        payload.dueDate = req.body.dueDate ? new Date(req.body.dueDate) : null;
+      }
+
+      // Auto-complete subtask when status is finished
+      if (payload.status === 'finished' && !payload.completedAt) {
+        payload.completedAt = new Date();
+        payload.progressPercent = 100;
+      }
+
+      const subtask = await storage.updateSubtask(req.params.id, payload);
+      res.json(subtask);
+    } catch (error) {
+      console.error("Error updating subtask:", error);
+      res.status(500).json({ message: "Failed to update subtask" });
+    }
+  });
+
+  app.delete('/api/subtasks/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      await storage.deleteSubtask(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting subtask:", error);
+      res.status(500).json({ message: "Failed to delete subtask" });
+    }
+  });
+
   // Notification routes
   app.get('/api/notifications', isAuthenticated, async (req: any, res) => {
     try {
@@ -1220,7 +1380,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const atRiskProjects = projects.filter((p: any) => p.status === 'active' && p.progress < 50).length;
       const onHoldProjects = projects.filter((p: any) => p.status === 'on_hold').length;
       const completedProjects = projects.filter((p: any) => p.status === 'completed').length;
-      const onSupportProjects = projects.filter((p: any) => p.status === 'on_support').length;
+      const onSLAProjects = projects.filter((p: any) => p.status === 'on_support').length;
       const closedSupportProjects = projects.filter((p: any) => p.status === 'completed' && p.progress === 100).length;
 
       const totalMilestones = tasks.length;
@@ -1233,9 +1393,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }).length;
 
       // Calculate revenue metrics
-      const totalRevenue = tasks.reduce((sum: number, t: any) => sum + parseFloat(t.feeAmount || '0'), 0);
-      const collectedRevenue = tasks.filter((t: any) => t.billingStatus === 'sent') // Changed from 'paid' to 'sent' - count revenue when invoice sent
+      // Expected Revenue: Sum of all milestone fees (regardless of status)
+      const expectedRevenue = tasks.reduce((sum: number, t: any) => sum + parseFloat(t.feeAmount || '0'), 0);
+      
+      // Total Revenue: Sum of milestones with invoice sent (billingStatus === 'sent')
+      const totalRevenue = tasks.filter((t: any) => t.billingStatus === 'sent')
         .reduce((sum: number, t: any) => sum + parseFloat(t.feeAmount || '0'), 0);
+      
+      // Collected Revenue: Sum of milestones with payment received (billingStatus === 'paid')
+      const collectedRevenue = tasks.filter((t: any) => t.billingStatus === 'paid')
+        .reduce((sum: number, t: any) => sum + parseFloat(t.feeAmount || '0'), 0);
+      
+      // Pending Revenue: Invoice sent but not yet paid
       const pendingRevenue = totalRevenue - collectedRevenue;
 
       // Calculate segment performance
@@ -1260,11 +1429,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         atRiskProjects,
         onHoldProjects,
         completedProjects,
-        onSupportProjects,
+        onSLAProjects,
         closedSupportProjects,
         totalMilestones,
         completedMilestones,
         overdueMilestones,
+        expectedRevenue,
         totalRevenue,
         collectedRevenue,
         pendingRevenue,
@@ -1432,7 +1602,7 @@ async function getFinancialExportData(storage: any, filters: any) {
   const financialData = projects.map((project: any) => {
     const projectTasks = tasks.filter((task: any) => task.projectId === project.id);
     const totalFees = projectTasks.reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
-    const paidFees = projectTasks.filter((task: any) => task.billingStatus === 'sent').reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0); // Changed from 'paid' to 'sent'
+    const paidFees = projectTasks.filter((task: any) => task.billingStatus === 'paid').reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
     const pendingFees = projectTasks.filter((task: any) => ['to_send', 'sent'].includes(task.billingStatus)).reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
     
     return {
@@ -1445,7 +1615,7 @@ async function getFinancialExportData(storage: any, filters: any) {
       'Outstanding (KSh)': (totalFees - paidFees).toLocaleString(),
       'Payment Completion (%)': totalFees > 0 ? Math.round((paidFees / totalFees) * 100) : 0,
       'Milestones Count': projectTasks.length,
-      'Paid Milestones': projectTasks.filter((task: any) => task.billingStatus === 'sent').length, // Changed from 'paid' to 'sent'
+      'Paid Milestones': projectTasks.filter((task: any) => task.billingStatus === 'paid').length,
       'Invoices to Send': projectTasks.filter((task: any) => task.billingStatus === 'to_send').length,
       'Invoices Sent': projectTasks.filter((task: any) => task.billingStatus === 'sent').length,
       'Project Start': project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A',

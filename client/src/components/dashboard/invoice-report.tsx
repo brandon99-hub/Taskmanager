@@ -42,9 +42,12 @@ export default function InvoiceReport() {
       if (selectedMonth) params.append('month', selectedMonth.toString());
       
       const url = `/api/dashboard/invoice-report${params.toString() ? '?' + params.toString() : ''}`;
+      
       const response = await fetch(url, { credentials: 'include' });
       if (!response.ok) throw new Error('Failed to fetch invoice report');
-      return response.json();
+      
+      const data = await response.json();
+      return data;
     },
     enabled: !!user,
   });
@@ -74,6 +77,26 @@ export default function InvoiceReport() {
     actualCollections: { academic: 0, parastals: 0, private: 0, total: 0 },
     segmentBreakdown: [],
     monthlyTrend: []
+  };
+
+
+
+  // Ensure we have the correct data structure
+  const safeData = {
+    monthlyTargets: {
+      academic: data.monthlyTargets?.academic || 0,
+      parastals: data.monthlyTargets?.parastals || 0,
+      private: data.monthlyTargets?.private || 0,
+      total: data.monthlyTargets?.total || 0
+    },
+    actualCollections: {
+      academic: data.actualCollections?.academic || 0,
+      parastals: data.actualCollections?.parastals || 0,
+      private: data.actualCollections?.private || 0,
+      total: data.actualCollections?.total || 0
+    },
+    segmentBreakdown: data.segmentBreakdown || [],
+    monthlyTrend: data.monthlyTrend || []
   };
 
   const formatCurrency = (amount: number) => {
@@ -127,6 +150,8 @@ export default function InvoiceReport() {
     );
   }
 
+
+
   // Calculate metrics based on whether month filter is applied
   const isMonthFiltered = selectedMonth !== undefined;
   
@@ -140,14 +165,14 @@ export default function InvoiceReport() {
       })
     : null;
 
-  // Use filtered month data or yearly totals
+  // Use filtered month data or yearly totals from monthlyTrend for consistency
   const targetAmount = isMonthFiltered && filteredMonthData 
-    ? filteredMonthData.target 
-    : data.monthlyTargets.total;
+    ? filteredMonthData.expected || 0
+    : safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.expected || 0), 0);
     
   const actualAmount = isMonthFiltered && filteredMonthData 
-    ? filteredMonthData.actual 
-    : data.actualCollections.total;
+    ? filteredMonthData.paid || 0
+    : safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.paid || 0), 0);
 
   const achievementRate = targetAmount > 0 
     ? Math.round((actualAmount / targetAmount) * 100) 
@@ -312,13 +337,16 @@ export default function InvoiceReport() {
             </div>
           </div>
           
-          {!data.monthlyTrend || data.monthlyTrend.length === 0 ? (
+          {!safeData.monthlyTrend || safeData.monthlyTrend.length === 0 ? (
             <Card>
               <CardContent className="p-8 text-center">
                 <div className="text-gray-500">
                   <BarChart className="h-12 w-12 mx-auto mb-4 text-gray-300" />
                   <p className="text-lg font-medium">No monthly data available</p>
                   <p className="text-sm">Monthly segment breakdown will appear here once data is available.</p>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Debug: monthlyTrend length = {safeData.monthlyTrend?.length || 0}
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -336,13 +364,13 @@ export default function InvoiceReport() {
                 </thead>
                 <tbody>
                   {/* Show only selected month if month filter is applied, otherwise show all months */}
-                  {(selectedMonth ? data.monthlyTrend.filter((month: any) => {
+                  {(selectedMonth ? safeData.monthlyTrend.filter((month: any) => {
                     // Extract month number from month name and compare with selected month
                     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
                                       'July', 'August', 'September', 'October', 'November', 'December'];
                     const monthIndex = monthNames.findIndex(name => month.month.includes(name));
                     return monthIndex + 1 === selectedMonth;
-                  }) : data.monthlyTrend).map((month: any) => {
+                  }) : safeData.monthlyTrend).map((month: any) => {
                     // Use real data from API
                     const academicValue = month.academic || 0;
                     const parastalsValue = month.parastals || 0;
@@ -358,7 +386,7 @@ export default function InvoiceReport() {
                           <div className="space-y-1">
                             <p className="font-semibold text-blue-900">{formatCurrency(academicValue)}</p>
                             <p className="text-xs text-blue-600">
-                              {month.target > 0 ? Math.round((academicValue / month.target) * 100) : 0}% of target
+                              {month.expected > 0 ? Math.round((academicValue / month.expected) * 100) : 0}% of target
                             </p>
                           </div>
                         </td>
@@ -366,7 +394,7 @@ export default function InvoiceReport() {
                           <div className="space-y-1">
                             <p className="font-semibold text-green-900">{formatCurrency(parastalsValue)}</p>
                             <p className="text-xs text-green-600">
-                              {month.target > 0 ? Math.round((parastalsValue / month.target) * 100) : 0}% of target
+                              {month.expected > 0 ? Math.round((parastalsValue / month.expected) * 100) : 0}% of target
                             </p>
                           </div>
                         </td>
@@ -374,7 +402,7 @@ export default function InvoiceReport() {
                           <div className="space-y-1">
                             <p className="font-semibold text-purple-900">{formatCurrency(privateValue)}</p>
                             <p className="text-xs text-purple-600">
-                              {month.target > 0 ? Math.round((privateValue / month.target) * 100) : 0}% of target
+                              {month.expected > 0 ? Math.round((privateValue / month.expected) * 100) : 0}% of target
                             </p>
                           </div>
                         </td>
@@ -382,7 +410,7 @@ export default function InvoiceReport() {
                           <div className="space-y-1">
                             <p className="font-bold text-gray-900 text-lg">{formatCurrency(monthlyTotal)}</p>
                             <p className="text-xs text-gray-600">
-                              {month.target > 0 ? Math.round((monthlyTotal / month.target) * 100) : 0}% of target
+                              {month.expected > 0 ? Math.round((monthlyTotal / month.expected) * 100) : 0}% of target
                             </p>
                           </div>
                         </td>
@@ -396,33 +424,22 @@ export default function InvoiceReport() {
                       <td className="p-3 font-bold text-gray-900 text-lg">Yearly Total</td>
                       <td className="p-3 text-center">
                         <p className="font-bold text-blue-900 text-lg">
-                          {formatCurrency(data.monthlyTrend.reduce((sum: number, month: any) => 
-                            sum + (month.academic || 0), 0
-                          ))}
+                          {formatCurrency(safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.academic || 0), 0))}
                         </p>
                       </td>
                       <td className="p-3 text-center">
                         <p className="font-bold text-green-900 text-lg">
-                          {formatCurrency(data.monthlyTrend.reduce((sum: number, month: any) => 
-                            sum + (month.parastals || 0), 0
-                          ))}
+                          {formatCurrency(safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.parastals || 0), 0))}
                         </p>
                       </td>
                       <td className="p-3 text-center">
-                        <p className="font-bold text-green-900 text-lg">
-                          {formatCurrency(data.monthlyTrend.reduce((sum: number, month: any) => 
-                            sum + (month.private || 0), 0
-                          ))}
+                        <p className="font-bold text-purple-900 text-lg">
+                          {formatCurrency(safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.private || 0), 0))}
                         </p>
                       </td>
                       <td className="p-3 text-center bg-gray-200">
                         <p className="font-bold text-gray-900 text-xl">
-                          {formatCurrency(data.monthlyTrend.reduce((sum: number, month: any) => {
-                            const academicValue = month.academic || 0;
-                            const parastalsValue = month.parastals || 0;
-                            const privateValue = month.private || 0;
-                            return sum + academicValue + parastalsValue + privateValue;
-                          }, 0))}
+                          {formatCurrency(safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.academic || 0) + (month.parastals || 0) + (month.private || 0), 0))}
                         </p>
                       </td>
                     </tr>
@@ -449,14 +466,14 @@ export default function InvoiceReport() {
                 <div className="h-96">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart
-                      data={selectedMonth 
-                        ? data.monthlyTrend.filter((month: any) => {
-                            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                                              'July', 'August', 'September', 'October', 'November', 'December'];
-                            const monthIndex = monthNames.findIndex(name => month.month.includes(name));
-                            return monthIndex + 1 === selectedMonth;
-                          })
-                        : data.monthlyTrend
+                                          data={selectedMonth 
+                      ? safeData.monthlyTrend.filter((month: any) => {
+                          const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                                            'July', 'August', 'September', 'October', 'November', 'December'];
+                          const monthIndex = monthNames.findIndex(name => month.month.includes(name));
+                          return monthIndex + 1 === selectedMonth;
+                        })
+                      : safeData.monthlyTrend
                       }
                       margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
                     >
@@ -482,13 +499,13 @@ export default function InvoiceReport() {
                       />
                       <YAxis 
                         tick={{ fontSize: 12, fill: '#6b7280' }}
-                        tickFormatter={(value) => `KSh ${(value / 1000000).toFixed(1)}M`}
+                        tickFormatter={(value) => `${(value / 1000000).toFixed(1)}M`}
                         axisLine={{ stroke: '#d1d5db' }}
                       />
                       <Tooltip 
                         formatter={(value: any, name: any) => {
                           const label = typeof name === 'string' ? name : '';
-                          return [`KSh ${Number(value).toLocaleString()}`, label];
+                          return [`${Number(value).toLocaleString()}`, label];
                         }}
                         labelFormatter={(label) => `Month: ${label}`}
                         contentStyle={{
@@ -601,7 +618,7 @@ export default function InvoiceReport() {
           {performanceViewMode === 'table' ? (
             <div className="grid gap-3 max-h-80 overflow-y-auto">
               {data.monthlyTrend.map((month: any) => {
-                const monthAchievement = month.target > 0 ? Math.round((month.actual / month.target) * 100) : 0;
+                                    const monthAchievement = month.expected > 0 ? Math.round((month.paid / month.expected) * 100) : 0;
                 const isMonthOnTrack = monthAchievement >= 80;
                 
                 return (
@@ -615,15 +632,15 @@ export default function InvoiceReport() {
                           <div>
                             <p className="font-medium text-gray-900">{month.month}</p>
                             <p className="text-xs text-gray-500">
-                              Target: {formatCurrency(month.target)}
+                              Target: {formatCurrency(month.expected)}
                             </p>
                           </div>
                         </div>
                         
                         <div className="text-right">
-                          <p className="text-lg font-bold text-gray-900">
-                            {formatCurrency(month.actual)}
-                          </p>
+                                                      <p className="text-lg font-bold text-gray-900">
+                              {formatCurrency(month.paid)}
+                            </p>
                           <div className="flex items-center gap-2">
                             <Badge 
                               variant={isMonthOnTrack ? "default" : "secondary"}
@@ -662,8 +679,8 @@ export default function InvoiceReport() {
                     <ComposedChart
                       data={data.monthlyTrend.map((month: any) => ({
                         ...month,
-                        achievement: month.target > 0 ? Math.round((month.actual / month.target) * 100) : 0,
-                        gap: month.target > 0 ? Math.max(0, month.target - month.actual) : 0
+                                              achievement: month.expected > 0 ? Math.round((month.paid / month.expected) * 100) : 0,
+                      gap: month.expected > 0 ? Math.max(0, month.expected - month.paid) : 0
                       }))}
                       margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
                     >
@@ -690,7 +707,7 @@ export default function InvoiceReport() {
                       <YAxis 
                         yAxisId="left"
                         tick={{ fontSize: 12, fill: '#6b7280' }}
-                        tickFormatter={(value) => `KSh ${(value / 1000000).toFixed(1)}M`}
+                        tickFormatter={(value) => `${(value / 1000000).toFixed(1)}M`}
                         axisLine={{ stroke: '#d1d5db' }}
                       />
                       <YAxis 

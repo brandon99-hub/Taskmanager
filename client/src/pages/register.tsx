@@ -15,7 +15,7 @@ import { useState } from "react";
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z.string().min(12, "Password must be at least 12 characters"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
   role: z.enum(["admin", "manager", "employee"]).default("employee"),
@@ -182,7 +182,7 @@ export default function Register() {
                           <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                           <Input
                             type={showPassword ? "text" : "password"}
-                            placeholder="Create a password (min 8 characters)"
+                            placeholder="Create a password (min 12 characters)"
                             className="pl-10 pr-12 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500 transition-colors"
                             {...field}
                             data-testid="input-password"
@@ -197,6 +197,33 @@ export default function Register() {
                         </div>
                       </FormControl>
                       <FormMessage />
+                      
+                      {/* Password Requirements */}
+                      <div className="mt-2 p-3 bg-gray-50 rounded-md border border-gray-200">
+                        <p className="text-xs font-medium text-gray-700 mb-2">Password Requirements:</p>
+                        <ul className="text-xs text-gray-600 space-y-1">
+                          <li className="flex items-center">
+                            <CheckCircle className="h-3 w-3 text-green-500 mr-2" />
+                            At least 12 characters long
+                          </li>
+                          <li className="flex items-center">
+                            <CheckCircle className="h-3 w-3 text-green-500 mr-2" />
+                            Contains uppercase letter (A-Z)
+                          </li>
+                          <li className="flex items-center">
+                            <CheckCircle className="h-3 w-3 text-green-500 mr-2" />
+                            Contains lowercase letter (a-z)
+                          </li>
+                          <li className="flex items-center">
+                            <CheckCircle className="h-3 w-3 text-green-500 mr-2" />
+                            Contains number (0-9)
+                          </li>
+                          <li className="flex items-center">
+                            <CheckCircle className="h-3 w-3 text-green-500 mr-2" />
+                            Contains special character (!@#$%^&*)
+                          </li>
+                        </ul>
+                      </div>
                     </FormItem>
                   )}
                 />

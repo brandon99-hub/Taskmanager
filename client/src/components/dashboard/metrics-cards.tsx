@@ -132,7 +132,7 @@ export default function MetricsCards() {
       modalType: "overdue"
     },
     {
-      title: "On Support Projects",
+      title: "On SLA Projects",
       value: onSupportProjects,
       icon: Eye,
       color: "bg-info",

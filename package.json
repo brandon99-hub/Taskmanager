@@ -4,21 +4,13 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "dev": "cross-env NODE_ENV=development tsx server/index.ts",
-    "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "start": "cross-env NODE_ENV=production node dist/index.js",
+    "dev": "tsx server/index.ts",
+    "server": "tsx server/index.ts",
+    "client": "cd client && npm run build",
+    "build": "cd client && npm run build",
+    "start": "tsx server/index.ts",
     "check": "tsc",
-    "db:push": "drizzle-kit push",
-    "db:seed": "tsx scripts/seed-data.ts",
-    "db:seed:comprehensive": "tsx scripts/comprehensive-seed.ts",
-    "setup:admin": "tsx scripts/setup-admin.ts",
-    "import:info": "tsx scripts/import-information-sheet.ts",
-    "import:personnel": "tsx scripts/load-personnel.ts",
-    "update:project-names": "tsx scripts/update-project-names.ts",
-    "clean:project-descriptions": "tsx scripts/clean-project-descriptions.ts",
-    "db:reset": "tsx scripts/reset-data.ts",
-    "db:migrate": "tsx scripts/migrate-schema.ts",
-    "db:migrate:teams": "tsx scripts/migrate-team-segments.ts"
+    "db:push": "drizzle-kit push"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

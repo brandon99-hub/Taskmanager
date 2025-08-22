@@ -74,14 +74,19 @@ export const taskPriorityEnum = pgEnum("task_priority", [
 ]);
 
 export const taskStatusEnum = pgEnum("task_status", [
-  "todo", // Will display as "Not Started" in frontend
-  "in_progress",
-  "qa", // Added QA status
+  "not_started", // Will display as "Not Started" in frontend
+  "started",     // Work has begun
+  "ongoing",     // Actively being worked on
+  "finished",    // Completed
+  "overdue",     // Task is overdue
+  "todo",        // Legacy - will display as "Not Started" in frontend
+  "in_progress", // Legacy - will display as "Ongoing" in frontend
+  "qa",          // Added QA status
   "client_review", // Added client review status
-  "done", // Will display as "Completed" in frontend
-  "delayed", // Added delayed status
-  "on_hold", // Added on hold status
-  "cancelled", // Added cancelled status
+  "done",        // Legacy - will display as "Finished" in frontend
+  "delayed",     // Added delayed status
+  "on_hold",     // Added on hold status
+  "cancelled",   // Added cancelled status
 ]);
 
 // Billing lifecycle for milestones (keeping as billingStatus in DB, will display as Invoice Status in frontend)
@@ -210,6 +215,36 @@ export const tasks = pgTable("tasks", {
   progressPercent: integer("progress_percent").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Subtasks table for tasks under milestones
+export const subtasks = pgTable("subtasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 200 }).notNull(),
+  description: text("description"),
+  status: taskStatusEnum("status").notNull().default("not_started"),
+  priority: taskPriorityEnum("priority").notNull().default("medium"),
+  startDate: timestamp("start_date"),
+  dueDate: timestamp("due_date"),
+  estimatedHours: integer("estimated_hours"),
+  estimatedDays: integer("estimated_days"),
+  actualHours: integer("actual_hours").default(0),
+  actualDays: integer("actual_days").default(0),
+  progressPercent: integer("progress_percent").notNull().default(0),
+  milestoneId: varchar("milestone_id").references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+  assignedUserId: varchar("assigned_user_id").references(() => users.id),
+  createdById: varchar("created_by_id").references(() => users.id).notNull(),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Subtask dependencies table for simple dependencies
+export const subtaskDependencies = pgTable("subtask_dependencies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  subtaskId: varchar("subtask_id").references(() => subtasks.id, { onDelete: 'cascade' }).notNull(),
+  dependsOnSubtaskId: varchar("depends_on_subtask_id").references(() => subtasks.id, { onDelete: 'cascade' }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Team memberships
@@ -458,6 +493,20 @@ export const insertTaskSchema = createInsertSchema(tasks).omit({
   updatedAt: true,
 });
 
+export const insertSubtaskSchema = createInsertSchema(subtasks).omit({
+  id: true,
+  actualHours: true,
+  actualDays: true,
+  completedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertSubtaskDependencySchema = createInsertSchema(subtaskDependencies).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertTeamMemberSchema = createInsertSchema(teamMembers).omit({
   id: true,
   joinedAt: true,
@@ -499,6 +548,9 @@ export type InsertProject = z.infer<typeof insertProjectSchema>;
 
 export type Task = typeof tasks.$inferSelect;
 export type InsertTask = z.infer<typeof insertTaskSchema>;
+
+export type Subtask = typeof subtasks.$inferSelect;
+export type InsertSubtask = z.infer<typeof insertSubtaskSchema>;
 
 export type TeamMember = typeof teamMembers.$inferSelect;
 export type InsertTeamMember = z.infer<typeof insertTeamMemberSchema>;

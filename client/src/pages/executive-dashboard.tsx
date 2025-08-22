@@ -50,7 +50,7 @@ import {
   ReferenceDot
 } from 'recharts';
 import MilestoneDetailModal from "@/components/dashboard/milestone-detail-modal";
-import ExecutiveLoading from "@/components/dashboard/executive-loading";
+
 
 export default function ExecutiveDashboard() {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -60,8 +60,20 @@ export default function ExecutiveDashboard() {
   const [selectedSegment, setSelectedSegment] = useState('all');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | undefined>(undefined);
-  const [selectedProject, setSelectedProject] = useState<string | undefined>(undefined);
-  const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+
+  // Handle month change with smooth transition
+  const handleMonthChange = (value: string) => {
+    setIsTransitioning(true);
+    const newMonth = value === "all" ? undefined : parseInt(value);
+    setSelectedMonth(newMonth);
+    
+    // Add a small delay to show the transition
+    setTimeout(() => {
+      setIsTransitioning(false);
+    }, 300);
+  };
 
   // Check if user has access to executive dashboard
   useEffect(() => {
@@ -76,14 +88,7 @@ export default function ExecutiveDashboard() {
     }
   }, [isAuthenticated, user, toast]);
 
-  // Simulate dashboard loading for better UX
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoadingDashboard(false);
-    }, 3000); // Show loading for 3 seconds
 
-    return () => clearTimeout(timer);
-  }, []);
 
   // Fetch real data from all available endpoints with filter support
   const { data: metricsData, isLoading: metricsLoading } = useQuery<any>({
@@ -192,7 +197,7 @@ export default function ExecutiveDashboard() {
     const atRiskProjects = projects.filter(p => p.status === 'active' && p.progress < 50).length;
     const onHoldProjects = projects.filter(p => p.status === 'on_hold').length;
     const completedProjects = projects.filter(p => p.status === 'completed').length;
-    const onSupportProjects = projects.filter(p => p.status === 'on_support').length;
+    const onSLAProjects = projects.filter(p => p.status === 'on_support').length;
     const inactiveProjects = projects.filter(p => p.status === 'inactive').length;
     const activeProjects = projects.filter(p => p.status === 'active').length;
 
@@ -207,20 +212,18 @@ export default function ExecutiveDashboard() {
       return false;
     }).length;
 
-    // Revenue calculations from completed milestones (CORRECTED)
-    // Use the same logic as the working invoice report
-    const completedMilestonesWithFees = tasks.filter(t => t.status === 'done' && t.feeAmount);
-    const totalRevenue = completedMilestonesWithFees.reduce((sum, t) => sum + parseFloat(t.feeAmount || '0'), 0);
-    const collectedRevenue = completedMilestonesWithFees.filter(t => t.billingStatus === 'sent') // Changed from 'paid' to 'sent' - count revenue when invoice sent
-      .reduce((sum, t) => sum + parseFloat(t.feeAmount || '0'), 0);
-    const pendingRevenue = totalRevenue - collectedRevenue;
+    // Revenue calculations - Use corrected invoice report data for consistency
+    // The invoice report now uses milestone due dates (not completion dates) and includes ALL milestones
+    const totalRevenue = invoice?.monthlyTargets?.total || 0; // Total expected revenue for the year
+    const collectedRevenue = invoice?.actualCollections?.total || 0; // Actually collected revenue
+    const pendingRevenue = totalRevenue - collectedRevenue; // Pending revenue
 
-    // Get yearly revenue from invoice data if available
+    // Use the corrected invoice data for yearly metrics
     const yearlyTarget = invoice?.monthlyTargets?.total || 0;
-    const yearlyCollected = invoice?.actualCollections?.total || collectedRevenue;
-    const yearlyRevenue = yearlyTarget > 0 ? yearlyTarget : totalRevenue;
+    const yearlyCollected = invoice?.actualCollections?.total || 0;
+    const yearlyRevenue = yearlyTarget; // Use the corrected expected revenue
 
-    // Segment performance - use actual collected revenue from completed milestones
+    // Segment performance - use corrected invoice report data for consistency
     const segmentData = projects.reduce((acc, project) => {
       const segment = project.segment || 'private';
       if (!acc[segment]) {
@@ -230,11 +233,11 @@ export default function ExecutiveDashboard() {
       acc[segment].revenue += parseFloat(project.budget || '0');
       acc[segment].completion += project.progress || 0;
       
-      // Calculate actual collected revenue for this project from completed milestones
-      const projectTasks = tasks.filter(t => t.projectId === project.id);
-      const completedTasks = projectTasks.filter(t => t.status === 'done' && t.billingStatus === 'sent');
-      const projectCollectedRevenue = completedTasks.reduce((sum, t) => sum + parseFloat(t.feeAmount || '0'), 0);
-      acc[segment].collectedRevenue += projectCollectedRevenue;
+      // Use corrected invoice data for segment revenue (based on milestone due dates)
+      // This ensures consistency with the invoice report
+      const segmentExpected = invoice?.monthlyTargets?.[segment] || 0;
+      const segmentCollected = invoice?.actualCollections?.[segment] || 0;
+      acc[segment].collectedRevenue = segmentCollected;
       
       return acc;
     }, {} as any);
@@ -252,7 +255,7 @@ export default function ExecutiveDashboard() {
       atRiskProjects,
       onHoldProjects,
       completedProjects,
-      onSupportProjects,
+      onSLAProjects,
       inactiveProjects,
       activeProjects,
       totalMilestones,
@@ -301,9 +304,7 @@ export default function ExecutiveDashboard() {
     return null;
   }
 
-  if (isLoadingDashboard) {
-    return <ExecutiveLoading />;
-  }
+
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-KE', {
@@ -549,7 +550,7 @@ export default function ExecutiveDashboard() {
     { name: 'At Risk', value: metrics.atRiskProjects, color: '#F59E0B' },
     { name: 'On Hold', value: metrics.onHoldProjects, color: '#EF4444' },
     { name: 'Completed', value: metrics.completedProjects, color: '#3B82F6' },
-    { name: 'On Support', value: metrics.onSupportProjects, color: '#8B5CF6' },
+    { name: 'On SLA', value: metrics.onSLAProjects, color: '#8B5CF6' },
     { name: 'Inactive', value: metrics.inactiveProjects, color: '#6B7280' }
   ];
 
@@ -656,7 +657,7 @@ export default function ExecutiveDashboard() {
               <span className="text-slate-700 font-medium">Month:</span>
               <Select 
                 value={selectedMonth?.toString() || "all"} 
-                onValueChange={(value) => setSelectedMonth(value === "all" ? undefined : parseInt(value))}
+                onValueChange={handleMonthChange}
               >
                 <SelectTrigger className="w-36 bg-white border-slate-300 text-slate-900">
                   <SelectValue placeholder="All Months" />
@@ -809,28 +810,28 @@ export default function ExecutiveDashboard() {
         </div>
 
         {/* Executive Charts Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
-          {/* Invoice Sent vs Paid Chart */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-12">
+          {/* Invoice Sent vs Paid Chart - More compact */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
             <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-emerald-50 to-green-100/80">
-              <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-3">
+              <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-3">
                 <div className="p-2 bg-gradient-to-r from-emerald-500 to-green-600 rounded-lg">
-                  <DollarSign className="h-5 w-5 text-white" />
+                  <DollarSign className="h-4 w-4 text-white" />
                 </div>
                 Invoice Sent vs Paid
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-8">
+            <CardContent className="p-4">
               {/* Chart Description */}
-              <div className="mb-6 text-center">
-                <p className="text-slate-600 text-sm">
+              <div className="mb-3 text-center">
+                <p className="text-slate-600 text-xs">
                   Track your invoice collection performance over time
                 </p>
                         </div>
               
               {/* Invoice Chart */}
               {!invoiceChartData || invoiceChartData.length === 0 ? (
-                <div className="h-80 flex items-center justify-center">
+                <div className="h-56 flex items-center justify-center">
                   <div className="text-center text-slate-500">
                     <div className="text-lg font-medium mb-2">📊 Loading Invoice Data...</div>
                     <div className="text-sm">Preparing invoice chart with real-time data</div>
@@ -838,7 +839,7 @@ export default function ExecutiveDashboard() {
                 </div>
               ) : (
                 <>
-                <div className="h-80">
+                <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={invoiceChartData}>
                     <defs>
@@ -1031,6 +1032,8 @@ export default function ExecutiveDashboard() {
             </CardContent>
           </Card>
 
+          {/* Main Content with Smooth Transitions */}
+          <div className={`space-y-8 transition-all duration-300 ease-in-out ${isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'}`}>
           {/* Revenue Overview - Line Chart with Real Data */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
             <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-emerald-50 to-green-100/80">
@@ -1046,8 +1049,8 @@ export default function ExecutiveDashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={invoice.monthlyTrend && invoice.monthlyTrend.length > 0 ? invoice.monthlyTrend.map((month: any) => ({
                     month: month.month,
-                    collected: month.actual || 0,
-                    pending: month.target > 0 ? Math.max(0, month.target - month.actual) : 0
+                    collected: month.paid || 0, // Use 'paid' instead of 'actual'
+                    pending: month.expected > 0 ? Math.max(0, month.expected - month.paid) : 0
                   })) : [
                     { month: 'Jan', collected: metrics.collectedRevenue, pending: metrics.pendingRevenue },
                     { month: 'Feb', collected: metrics.collectedRevenue, pending: metrics.pendingRevenue },
@@ -1118,10 +1121,9 @@ export default function ExecutiveDashboard() {
               </div>
             </CardContent>
           </Card>
-        </div>
 
-        {/* Strategic Charts Section - EXACT replicate from main dashboard */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+            {/* Strategic Charts Section - Takes 2/3 width */}
+            <div className="space-y-6">
           {/* Monthly Performance & Achievement Analysis */}
           <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-indigo-50/30">
             <CardHeader className="bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-t-lg">
@@ -1139,8 +1141,10 @@ export default function ExecutiveDashboard() {
                   <ComposedChart
                     data={invoice.monthlyTrend.map((month: any) => ({
                       ...month,
-                      achievement: month.target > 0 ? Math.round((month.actual / month.target) * 100) : 0,
-                      gap: month.target > 0 ? Math.max(0, month.target - month.actual) : 0
+                      target: month.expected, // Use expected instead of target
+                      actual: month.paid,      // Use paid instead of actual
+                      achievement: month.expected > 0 ? Math.round((month.paid / month.expected) * 100) : 0,
+                      gap: month.expected > 0 ? Math.max(0, month.expected - month.paid) : 0
                     }))}
                     margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
                   >
@@ -1167,7 +1171,7 @@ export default function ExecutiveDashboard() {
                     <YAxis 
                       yAxisId="left"
                       tick={{ fontSize: 12, fill: '#6b7280' }}
-                      tickFormatter={(value) => `KSh ${(value / 1000000).toFixed(1)}M`}
+                          tickFormatter={(value) => `${(value / 1000000).toFixed(1)}M`}
                       axisLine={{ stroke: '#d1d5db' }}
                     />
                     <YAxis 
@@ -1251,7 +1255,7 @@ export default function ExecutiveDashboard() {
                       ))}
                     </Pie>
                     <Tooltip 
-                      formatter={(value: any) => [`KSh ${Number(value).toLocaleString()}`, 'Amount']}
+                          formatter={(value: any) => [`${Number(value).toLocaleString()}`, 'Amount']}
                       contentStyle={{
                         backgroundColor: 'rgba(255, 255, 255, 0.95)',
                         border: 'none',
@@ -1269,7 +1273,7 @@ export default function ExecutiveDashboard() {
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="text-center">
                     <div className="text-2xl font-bold text-gray-800">
-                      KSh {(segmentPerformanceData.reduce((sum, item) => sum + item.value, 0) / 1000000).toFixed(1)}M
+                          {(segmentPerformanceData.reduce((sum, item) => sum + item.value, 0) / 1000000).toFixed(1)}M
                     </div>
                     <div className="text-sm text-gray-600">Total Collected</div>
                   </div>
@@ -1342,8 +1346,8 @@ export default function ExecutiveDashboard() {
             <CardContent className="p-8">
               <div className="space-y-8">
                 <div className="text-center p-6 bg-purple-50 rounded-2xl">
-                  <div className="text-4xl font-bold text-purple-700 mb-3">{metrics.onSupportProjects}</div>
-                  <p className="text-lg text-purple-600 font-medium">Currently on Support</p>
+                      <div className="text-4xl font-bold text-purple-700 mb-3">{metrics.onSLAProjects}</div>
+                      <p className="text-lg text-purple-600 font-medium">Currently on SLA</p>
                 </div>
                 
                 <div className="text-center p-6 bg-green-50 rounded-2xl">
@@ -1355,15 +1359,15 @@ export default function ExecutiveDashboard() {
                   <div className="flex items-center justify-between mb-4">
                     <span className="text-lg font-semibold text-slate-700">Success Rate</span>
                     <span className="text-2xl font-bold text-slate-800">
-                      {formatPercentage(metrics.onSupportProjects, metrics.completedProjects + metrics.onSupportProjects)}%
+                          {formatPercentage(metrics.onSLAProjects, metrics.completedProjects + metrics.onSLAProjects)}%
                     </span>
                   </div>
                   <Progress 
-                    value={formatPercentage(metrics.onSupportProjects, metrics.completedProjects + metrics.onSupportProjects)} 
+                        value={formatPercentage(metrics.onSLAProjects, metrics.completedProjects + metrics.onSLAProjects)} 
                     className="h-4 bg-slate-200"
                   />
                   <p className="text-sm text-slate-600 mt-3 text-center font-medium">
-                    Projects that moved from completed to support
+                        Projects that moved from completed to SLA
                   </p>
                 </div>
               </div>
@@ -1452,6 +1456,8 @@ export default function ExecutiveDashboard() {
               </div>
             </CardContent>
           </Card>
+            </div>
+          </div>
         </div>
       </div>
     </div>

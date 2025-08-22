@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import PriorityBadge from "@/components/ui/priority-badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar, Clock, User } from "lucide-react";
+import { Calendar, Clock, User, CheckCircle, AlertTriangle, CalendarDays } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
 interface TaskCardProps {
@@ -77,28 +77,44 @@ export default function TaskCard({ task }: TaskCardProps) {
   });
 
   const updateBillingStatusMutation = useMutation({
-    mutationFn: async ({ taskId, status }: { taskId: string; status: 'none' | 'to_send' | 'sent' | 'paid' }) => {
-      const response = await apiRequest("PUT", `/api/tasks/${taskId}/billing-status`, { billingStatus: status });
+    mutationFn: async ({ taskId, status }: { taskId: string; status: string }) => {
+      const response = await apiRequest('PUT', `/api/tasks/${taskId}/billing-status`, { billingStatus: status });
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-      // Also invalidate project-specific tasks if we're in project detail page
-      if (task.project?.id) {
-        queryClient.invalidateQueries({ queryKey: ["/api/projects", task.project.id, "tasks"] });
-      }
-      toast({ title: "Success", description: "Billing status updated" });
+      queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
+      toast({ title: 'Billing status updated', description: 'The billing status has been updated successfully.' });
     },
-    onError: (error) => {
-      if (isUnauthorizedError(error)) {
-        toast({ title: "Unauthorized", description: "You are logged out. Logging in again...", variant: "destructive" });
-        setTimeout(() => { window.location.href = "/login"; }, 500);
-        return;
-      }
-      toast({ title: "Error", description: "Failed to update billing status", variant: "destructive" });
+    onError: (error: any) => {
+      console.error('Error updating billing status:', error);
+      toast({ title: 'Failed to update billing status', description: error?.message || 'Unknown error', variant: 'destructive' });
     },
   });
+
+  const setReminderMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      const response = await apiRequest('POST', `/api/tasks/${taskId}/calendar-reminder`);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({ 
+        title: 'Reminder set successfully', 
+        description: `Calendar reminder set for ${new Date(data.reminderDate).toLocaleDateString()}` 
+      });
+    },
+    onError: (error: any) => {
+      console.error('Error setting reminder:', error);
+      toast({ 
+        title: 'Failed to set reminder', 
+        description: error?.message || 'Unknown error', 
+        variant: 'destructive' 
+      });
+    },
+  });
+
+  const handleSetReminder = () => {
+    setReminderMutation.mutate(task.id);
+  };
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase();
@@ -248,20 +264,34 @@ export default function TaskCard({ task }: TaskCardProps) {
           </div>
         )}
 
-        <div className="mt-3">
+        <div className="mt-3 space-y-2">
           <Select value={task.status} onValueChange={handleStatusChange} disabled={updateTaskMutation.isPending}>
             <SelectTrigger className="h-8 text-xs" data-testid={`select-task-status-${task.id}`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-                                      <SelectItem value="todo">Not Started</SelectItem>
+              <SelectItem value="todo">Not Started</SelectItem>
               <SelectItem value="in_progress">In Progress</SelectItem>
-                                      <SelectItem value="client_review">Client Review</SelectItem>
+              <SelectItem value="client_review">Client Review</SelectItem>
               {user?.role !== 'employee' && (
                 <SelectItem value="done">Done</SelectItem>
               )}
             </SelectContent>
           </Select>
+          
+          {/* Google Calendar Reminder Button */}
+          {task.assignedUser?.id === user?.id && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-8 text-xs"
+              onClick={handleSetReminder}
+              disabled={setReminderMutation.isPending}
+            >
+              <Calendar className="h-3 w-3 mr-1" />
+              {setReminderMutation.isPending ? 'Setting...' : 'Set Reminder'}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

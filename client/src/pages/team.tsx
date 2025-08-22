@@ -126,7 +126,7 @@ export default function Team() {
   const { data: employees = [], isLoading: employeesLoading } = useQuery<any[]>({
     queryKey: ['/api/users', 'employee'],
     queryFn: async () => {
-      const params = new URLSearchParams({ role: 'employee', limit: '20' });
+      const params = new URLSearchParams({ role: 'employee' });
       const res = await fetch(`/api/users?${params}`, { credentials: 'include', cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to fetch users');
       return res.json();

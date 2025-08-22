@@ -12,6 +12,8 @@ import {
   invoiceReports,
   monthlyTargets,
   invoiceCollections,
+  subtasks,
+  subtaskDependencies,
   type User,
   type UpsertUser,
   type Team,
@@ -67,6 +69,7 @@ export interface IStorage {
     members: {
       userId: string;
       user: User;
+      role: string;
       totalTasks: number;
       completedTasks: number;
       workloadPercentage: number;
@@ -97,12 +100,19 @@ export interface IStorage {
   getTask(id: string): Promise<(Task & { project: Project; assignedUser: User | null }) | undefined>;
   createTask(task: InsertTask): Promise<Task>;
   updateTask(id: string, task: Partial<InsertTask>): Promise<Task>;
-  getTasksByProject(projectId: string): Promise<(Task & { assignedUser: User | null })[]>;
+  getTasksByProject(projectId: string): Promise<(Task & { assignedUser: User | null; subtasks: any[] })[]>;
   getTasksByUser(userId: string): Promise<(Task & { project: Project })[]>;
   getOverdueTasks(): Promise<(Task & { project: Project; assignedUser: User | null })[]>;
   getUpcomingTasks(days: number): Promise<(Task & { project: Project; assignedUser: User | null })[]>;
   getOverdueTasksForUser(userId: string): Promise<(Task & { project: Project; assignedUser: User | null })[]>;
   getUpcomingTasksForUser(userId: string, days: number): Promise<(Task & { project: Project; assignedUser: User | null })[]>;
+
+  // Subtask operations
+  getSubtasksByMilestone(milestoneId: string): Promise<any[]>;
+  createSubtask(subtask: any): Promise<any>;
+  updateSubtask(id: string, subtask: any): Promise<any>;
+  deleteSubtask(id: string): Promise<void>;
+  getSubtaskDependencies(subtaskId: string): Promise<any[]>;
 
   // Invoice and reporting operations
   getInvoiceReport(year: number, month?: number): Promise<any>; // New method for invoice reports
@@ -159,7 +169,25 @@ export interface IStorage {
   getUpcomingTasksForUser(userId: string, days: number): Promise<(Task & { project: Project; assignedUser: User | null })[]>;
   getOverdueTasks(): Promise<(Task & { project: Project; assignedUser: User | null })[]>;
   getOverdueTasksForUser(userId: string): Promise<(Task & { project: Project; assignedUser: User | null })[]>;
-  getBestPerformingTeam(): Promise<any>;
+  getBestPerformingTeam(): Promise<{
+    teamId: string;
+    team: Team;
+    completionRate: number;
+    onTimeDeliveryRate: number;
+    efficiencyScore: number;
+    priorityBonus: number;
+    overallScore: number;
+    members: {
+      userId: string;
+      user: User;
+      totalTasks: number;
+      completedTasks: number;
+      overdueTasks: number;
+      highPriorityTasks: number;
+      completedHighPriorityTasks: number;
+      workloadPercentage: number;
+    }[];
+  } | null>;
   getTeamsCountForUser(userId: string): Promise<{ count: number }>;
   getSegmentLeader(segment: "academic" | "parastals" | "private"): Promise<any>;
   updateSegmentLeaders(data: {
@@ -330,6 +358,7 @@ export class DatabaseStorage implements IStorage {
     members: {
       userId: string;
       user: User;
+      role: string;
       totalTasks: number;
       completedTasks: number;
       workloadPercentage: number;
@@ -389,6 +418,7 @@ export class DatabaseStorage implements IStorage {
         return {
           userId: member.userId,
           user: member.user,
+          role: member.role || 'member', // Ensure role is never null
           totalTasks,
           completedTasks,
           workloadPercentage
@@ -716,8 +746,9 @@ export class DatabaseStorage implements IStorage {
 
 
 
-  async getTasksByProject(projectId: string): Promise<(Task & { assignedUser: User | null })[]> {
-    return await db
+  async getTasksByProject(projectId: string): Promise<(Task & { assignedUser: User | null; subtasks: any[] })[]> {
+    // First get all tasks (milestones) for the project
+    const projectTasks = await db
       .select()
       .from(tasks)
       .leftJoin(users, eq(tasks.assignedUserId, users.id))
@@ -727,6 +758,44 @@ export class DatabaseStorage implements IStorage {
         ...row.tasks,
         assignedUser: row.users
       })));
+
+    // Then get subtasks for each task
+    const tasksWithSubtasks = await Promise.all(
+      projectTasks.map(async (task) => {
+        const subtasksWithUsers = await db
+          .select({
+            subtask: subtasks,
+            assignedUser: users,
+          })
+          .from(subtasks)
+          .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+          .where(eq(subtasks.milestoneId, task.id))
+          .orderBy(asc(subtasks.createdAt));
+
+        return {
+          ...task,
+          subtasks: subtasksWithUsers.map(row => ({
+            id: row.subtask.id,
+            name: row.subtask.name,
+            description: row.subtask.description,
+            status: row.subtask.status,
+            priority: row.subtask.priority,
+            startDate: row.subtask.startDate,
+            dueDate: row.subtask.dueDate,
+            estimatedHours: row.subtask.estimatedHours,
+            estimatedDays: row.subtask.estimatedDays,
+            actualHours: row.subtask.actualHours,
+            actualDays: row.subtask.actualDays,
+            progressPercent: row.subtask.progressPercent,
+            assignedUserId: row.subtask.assignedUserId,
+            assignedUser: row.assignedUser,
+            completedAt: row.subtask.completedAt
+          }))
+        };
+      })
+    );
+
+    return tasksWithSubtasks;
   }
 
   async getTasksByUser(userId: string): Promise<(Task & { project: Project })[]> {
@@ -837,150 +906,201 @@ export class DatabaseStorage implements IStorage {
   // Invoice and reporting operations
     async getInvoiceReport(year: number, month?: number): Promise<any> {
     try {
-      // Get monthly targets for the year
-      const targets = await this.getMonthlyTargets(year);
-      
-      // Get actual collections based on PAID milestones only (not just completed)
-      // Use the same approach as the working completed-milestones endpoint
-      const allTasks = await db
+      // Get milestone data for the year
+      const allMilestones = await db
         .select({
           id: tasks.id,
-          name: tasks.name,
           feeAmount: tasks.feeAmount,
           billingStatus: tasks.billingStatus,
-          completedAt: tasks.completedAt,
-          projectId: tasks.projectId,
-          projectSegment: projects.segment,
-          projectName: projects.name
+          dueDate: tasks.dueDate,
+          projectSegment: projects.segment
+        })
+        .from(tasks)
+        .innerJoin(projects, eq(tasks.projectId, projects.id))
+        .execute();
+      
+      // SIMPLE LOGIC: Get revenue based on billing status, not due dates
+      
+      // 1. Expected Revenue: Sum of all milestone fees for the year
+      const expectedRevenue = await db
+        .select({
+          segment: projects.segment,
+          totalAmount: sql<number>`COALESCE(SUM(${tasks.feeAmount}), 0)`
         })
         .from(tasks)
         .innerJoin(projects, eq(tasks.projectId, projects.id))
         .where(
           and(
-            eq(tasks.status, 'done'),
+            sql`EXTRACT(YEAR FROM ${tasks.dueDate}) = ${year}`,
+            sql`${tasks.feeAmount} IS NOT NULL AND ${tasks.feeAmount} > 0`
+          )
+        )
+        .groupBy(projects.segment)
+        .execute();
+
+
+
+      // 2. Invoice Sent Revenue: Sum of fees for milestones with billing_status = 'sent'
+      const invoiceSentRevenue = await db
+        .select({
+          segment: projects.segment,
+          totalAmount: sql<number>`COALESCE(SUM(${tasks.feeAmount}), 0)`
+        })
+        .from(tasks)
+        .innerJoin(projects, eq(tasks.projectId, projects.id))
+        .where(
+          and(
+            eq(tasks.billingStatus, 'sent'),
+            sql`${tasks.feeAmount} IS NOT NULL AND ${tasks.feeAmount} > 0`
+          )
+        )
+        .groupBy(projects.segment)
+        .execute();
+
+
+
+      // 3. Collected Revenue: Sum of fees for milestones with billing_status = 'paid'
+      const collectedRevenue = await db
+        .select({
+          segment: projects.segment,
+          totalAmount: sql<number>`COALESCE(SUM(${tasks.feeAmount}), 0)`
+        })
+        .from(tasks)
+        .innerJoin(projects, eq(tasks.projectId, projects.id))
+        .where(
+          and(
             eq(tasks.billingStatus, 'paid'),
             sql`${tasks.feeAmount} IS NOT NULL AND ${tasks.feeAmount} > 0`
           )
         )
+        .groupBy(projects.segment)
         .execute();
 
-      // Process the tasks to get actual collections by month and segment
-      const actualCollections = allTasks.reduce((acc: any[], task: any) => {
-        if (task.completedAt) {
-          const taskDate = new Date(task.completedAt);
-          const taskYear = taskDate.getFullYear();
-          const taskMonth = taskDate.getMonth() + 1;
-          
-          if (taskYear === year && (!month || taskMonth === month)) {
-            acc.push({
-              segment: task.projectSegment || 'private',
-              month: taskMonth,
-              totalAmount: task.feeAmount,
-              milestonesCount: 1,
-              projectName: task.projectName,
-              milestoneName: task.name
-            });
-          }
-        }
-        return acc;
-      }, []);
 
-      // Calculate segment breakdown
-      const segmentTotals = actualCollections.reduce((acc: any, row: any) => {
-        const segment = row.segment || 'private';
-        if (!acc[segment]) {
-          acc[segment] = { actual: 0, target: 0, milestones: [] };
-        }
-        // Convert string amount to number and add properly
-        const amount = parseFloat(row.totalAmount || '0');
-        acc[segment].actual += amount;
-        acc[segment].milestones.push({
-          name: row.milestoneName,
-          project: row.projectName,
-          amount: amount,
-          month: row.month
-        });
-        return acc;
-      }, {});
 
-      // Add targets to segment breakdown
-      targets.forEach((target: any) => {
-        const segment = target.segment;
-        if (!segmentTotals[segment]) {
-          segmentTotals[segment] = { actual: 0, target: 0, milestones: [] };
-        }
-        // Convert string target amount to number
-        const targetAmount = parseFloat(target.targetAmount || '0');
-        segmentTotals[segment].target += targetAmount;
+      // Calculate totals by segment
+      const segments = ['academic', 'parastals', 'private'];
+      const expectedBySegment: any = {};
+      const sentBySegment: any = {};
+      const paidBySegment: any = {};
+
+      segments.forEach(segment => {
+        expectedBySegment[segment] = expectedRevenue.find(r => r.segment === segment)?.totalAmount || 0;
+        sentBySegment[segment] = invoiceSentRevenue.find(r => r.segment === segment)?.totalAmount || 0;
+        paidBySegment[segment] = collectedRevenue.find(r => r.segment === segment)?.totalAmount || 0;
       });
-      
-      // Calculate monthly trend with segment breakdowns
+
+      // Calculate overall totals - FIXED: Convert to numbers before summing
+      const totalExpected: number = Object.values(expectedBySegment).reduce((sum: number, amount: any) => sum + Number(amount || 0), 0);
+      const totalSent: number = Object.values(sentBySegment).reduce((sum: number, amount: any) => sum + Number(amount || 0), 0);
+      const totalPaid: number = Object.values(paidBySegment).reduce((sum: number, amount: any) => sum + Number(amount || 0), 0);
+
+      // Monthly trend with REAL data (12 months) - FIXED: Show actual monthly performance
       const monthlyTrend = [];
       for (let m = 1; m <= 12; m++) {
-        const monthTargets = targets.filter((t: any) => t.month === m);
-        const monthActuals = actualCollections.filter((a: any) => a.month === m);
-        
-        // Calculate targets per segment for this month
-        const monthTargetsBySegment = monthTargets.reduce((acc: any, target: any) => {
-          const segment = target.segment;
-          if (!acc[segment]) acc[segment] = 0;
-          acc[segment] += parseFloat(target.targetAmount) || 0;
-          return acc;
-        }, {});
-        
-        // Calculate actuals per segment for this month
-        const monthActualsBySegment = monthActuals.reduce((acc: any, actual: any) => {
-          const segment = actual.segment;
-          if (!acc[segment]) acc[segment] = 0;
-          acc[segment] += parseFloat(actual.totalAmount) || 0;
-          return acc;
-        }, {});
-        
-        // Ensure all segments have values (default to 0)
-        const academic = monthActualsBySegment.academic || 0;
-        const parastals = monthActualsBySegment.parastals || 0;
-        const private_ = monthActualsBySegment.private || 0;
-        const target = monthTargets.reduce((sum: number, t: any) => sum + (parseFloat(t.targetAmount) || 0), 0);
-        const actual = academic + parastals + private_;
-        
-        if (month === undefined || m <= (month || 12)) {
+        // Get ALL milestones due in this month (regardless of completion status)
+        const monthExpected = await db
+          .select({
+            academic: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'academic' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            parastals: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'parastals' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            private: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'private' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            total: sql<number>`COALESCE(SUM(${tasks.feeAmount}), 0)`
+          })
+          .from(tasks)
+          .innerJoin(projects, eq(tasks.projectId, projects.id))
+          .where(
+            and(
+              sql`EXTRACT(YEAR FROM ${tasks.dueDate}) = ${year}`,
+              sql`EXTRACT(MONTH FROM ${tasks.dueDate}) = ${m}`,
+              sql`${tasks.feeAmount} IS NOT NULL AND ${tasks.feeAmount} > 0`
+              // NO status filter - include ALL milestones for the month
+            )
+          )
+          .execute();
+
+        // Get milestones due this month with 'sent' billing status
+        const monthSent = await db
+          .select({
+            academic: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'academic' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            parastals: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'parastals' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            private: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'private' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            total: sql<number>`COALESCE(SUM(${tasks.feeAmount}), 0)`
+          })
+          .from(tasks)
+          .innerJoin(projects, eq(tasks.projectId, projects.id))
+          .where(
+            and(
+              sql`EXTRACT(YEAR FROM ${tasks.dueDate}) = ${year}`,
+              sql`EXTRACT(MONTH FROM ${tasks.dueDate}) = ${m}`,
+              eq(tasks.billingStatus, 'sent'),
+              sql`${tasks.feeAmount} IS NOT NULL AND ${tasks.feeAmount} > 0`
+              // NO status filter - include ALL milestones for the month
+            )
+          )
+          .execute();
+
+        // Get milestones due this month with 'paid' billing status
+        const monthPaid = await db
+          .select({
+            academic: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'academic' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            parastals: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'parastals' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            private: sql<number>`COALESCE(SUM(CASE WHEN ${projects.segment} = 'private' THEN ${tasks.feeAmount} ELSE 0 END), 0)`,
+            total: sql<number>`COALESCE(SUM(${tasks.feeAmount}), 0)`
+          })
+          .from(tasks)
+          .innerJoin(projects, eq(tasks.projectId, projects.id))
+          .where(
+            and(
+              sql`EXTRACT(YEAR FROM ${tasks.dueDate}) = ${year}`,
+              sql`EXTRACT(MONTH FROM ${tasks.dueDate}) = ${m}`,
+              eq(tasks.billingStatus, 'paid'),
+              sql`${tasks.feeAmount} IS NOT NULL AND ${tasks.feeAmount} > 0`
+              // NO status filter - include ALL milestones for the month
+            )
+          )
+          .execute();
+
           monthlyTrend.push({
             month: new Date(year, m - 1).toLocaleDateString('en-US', { month: 'long' }),
-            target,
-            actual,
-            academic,
-            parastals,
-            private: private_
+            expected: Number(monthExpected[0]?.total || 0), // Total milestones due this month
+            sent: Number(monthSent[0]?.total || 0),         // Milestones due this month with 'sent' status
+            paid: Number(monthPaid[0]?.total || 0),         // Milestones due this month with 'paid' status
+            // Segment breakdowns based on due dates (not completion dates)
+            academic: Number(monthExpected[0]?.academic || 0),
+            parastals: Number(monthExpected[0]?.parastals || 0),
+            private: Number(monthExpected[0]?.private || 0)
           });
-        }
       }
-
-      // Calculate overall totals
-      const totalTarget = targets.reduce((sum: number, t: any) => sum + (parseFloat(t.targetAmount) || 0), 0);
-      const totalActual = actualCollections.reduce((sum: number, a: any) => sum + (parseFloat(a.totalAmount) || 0), 0);
 
       const result = {
         year,
         month,
         monthlyTargets: {
-          academic: segmentTotals.academic?.target || 0,
-          parastals: segmentTotals.parastals?.target || 0,
-          private: segmentTotals.private?.target || 0,
-          total: totalTarget
+          academic: expectedBySegment.academic || 0,
+          parastals: expectedBySegment.parastals || 0,
+          private: expectedBySegment.private || 0,
+          total: totalExpected
+        },
+        invoiceSent: {
+          academic: sentBySegment.academic || 0,
+          parastals: sentBySegment.parastals || 0,
+          private: sentBySegment.private || 0,
+          total: totalSent
         },
         actualCollections: {
-          academic: segmentTotals.academic?.actual || 0,
-          parastals: segmentTotals.parastals?.actual || 0,
-          private: segmentTotals.private?.actual || 0,
-          total: totalActual
+          academic: paidBySegment.academic || 0,
+          parastals: paidBySegment.parastals || 0,
+          private: paidBySegment.private || 0,
+          total: totalPaid
         },
-        segmentBreakdown: Object.keys(segmentTotals).map(segment => ({
+        segmentBreakdown: segments.map(segment => ({
           segment: segment.charAt(0).toUpperCase() + segment.slice(1),
-          target: segmentTotals[segment].target,
-          actual: segmentTotals[segment].actual,
-          percentage: segmentTotals[segment].target > 0 ? 
-            Math.round((segmentTotals[segment].actual / segmentTotals[segment].target) * 100) : 0,
-          milestones: segmentTotals[segment].milestones
+          expected: expectedBySegment[segment],
+          sent: sentBySegment[segment],
+          paid: paidBySegment[segment],
+          percentage: expectedBySegment[segment] > 0 ? 
+            Math.round((paidBySegment[segment] / expectedBySegment[segment]) * 100) : 0,
+          milestones: [] // Simplified for now
         })),
         monthlyTrend
       };
@@ -1128,7 +1248,7 @@ export class DatabaseStorage implements IStorage {
         await db.insert(monthlyTargets).values(targetsToInsert).execute();
       }
 
-      console.log(`Monthly targets calculated and saved for year ${year}. ${targetsToInsert.length} targets created.`);
+
     } catch (error) {
       console.error('Error calculating monthly targets:', error);
       throw error;
@@ -1138,21 +1258,21 @@ export class DatabaseStorage implements IStorage {
   async createInvoiceReport(invoice: any): Promise<any> {
     // This method should be implemented when we have the actual invoice_reports table
     // For now, return a placeholder
-    console.log("Creating invoice report:", invoice);
+
     return { id: 'placeholder', ...invoice };
   }
 
   async updateInvoiceStatus(invoiceId: string, status: string): Promise<any> {
     // This method should be implemented when we have the actual invoice_reports table
     // For now, return a placeholder
-    console.log("Updating invoice status:", invoiceId, status);
+
     return { id: invoiceId, status, updatedAt: new Date() };
   }
 
   async recordInvoiceCollection(collection: any): Promise<any> {
     // This method should be implemented when we have the actual invoice_collections table
     // For now, return a placeholder
-    console.log("Recording invoice collection:", collection);
+
     return { id: 'placeholder', ...collection, createdAt: new Date() };
   }
 
@@ -1633,49 +1753,95 @@ export class DatabaseStorage implements IStorage {
     team: Team;
     completionRate: number;
     onTimeDeliveryRate: number;
+    efficiencyScore: number;
+    priorityBonus: number;
     overallScore: number;
     members: {
       userId: string;
       user: User;
       totalTasks: number;
       completedTasks: number;
+      overdueTasks: number;
+      highPriorityTasks: number;
+      completedHighPriorityTasks: number;
       workloadPercentage: number;
     }[];
   } | null> {
-    // Get all teams with their task performance metrics
+    // Get all teams with their task performance metrics - FIXED: More accurate calculations
     const teamMetrics = await db
       .select({
         teamId: teams.id,
         team: teams,
         totalTasks: count(tasks.id),
-        completedTasks: sql<number>`SUM(CASE WHEN ${tasks.status} = 'done' THEN 1 ELSE 0 END)`,
-        onTimeTasks: sql<number>`SUM(CASE WHEN ${tasks.status} = 'done' AND ${tasks.dueDate} >= ${tasks.updatedAt} THEN 1 ELSE 0 END)`,
+        completedTasks: sql<number>`SUM(CASE WHEN ${tasks.status} IN ('done', 'finished') THEN 1 ELSE 0 END)`,
+        onTimeTasks: sql<number>`SUM(CASE WHEN ${tasks.status} IN ('done', 'finished') AND ${tasks.dueDate} >= ${tasks.completedAt} THEN 1 ELSE 0 END)`,
+        overdueTasks: sql<number>`SUM(CASE WHEN ${tasks.status} NOT IN ('done', 'finished', 'cancelled') AND ${tasks.dueDate} < CURRENT_DATE THEN 1 ELSE 0 END)`,
+        highPriorityTasks: sql<number>`SUM(CASE WHEN ${tasks.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
+        completedHighPriorityTasks: sql<number>`SUM(CASE WHEN ${tasks.status} IN ('done', 'finished') AND ${tasks.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
       })
       .from(teams)
       .leftJoin(projects, eq(teams.id, projects.teamId))
       .leftJoin(tasks, eq(projects.id, tasks.projectId))
+      .where(
+        and(
+          sql`${tasks.id} IS NOT NULL`, // Only teams with actual tasks
+          sql`${tasks.status} NOT IN ('cancelled', 'on_hold')` // Exclude cancelled/on-hold tasks
+        )
+      )
       .groupBy(teams.id)
-      .having(sql`COUNT(${tasks.id}) > 0`)
       .execute();
 
     if (teamMetrics.length === 0) {
       return null;
     }
 
-    // Calculate performance scores
+    // Calculate performance scores with improved metrics - FIXED: Better scoring algorithm
     const teamsWithScores = teamMetrics.map(team => {
-      const completionRate = team.totalTasks > 0 ? (Number(team.completedTasks) / team.totalTasks) * 100 : 0;
-      const onTimeDeliveryRate = Number(team.completedTasks) > 0 ? (Number(team.onTimeTasks) / Number(team.completedTasks)) * 100 : 0;
-      const overallScore = (completionRate * 0.6) + (onTimeDeliveryRate * 0.4); // 60% completion, 40% on-time
+      const totalTasks = Number(team.totalTasks);
+      const completedTasks = Number(team.completedTasks);
+      const onTimeTasks = Number(team.onTimeTasks);
+      const overdueTasks = Number(team.overdueTasks);
+      const highPriorityTasks = Number(team.highPriorityTasks);
+      const completedHighPriorityTasks = Number(team.completedHighPriorityTasks);
+
+      // Completion Rate: Weighted by priority (high priority tasks count more)
+      const completionRate = totalTasks > 0 
+        ? ((completedTasks * 1.0) + (completedHighPriorityTasks * 0.5)) / (totalTasks + (highPriorityTasks * 0.5)) * 100
+        : 0;
+
+      // On-Time Delivery Rate: Completed tasks that were on time
+      const onTimeDeliveryRate = completedTasks > 0 
+        ? (onTimeTasks / completedTasks) * 100 
+        : 0;
+
+      // Efficiency Score: Penalty for overdue tasks
+      const efficiencyScore = totalTasks > 0 
+        ? Math.max(0, 100 - (overdueTasks / totalTasks) * 50) // Max 50% penalty for overdue tasks
+        : 100;
+
+      // Priority Completion Bonus: Extra points for completing high-priority tasks
+      const priorityBonus = highPriorityTasks > 0 
+        ? (completedHighPriorityTasks / highPriorityTasks) * 20 
+        : 0;
+
+      // Overall Score: Weighted combination of all metrics
+      const overallScore = Math.min(100, 
+        (completionRate * 0.4) +           // 40% completion rate
+        (onTimeDeliveryRate * 0.3) +       // 30% on-time delivery
+        (efficiencyScore * 0.2) +          // 20% efficiency (no overdue penalty)
+        (priorityBonus * 0.1)              // 10% priority completion bonus
+      );
 
       return {
         teamId: team.teamId,
         team: team.team,
-        totalTasks: team.totalTasks,
-        completedTasks: Number(team.completedTasks),
-        completionRate,
-        onTimeDeliveryRate,
-        overallScore,
+        totalTasks,
+        completedTasks,
+        completionRate: Math.round(completionRate),
+        onTimeDeliveryRate: Math.round(onTimeDeliveryRate),
+        efficiencyScore: Math.round(efficiencyScore),
+        priorityBonus: Math.round(priorityBonus),
+        overallScore: Math.round(overallScore),
       };
     });
 
@@ -1684,28 +1850,53 @@ export class DatabaseStorage implements IStorage {
       current.overallScore > best.overallScore ? current : best
     );
 
-    // Get members of the best team
+    // Get members of the best team with improved workload calculation - FIXED: Better member metrics
     const members = await this.getTeamMembers(bestTeam.teamId);
     const memberWorkload = await Promise.all(
       members.map(async (member) => {
         const memberTasks = await db
           .select({
             totalTasks: count(tasks.id),
-            completedTasks: sql<number>`SUM(CASE WHEN ${tasks.status} = 'done' THEN 1 ELSE 0 END)`,
+            completedTasks: sql<number>`SUM(CASE WHEN ${tasks.status} IN ('done', 'finished') THEN 1 ELSE 0 END)`,
+            overdueTasks: sql<number>`SUM(CASE WHEN ${tasks.status} NOT IN ('done', 'finished', 'cancelled') AND ${tasks.dueDate} < CURRENT_DATE THEN 1 ELSE 0 END)`,
+            highPriorityTasks: sql<number>`SUM(CASE WHEN ${tasks.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
+            completedHighPriorityTasks: sql<number>`SUM(CASE WHEN ${tasks.status} IN ('done', 'finished') AND ${tasks.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
           })
           .from(tasks)
-          .where(eq(tasks.assignedUserId, member.userId))
+          .where(
+            and(
+              eq(tasks.assignedUserId, member.userId),
+              sql`${tasks.status} NOT IN ('cancelled', 'on_hold')`
+            )
+          )
           .execute();
 
-        const taskData = memberTasks[0] || { totalTasks: 0, completedTasks: 0 };
+        const taskData = memberTasks[0] || { 
+          totalTasks: 0, 
+          completedTasks: 0, 
+          overdueTasks: 0, 
+          highPriorityTasks: 0, 
+          completedHighPriorityTasks: 0 
+        };
+
+        // Calculate weighted workload percentage - FIXED: Better workload calculation
+        const totalWeightedTasks = Number(taskData.totalTasks) + (Number(taskData.highPriorityTasks) * 0.5);
+        const completedWeightedTasks = Number(taskData.completedTasks) + (Number(taskData.completedHighPriorityTasks) * 0.5);
+        
+        const workloadPercentage = totalWeightedTasks > 0 
+          ? Math.round((completedWeightedTasks / totalWeightedTasks) * 100)
+          : 0;
+
         return {
           userId: member.userId,
           user: member.user,
-          totalTasks: taskData.totalTasks,
+          role: member.role || 'member',
+          totalTasks: Number(taskData.totalTasks),
           completedTasks: Number(taskData.completedTasks),
-          workloadPercentage: taskData.totalTasks > 0 
-            ? Math.round((Number(taskData.completedTasks) / taskData.totalTasks) * 100)
-            : 0,
+          overdueTasks: Number(taskData.overdueTasks),
+          highPriorityTasks: Number(taskData.highPriorityTasks),
+          completedHighPriorityTasks: Number(taskData.completedHighPriorityTasks),
+          workloadPercentage,
         };
       })
     );
@@ -1713,9 +1904,11 @@ export class DatabaseStorage implements IStorage {
     return {
       teamId: bestTeam.teamId,
       team: bestTeam.team,
-      completionRate: Math.round(bestTeam.completionRate),
-      onTimeDeliveryRate: Math.round(bestTeam.onTimeDeliveryRate),
-      overallScore: Math.round(bestTeam.overallScore),
+      completionRate: bestTeam.completionRate,
+      onTimeDeliveryRate: bestTeam.onTimeDeliveryRate,
+      efficiencyScore: bestTeam.efficiencyScore,
+      priorityBonus: bestTeam.priorityBonus,
+      overallScore: bestTeam.overallScore,
       members: memberWorkload,
     };
   }
@@ -1816,9 +2009,7 @@ export class DatabaseStorage implements IStorage {
       await this.setSystemConfig('financeEmail', data.financeEmail, 'Finance department email for notifications');
       await this.setSystemConfig('accountManagerEmail', data.accountManagerEmail, 'Account manager email for project forecasts');
       
-      console.log('Segment leaders updated successfully.');
-      console.log('Finance Email:', data.financeEmail);
-      console.log('Account Manager Email:', data.accountManagerEmail);
+
     } catch (error) {
       console.error('Error updating segment leaders:', error);
       throw error;
@@ -1972,6 +2163,142 @@ export class DatabaseStorage implements IStorage {
       financeEmail: financeEmail || '',
       accountManagerEmail: accountManagerEmail || '',
     };
+  }
+
+  // Subtask operations
+  async getSubtasksByMilestone(milestoneId: string): Promise<any[]> {
+    const result = await db
+      .select({
+        subtask: subtasks,
+        assignedUser: users,
+      })
+      .from(subtasks)
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(eq(subtasks.milestoneId, milestoneId))
+      .orderBy(asc(subtasks.createdAt));
+
+    // Get dependencies for each subtask
+    const subtasksWithDeps = await Promise.all(
+      result.map(async (row) => {
+        const deps = await this.getSubtaskDependencies(row.subtask.id);
+        return {
+          ...row.subtask,
+          assignedUser: row.assignedUser,
+          dependencies: deps.map(d => d.dependsOnSubtaskId)
+        };
+      })
+    );
+
+    return subtasksWithDeps;
+  }
+
+  async createSubtask(subtask: any): Promise<any> {
+    const [newSubtask] = await db
+      .insert(subtasks)
+      .values({
+        name: subtask.name,
+        description: subtask.description || null,
+        status: subtask.status || 'not_started',
+        priority: subtask.priority || 'medium',
+        startDate: subtask.startDate || null,
+        dueDate: subtask.dueDate || null,
+        estimatedHours: subtask.estimatedHours || null,
+        estimatedDays: subtask.estimatedDays || null,
+        actualHours: subtask.actualHours || 0,
+        actualDays: subtask.actualDays || 0,
+        progressPercent: subtask.progressPercent || 0,
+        milestoneId: subtask.milestoneId,
+        assignedUserId: subtask.assignedUserId || null,
+        createdById: subtask.createdById,
+      })
+      .returning();
+    return newSubtask;
+  }
+
+  async updateSubtask(id: string, subtask: any): Promise<any> {
+    const updateData: any = { updatedAt: new Date() };
+    
+    if (subtask.name !== undefined) updateData.name = subtask.name;
+    if (subtask.description !== undefined) updateData.description = subtask.description;
+    if (subtask.status !== undefined) updateData.status = subtask.status;
+    if (subtask.priority !== undefined) updateData.priority = subtask.priority;
+    if (subtask.startDate !== undefined) updateData.startDate = subtask.startDate;
+    if (subtask.dueDate !== undefined) updateData.dueDate = subtask.dueDate;
+    if (subtask.estimatedHours !== undefined) updateData.estimatedHours = subtask.estimatedHours;
+    if (subtask.estimatedDays !== undefined) updateData.estimatedDays = subtask.estimatedDays;
+    if (subtask.actualHours !== undefined) updateData.actualHours = subtask.actualHours;
+    if (subtask.actualDays !== undefined) updateData.actualDays = subtask.actualDays;
+    if (subtask.progressPercent !== undefined) updateData.progressPercent = subtask.progressPercent;
+    if (subtask.assignedUserId !== undefined) updateData.assignedUserId = subtask.assignedUserId;
+    if (subtask.completedAt !== undefined) updateData.completedAt = subtask.completedAt;
+
+    const [updatedSubtask] = await db
+      .update(subtasks)
+      .set(updateData)
+      .where(eq(subtasks.id, id))
+      .returning();
+      
+    // Update milestone progress after subtask update
+    if (updatedSubtask && updatedSubtask.milestoneId) {
+      await this.updateMilestoneProgressFromSubtasks(updatedSubtask.milestoneId);
+    }
+    
+    return updatedSubtask;
+  }
+
+  async deleteSubtask(id: string): Promise<void> {
+    // Get subtask info before deletion to update milestone progress
+    const [subtask] = await db
+      .select({ milestoneId: subtasks.milestoneId })
+      .from(subtasks)
+      .where(eq(subtasks.id, id));
+    
+    // Delete dependencies first
+    await db
+      .delete(subtaskDependencies)
+      .where(or(
+        eq(subtaskDependencies.subtaskId, id),
+        eq(subtaskDependencies.dependsOnSubtaskId, id)
+      ));
+    
+    // Delete the subtask
+    await db
+      .delete(subtasks)
+      .where(eq(subtasks.id, id));
+    
+    // Update milestone progress
+    if (subtask?.milestoneId) {
+      await this.updateMilestoneProgressFromSubtasks(subtask.milestoneId);
+    }
+  }
+
+  async getSubtaskDependencies(subtaskId: string): Promise<any[]> {
+    return await db
+      .select()
+      .from(subtaskDependencies)
+      .where(eq(subtaskDependencies.subtaskId, subtaskId));
+  }
+
+  async updateMilestoneProgressFromSubtasks(milestoneId: string): Promise<void> {
+    // Get all subtasks for this milestone
+    const result = await db
+      .select({
+        total: count(),
+        completed: sql<number>`COUNT(*) FILTER (WHERE ${subtasks.status} = 'finished')`,
+      })
+      .from(subtasks)
+      .where(eq(subtasks.milestoneId, milestoneId));
+
+    const stats = result[0];
+    if (stats && Number(stats.total) > 0) {
+      const progress = Math.round((Number(stats.completed) / Number(stats.total)) * 100);
+      
+      // Update the milestone's progress
+      await db
+        .update(tasks)
+        .set({ progressPercent: progress, updatedAt: new Date() })
+        .where(eq(tasks.id, milestoneId));
+    }
   }
 }
 

@@ -19,7 +19,8 @@ import {
   ArrowLeft, 
   Edit,
   Trash2,
-  CheckCircle
+  CheckCircle,
+  Clock
 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -187,10 +188,50 @@ export default function ProjectDetail() {
   };
 
   // Calculate financial metrics
+  // NOTE: paidAmount only counts milestones with billingStatus === 'paid' (actual payments received)
+  // milestones with billingStatus === 'sent' are counted as "invoice sent" but not as "collected revenue"
   const totalProjectValue = parseFloat(project.budget || '0');
   const paidAmount = milestones
-    .filter((m: any) => m.billingStatus === 'sent') // Changed from 'paid' to 'sent'
+    .filter((m: any) => m.billingStatus === 'paid')
     .reduce((sum: number, m: any) => sum + parseFloat(m.feeAmount || '0'), 0);
+
+  // Calculate weight-based progress for milestones
+  const calculateWeightBasedProgress = () => {
+    if (milestones.length === 0) return 0;
+    
+    let totalWeight = 0;
+    let completedWeight = 0;
+    
+    milestones.forEach((milestone: any) => {
+      // Calculate weight based on priority
+      let weight = 2; // default medium weight
+      switch (milestone.priority) {
+        case 'low':
+          weight = 1;
+          break;
+        case 'medium':
+          weight = 2;
+          break;
+        case 'high':
+          weight = 3;
+          break;
+        case 'critical':
+          weight = 4;
+          break;
+      }
+      
+      totalWeight += weight;
+      
+      // If milestone is completed, add its weight to completed total
+      if (milestone.status === 'done') {
+        completedWeight += weight;
+      }
+    });
+    
+    return totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 0;
+  };
+
+  const weightBasedProgress = calculateWeightBasedProgress();
 
   // Milestone status counts for summary cards
   const milestoneStats = {
@@ -278,7 +319,23 @@ export default function ProjectDetail() {
                 <div className="flex items-center text-sm">
                   <Calendar className="h-4 w-4 mr-2 text-gray-400" />
                   <span>
-                    {new Date(project.startDate).toLocaleDateString()} - {new Date(project.endDate).toLocaleDateString()}
+                    <span className="font-medium">Start:</span> {new Date(project.startDate).toLocaleDateString()} - <span className="font-medium">End:</span> {new Date(project.endDate).toLocaleDateString()}
+                  </span>
+                </div>
+
+                {/* Project Duration */}
+                <div className="flex items-center text-sm">
+                  <Clock className="h-4 w-4 mr-2 text-gray-400" />
+                  <span>
+                    <span className="font-medium">Duration:</span> {
+                      (() => {
+                        const start = new Date(project.startDate);
+                        const end = new Date(project.endDate);
+                        const diffTime = Math.abs(end.getTime() - start.getTime());
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        return `${diffDays} days`;
+                      })()
+                    }
                   </span>
                 </div>
 
@@ -318,19 +375,30 @@ export default function ProjectDetail() {
               <div className="space-y-4">
                 <h4 className="font-medium text-gray-900">Milestone Progress</h4>
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>Weight-Based Progress:</span>
+                    <span className="font-medium text-blue-600">{weightBasedProgress}%</span>
+                  </div>
+                  <Progress 
+                    value={weightBasedProgress} 
+                    className="h-2" 
+                  />
+                  <div className="text-xs text-gray-500 mb-3">
+                    Progress calculated by milestone priority weights (Critical=4, High=3, Medium=2, Low=1)
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
                     <span>Total:</span>
                     <span className="font-medium">{milestoneStats.total}</span>
                   </div>
-                  <div className="flex justify-between text-sm">
+                  <div className="flex items-center justify-between text-sm">
                     <span>Completed:</span>
                     <span className="font-medium text-green-600">{milestoneStats.done}</span>
                   </div>
-                  <div className="flex justify-between text-sm">
+                  <div className="flex items-center justify-between text-sm">
                     <span>In Progress:</span>
                     <span className="font-medium text-blue-600">{milestoneStats.inProgress}</span>
                   </div>
-                  <div className="flex justify-between text-sm">
+                  <div className="flex items-center justify-between text-sm">
                     <span>Pending:</span>
                     <span className="font-medium">{milestoneStats.todo}</span>
                   </div>
@@ -339,6 +407,7 @@ export default function ProjectDetail() {
                   value={milestoneStats.total > 0 ? (milestoneStats.done / milestoneStats.total) * 100 : 0} 
                   className="h-2" 
                 />
+                <p className="text-xs text-gray-500">Count-based progress: {milestoneStats.total > 0 ? Math.round((milestoneStats.done / milestoneStats.total) * 100) : 0}%</p>
               </div>
 
               {/* Team Information */}

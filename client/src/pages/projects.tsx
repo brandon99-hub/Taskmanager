@@ -12,7 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangle, Search, Filter, Grid3X3, Table } from "lucide-react";
+import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangle, Search, Filter, Grid3X3, Table, Clock } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -352,7 +352,9 @@ export default function Projects() {
                   <th className="text-left p-3">Contract Amount</th>
                   <th className="text-left p-3">Paid</th>
                   <th className="text-left p-3">Milestones</th>
-                  <th className="text-left p-3">Dates</th>
+                  <th className="text-left p-3">Start Date</th>
+                  <th className="text-left p-3">End Date</th>
+                  <th className="text-left p-3">Duration</th>
                   <th className="text-left p-3">Actions</th>
                 </tr>
               </thead>
@@ -452,10 +454,21 @@ export default function Projects() {
                         {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-900">
-                        <div>
-                          <div>{new Date(project.startDate).toLocaleDateString()}</div>
-                          <div className="text-gray-500">{new Date(project.endDate).toLocaleDateString()}</div>
-                        </div>
+                        {new Date(project.startDate).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-4 text-sm text-gray-900">
+                        {new Date(project.endDate).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-4 text-sm text-gray-900">
+                        <span className="font-medium">
+                          {(() => {
+                            const start = new Date(project.startDate);
+                            const end = new Date(project.endDate);
+                            const diffTime = Math.abs(end.getTime() - start.getTime());
+                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                            return `${diffDays} days`;
+                          })()}
+                        </span>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2">
@@ -603,7 +616,23 @@ export default function Projects() {
                         <div className="flex items-center" data-testid={`text-project-dates-${project.id}`}>
                           <Calendar className="h-4 w-4 mr-2" />
                           <span>
-                            {new Date(project.startDate).toLocaleDateString()} - {new Date(project.endDate).toLocaleDateString()}
+                            <span className="font-medium">Start:</span> {new Date(project.startDate).toLocaleDateString()} - <span className="font-medium">End:</span> {new Date(project.endDate).toLocaleDateString()}
+                          </span>
+                        </div>
+
+                        {/* Project Duration */}
+                        <div className="flex items-center">
+                          <Clock className="h-4 w-4 mr-2" />
+                          <span className="text-sm text-gray-600">
+                            <span className="font-medium">Duration:</span> {
+                              (() => {
+                                const start = new Date(project.startDate);
+                                const end = new Date(project.endDate);
+                                const diffTime = Math.abs(end.getTime() - start.getTime());
+                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                return `${diffDays} days`;
+                              })()
+                            }
                           </span>
                         </div>
 
@@ -644,7 +673,7 @@ export default function Projects() {
                                 Outstanding: KSh {(parseFloat(project.budget || '0') - (project.paidAmount || 0)).toLocaleString()}
                               </span>
                               <span className={`font-medium ${(project.paidAmount || 0) >= parseFloat(project.budget || '0') ? 'text-green-600' : 'text-orange-600'}`}>
-                                {Math.round(((project.paidAmount || 0) / parseFloat(project.budget || '1')) * 100)}% funded
+                                {Math.round(((project.paidAmount || 0) / parseFloat(project.budget || '1')) * 100)}% paid
                               </span>
                             </div>
                           )}

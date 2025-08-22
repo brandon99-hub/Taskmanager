@@ -113,7 +113,7 @@ export default function Reports() {
         body: JSON.stringify({
           reportType: apiReportType,
           format: 'excel',
-          filters: {} // TODO: Add filter support later
+          filters: {}
         })
       });
 

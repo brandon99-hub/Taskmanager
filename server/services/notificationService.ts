@@ -24,7 +24,7 @@ export class NotificationService {
     private emailSvc = emailService,
     private storageInstance = storage
   ) {}
-  private readonly DEBUG = process.env.NOTIFICATIONS_DEBUG === 'true';
+
 
   /**
    * Send a task assignment notification
@@ -38,18 +38,15 @@ export class NotificationService {
     }
 
     try {
-      if (this.DEBUG) console.log(`Starting notification process for task ${task.id} assigned to user ${user.email}`);
+  
       
       // Get user notification preferences
       const preferences = await this.getUserNotificationPreferences(user.id);
-      if (this.DEBUG) console.log(`User ${user.email} preferences:`, {
-        inAppTaskAssigned: preferences.inAppTaskAssigned,
-        emailTaskAssigned: preferences.emailTaskAssigned
-      });
+
       
       // Send in-app notification if enabled
       if (preferences.inAppTaskAssigned) {
-        if (this.DEBUG) console.log(`Creating in-app notification for user ${user.email}`);
+
         await this.createInAppNotification({
           userId: user.id,
           title: 'New Task Assigned',
@@ -57,18 +54,18 @@ export class NotificationService {
           type: NotificationType.TASK_ASSIGNED,
           relatedId: task.id
         });
-        if (this.DEBUG) console.log(`In-app notification created successfully for user ${user.email}`);
+
       }
 
       // Send email notification if enabled
       if (preferences.emailTaskAssigned) {
-        if (this.DEBUG) console.log(`Sending email notification to ${user.email}`);
+
         const emailData = this.buildTaskAssignedEmailData(context, preferences);
         const emailResult = await this.emailSvc.sendTaskAssignedEmail(emailData);
-        if (this.DEBUG) console.log(`Email notification result for ${user.email}:`, emailResult);
+
       }
 
-      if (this.DEBUG) console.log(`Task assigned notifications completed for task ${task.id} to user ${user.email}`);
+      
     } catch (error) {
       console.error('Error sending task assigned notification:', error);
     }
@@ -105,7 +102,7 @@ export class NotificationService {
         await this.emailSvc.sendTaskDueSoonEmail(emailData);
       }
 
-      if (this.DEBUG) console.log(`Task due soon notifications sent for task ${task.id} to user ${user.id}`);
+
     } catch (error) {
       console.error('Error sending task due soon notification:', error);
     }
@@ -142,7 +139,7 @@ export class NotificationService {
         await this.emailSvc.sendTaskOverdueEmail(emailData);
       }
 
-      if (this.DEBUG) console.log(`Task overdue notifications sent for task ${task.id} to user ${user.id}`);
+
     } catch (error) {
       console.error('Error sending task overdue notification:', error);
     }
@@ -179,7 +176,7 @@ export class NotificationService {
         await this.emailSvc.sendProjectDeadlineEmail(emailData);
       }
 
-      if (this.DEBUG) console.log(`Project deadline notifications sent for project ${project.id} to user ${user.id}`);
+
     } catch (error) {
       console.error('Error sending project deadline notification:', error);
     }
@@ -226,7 +223,7 @@ export class NotificationService {
         }
       }
       
-      if (this.DEBUG) console.log('Smart due soon notification check completed');
+
     } catch (error) {
       console.error('Error checking due soon notifications:', error);
     }
@@ -287,7 +284,7 @@ export class NotificationService {
    * Manual trigger for due soon notification check (API endpoint can call this)
    */
   async manualDueSoonCheck(): Promise<{ processed: number; sent: number }> {
-    if (this.DEBUG) console.log('Manual due soon notification check triggered');
+    
     
     let processed = 0;
     let sent = 0;
@@ -327,7 +324,7 @@ export class NotificationService {
         }
       }
       
-      if (this.DEBUG) console.log(`Manual due soon check completed: ${processed} tasks processed, ${sent} notifications sent`);
+
       return { processed, sent };
     } catch (error) {
       console.error('Error in manual due soon check:', error);
@@ -339,7 +336,7 @@ export class NotificationService {
    * Manual trigger for overdue notification check (API endpoint can call this)
    */
   async manualOverdueCheck(): Promise<{ processed: number; sent: number }> {
-    if (this.DEBUG) console.log('Manual overdue notification check triggered');
+    
     
     let processed = 0;
     let sent = 0;
@@ -379,7 +376,7 @@ export class NotificationService {
         }
       }
       
-      if (this.DEBUG) console.log(`Manual overdue check completed: ${processed} tasks processed, ${sent} notifications sent`);
+
       return { processed, sent };
     } catch (error) {
       console.error('Error in manual overdue check:', error);
