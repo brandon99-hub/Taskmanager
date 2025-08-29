@@ -1,4 +1,5 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config();
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
@@ -8,6 +9,17 @@ import { setupCSRFProtection } from "./middleware/csrf";
 import { setupRateLimiting } from "./middleware/rateLimit";
 import { auditMiddleware, requestTimingMiddleware } from "./middleware/audit";
 import logger from "./utils/logger";
+
+// Global error handlers
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
 
 const app = express();
 
@@ -55,10 +67,11 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  const server = await registerRoutes(app);
+  try {
+    const server = await registerRoutes(app);
 
-  // CSRF protection (after routes setup)
-  setupCSRFProtection(app);
+    // CSRF protection (after routes setup)
+    setupCSRFProtection(app);
 
   // Enhanced error handler with security logging
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
@@ -104,7 +117,10 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || '5000', 10);
   const host = process.env.NODE_ENV === 'development' ? 'localhost' : '0.0.0.0';
   
-  server.listen(port, host, () => {
-    log(`serving on http://${host}:${port}`);
-  });
+    server.listen(port, host, () => {
+      log(`serving on http://${host}:${port}`);
+    });
+  } catch (error) {
+    process.exit(1);
+  }
 })();

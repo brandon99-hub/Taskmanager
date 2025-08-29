@@ -89,6 +89,12 @@ export default function InvoiceReport() {
       private: data.monthlyTargets?.private || 0,
       total: data.monthlyTargets?.total || 0
     },
+    invoiceSent: {
+      academic: data.invoiceSent?.academic || 0,
+      parastals: data.invoiceSent?.parastals || 0,
+      private: data.invoiceSent?.private || 0,
+      total: data.invoiceSent?.total || 0
+    },
     actualCollections: {
       academic: data.actualCollections?.academic || 0,
       parastals: data.actualCollections?.parastals || 0,
@@ -136,12 +142,12 @@ export default function InvoiceReport() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="animate-pulse space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="h-24 bg-gray-200 rounded-lg"></div>
-              ))}
-            </div>
+                      <div className="animate-pulse space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="h-24 bg-gray-200 rounded-lg"></div>
+                ))}
+              </div>
             <div className="h-32 bg-gray-200 rounded-lg"></div>
             <div className="h-48 bg-gray-200 rounded-lg"></div>
           </div>
@@ -166,19 +172,23 @@ export default function InvoiceReport() {
     : null;
 
   // Use filtered month data or yearly totals from monthlyTrend for consistency
-  const targetAmount = isMonthFiltered && filteredMonthData 
+  const expectedRevenue = isMonthFiltered && filteredMonthData 
     ? filteredMonthData.expected || 0
     : safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.expected || 0), 0);
+    
+  const totalRevenue = isMonthFiltered && filteredMonthData 
+    ? filteredMonthData.sent || 0
+    : safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.sent || 0), 0);
     
   const actualAmount = isMonthFiltered && filteredMonthData 
     ? filteredMonthData.paid || 0
     : safeData.monthlyTrend.reduce((sum: number, month: any) => sum + (month.paid || 0), 0);
 
-  const achievementRate = targetAmount > 0 
-    ? Math.round((actualAmount / targetAmount) * 100) 
+  const achievementRate = totalRevenue > 0 
+    ? Math.round((actualAmount / totalRevenue) * 100) 
     : 0;
   
-  const pendingAmount = targetAmount - actualAmount;
+  const pendingAmount = totalRevenue - actualAmount;
   const isOnTrack = achievementRate >= 80;
 
   return (
@@ -228,22 +238,22 @@ export default function InvoiceReport() {
       
       <CardContent className="space-y-8">
         {/* Key Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <Card className="border-l-4 border-l-blue-500 bg-blue-50/50">
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-medium text-blue-700">
-                  {isMonthFiltered ? 'Monthly Target' : 'Yearly Target'}
+                  {isMonthFiltered ? 'Monthly Expected' : 'Yearly Expected'}
                 </p>
                 <Target className="h-5 w-5 text-blue-600" />
               </div>
               <p className="text-3xl font-bold text-blue-900 mb-1">
-                {formatCurrency(targetAmount)}
+                {formatCurrency(expectedRevenue)}
               </p>
               <p className="text-sm text-blue-600">
                 {isMonthFiltered 
-                  ? `Target for ${months.find(m => m.value === selectedMonth)?.label} ${selectedYear}`
-                  : `Set target for ${selectedYear}`
+                  ? `Expected for ${months.find(m => m.value === selectedMonth)?.label} ${selectedYear}`
+                  : `Expected revenue for ${selectedYear}`
                 }
               </p>
             </CardContent>
@@ -262,7 +272,7 @@ export default function InvoiceReport() {
               </p>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-green-600">
-                  {achievementRate}% of {isMonthFiltered ? 'monthly' : 'yearly'} target
+                  {achievementRate}% of {isMonthFiltered ? 'monthly' : 'yearly'} invoices collected
                 </span>
                 {isOnTrack ? (
                   <ArrowUpRight className="h-4 w-4 text-green-600" />
@@ -286,8 +296,28 @@ export default function InvoiceReport() {
               </p>
               <p className="text-sm text-orange-600">
                 {isMonthFiltered 
-                  ? `Amount yet to be collected in ${months.find(m => m.value === selectedMonth)?.label}`
-                  : 'Amount yet to be collected this year'
+                  ? `Invoices sent but not yet paid in ${months.find(m => m.value === selectedMonth)?.label}`
+                  : 'Invoices sent but not yet paid this year'
+                }
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-l-4 border-l-purple-500 bg-purple-50/50">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium text-purple-700">
+                  {isMonthFiltered ? 'Monthly Revenue' : 'Yearly Revenue'}
+                </p>
+                <TrendingUp className="h-5 w-5 text-purple-600" />
+              </div>
+              <p className="text-3xl font-bold text-purple-900 mb-1">
+                {formatCurrency(totalRevenue)}
+              </p>
+              <p className="text-sm text-purple-600">
+                {isMonthFiltered 
+                  ? `Invoices sent in ${months.find(m => m.value === selectedMonth)?.label}`
+                  : 'Total invoices sent this year'
                 }
               </p>
             </CardContent>

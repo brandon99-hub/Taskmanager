@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,19 +10,19 @@ import { Edit, Search, Filter, CalendarDays, DollarSign, User, Clock, AlertTrian
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { isUnauthorizedError } from '@/lib/authUtils';
+import { formatCurrency, calculateSubtaskWeightBasedProgress } from '@/lib/utils';
 
-interface Milestone {
+interface Module {
   id: string;
   name: string;
   description?: string;
   priority: 'low' | 'medium' | 'high' | 'critical';
-  status: 'todo' | 'in_progress' | 'client_review' | 'done' | 'not_started' | 'started' | 'ongoing' | 'finished';
-  billingStatus: 'none' | 'to_send' | 'sent' | 'paid' | 'overdue' | 'processing';
+  status: 'not_started' | 'in_progress' | 'fc_review' | 'qa' | 'client_review' | 'completed' | 'overdue' | 'on_hold' | 'cancelled';
   startDate?: string;
   dueDate?: string;
-  expectedInvoiceDate?: string;
-  expectedCollectionDate?: string;
-  feeAmount?: string;
+  estimatedHours?: number;
+  actualHours?: number;
+  weight: number;
   assignedUserId?: string;
   assignedUser?: {
     firstName?: string;
@@ -30,6 +30,9 @@ interface Milestone {
     email: string;
   };
   projectId: string;
+  phaseNumber?: number;
+  phaseName?: string;
+  progressPercent: number;
   createdAt: string;
   updatedAt: string;
   subtasks?: Subtask[];
@@ -39,7 +42,7 @@ interface Subtask {
   id: string;
   name: string;
   description?: string;
-  status: 'not_started' | 'started' | 'ongoing' | 'finished';
+  status: 'not_started' | 'in_progress' | 'fc_review' | 'qa' | 'client_review' | 'completed' | 'overdue' | 'on_hold' | 'cancelled';
   priority: 'low' | 'medium' | 'high' | 'critical';
   startDate?: string;
   dueDate?: string;
@@ -48,52 +51,65 @@ interface Subtask {
   actualHours?: number;
   actualDays?: number;
   progressPercent: number;
-  assignedUserId?: string;
-  assignedUser?: {
+  assignedDevId?: string;
+  assignedConsultantId?: string;
+  assignedDev?: {
     firstName?: string;
     lastName?: string;
     email: string;
   };
-  milestoneId: string;
+  assignedConsultant?: {
+    firstName?: string;
+    lastName?: string;
+    email: string;
+  };
+  moduleId: string;
   createdAt: string;
   updatedAt: string;
 }
 
-interface MilestoneTableProps {
-  milestones: Milestone[];
+interface ModuleTableProps {
+  modules: Module[];
   projectSegment: string;
-  onEdit: (milestone: Milestone) => void;
+  onEdit: (module: Module) => void;
+  initiallyExpandedModule?: string | null;
 }
 
-export default function MilestoneTable({ milestones, projectSegment, onEdit }: MilestoneTableProps) {
+export default function ModuleTable({ modules, projectSegment, onEdit, initiallyExpandedModule }: ModuleTableProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
-  const [billingFilter, setBillingFilter] = useState('all');
-  const [selectedMilestones, setSelectedMilestones] = useState<string[]>([]);
-  const [sortField, setSortField] = useState<keyof Milestone>('name');
+  const [selectedModules, setSelectedModules] = useState<string[]>([]);
+  const [sortField, setSortField] = useState<keyof Module>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [expandedMilestones, setExpandedMilestones] = useState<Set<string>>(new Set());
+  const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
 
-  // Toggle milestone expansion
-  const toggleMilestoneExpansion = (milestoneId: string) => {
-    const newExpanded = new Set(expandedMilestones);
-    if (newExpanded.has(milestoneId)) {
-      newExpanded.delete(milestoneId);
-    } else {
-      newExpanded.add(milestoneId);
+  // Auto-expand module if initiallyExpandedModule is provided
+  useEffect(() => {
+    if (initiallyExpandedModule) {
+      setExpandedModules(new Set([initiallyExpandedModule]));
     }
-    setExpandedMilestones(newExpanded);
+  }, [initiallyExpandedModule]);
+
+  // Toggle module expansion
+  const toggleModuleExpansion = (moduleId: string) => {
+    const newExpanded = new Set(expandedModules);
+    if (newExpanded.has(moduleId)) {
+      newExpanded.delete(moduleId);
+    } else {
+      newExpanded.add(moduleId);
+    }
+    setExpandedModules(newExpanded);
   };
 
   // Add loading state handling
-  if (!milestones) {
+  if (!modules) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Milestones</CardTitle>
+          <CardTitle>Modules</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="animate-pulse space-y-4">
@@ -109,28 +125,28 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
     );
   }
 
-  // Status update mutation
-  const updateStatusMutation = useMutation({
-    mutationFn: async ({ milestoneId, status }: { milestoneId: string; status: string }) => {
-      // Find the current milestone to validate status transition
-      const currentMilestone = milestones.find(m => m.id === milestoneId);
-      if (currentMilestone) {
-        // Allow moving backwards from 'done' to other statuses, but prevent going back to 'todo'
-        if (currentMilestone.status === 'done' && status === 'todo') {
-          throw new Error('Cannot move completed milestone back to "Not Started" status');
+  // Status update mutation for modules
+  const updateModuleStatusMutation = useMutation({
+    mutationFn: async ({ moduleId, status }: { moduleId: string; status: string }) => {
+      // Find the current module to validate status transition
+      const currentModule = modules.find(m => m.id === moduleId);
+      if (currentModule) {
+        // Allow moving backwards from 'completed' to other statuses, but prevent going back to 'not_started'
+        if (currentModule.status === 'completed' && status === 'not_started') {
+          throw new Error('Cannot move completed module back to "Not Started" status');
         }
-        // Prevent setting to 'done' without going through 'client_review'
-        if (status === 'done' && currentMilestone.status !== 'client_review') {
-          throw new Error('Milestone must go through client review before being marked as done');
+        // Prevent setting to 'completed' without going through 'client_review'
+        if (status === 'completed' && currentModule.status !== 'client_review') {
+          throw new Error('Module must go through client review before being marked as completed');
         }
       }
       
-      const response = await apiRequest('PUT', `/api/tasks/${milestoneId}`, { status });
+      const response = await apiRequest('PUT', `/api/modules/${moduleId}`, { status });
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      toast({ title: 'Success', description: 'Milestone status updated' });
+      toast({ title: 'Success', description: 'Module status updated' });
     },
     onError: (error: any) => {
       if (isUnauthorizedError(error)) {
@@ -138,91 +154,75 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
         setTimeout(() => { window.location.href = '/login'; }, 500);
         return;
       }
-      toast({ title: 'Error', description: error?.message || 'Failed to update milestone status', variant: 'destructive' });
+      toast({ title: 'Error', description: error?.message || 'Failed to update module status', variant: 'destructive' });
     },
   });
 
-  // Billing status update mutation
-  const updateBillingStatusMutation = useMutation({
-    mutationFn: async ({ milestoneId, billingStatus }: { milestoneId: string; billingStatus: string }) => {
-      const response = await apiRequest('PUT', `/api/tasks/${milestoneId}/billing-status`, { billingStatus });
+  // Status update mutation for subtasks
+  const updateSubtaskStatusMutation = useMutation({
+    mutationFn: async ({ subtaskId, status }: { subtaskId: string; status: string }) => {
+      const response = await apiRequest('PUT', `/api/subtasks/${subtaskId}`, { status });
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      toast({ title: 'Success', description: 'Billing status updated' });
+      toast({ title: 'Success', description: 'Subtask status updated' });
     },
     onError: (error: any) => {
       if (isUnauthorizedError(error)) {
-        toast({ title: 'Error', description: 'Failed to update billing status', variant: 'destructive' });
+        toast({ title: 'Unauthorized', description: 'You are logged out. Logging in again...', variant: 'destructive' });
+        setTimeout(() => { window.location.href = '/login'; }, 500);
+        return;
       }
+      toast({ title: 'Error', description: error?.message || 'Failed to update subtask status', variant: 'destructive' });
     },
   });
 
+
+
   // Bulk status update mutation
   const bulkStatusUpdateMutation = useMutation({
-    mutationFn: async ({ milestoneIds, status }: { milestoneIds: string[]; status: string }) => {
-      const promises = milestoneIds.map(id => 
-        apiRequest('PUT', `/api/tasks/${id}`, { status })
+    mutationFn: async ({ moduleIds, status }: { moduleIds: string[]; status: string }) => {
+      const promises = moduleIds.map(id => 
+        apiRequest('PUT', `/api/modules/${id}`, { status })
       );
       await Promise.all(promises);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      setSelectedMilestones([]);
-      toast({ title: 'Success', description: `${selectedMilestones.length} milestones updated` });
+      setSelectedModules([]);
+      toast({ title: 'Success', description: `${selectedModules.length} modules updated` });
     },
     onError: (error: any) => {
-      toast({ title: 'Error', description: 'Failed to update milestones', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Failed to update modules', variant: 'destructive' });
     },
   });
 
-  // Filter and sort milestones
-  const filteredMilestones = milestones
-    .filter(milestone => {
-      const matchesSearch = milestone.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           (milestone.description || '').toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || milestone.status === statusFilter;
-      const matchesPriority = priorityFilter === 'all' || milestone.priority === priorityFilter;
-      const matchesBilling = billingFilter === 'all' || milestone.billingStatus === billingFilter;
+  // Filter modules based on search and filters
+  const filteredModules = modules
+    .filter(module => {
+      const matchesSearch = module.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           (module.description || '').toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesStatus = statusFilter === 'all' || module.status === statusFilter;
+      const matchesPriority = priorityFilter === 'all' || module.priority === priorityFilter;
       
-      return matchesSearch && matchesStatus && matchesPriority && matchesBilling;
-    })
-    .sort((a, b) => {
-      let aValue: any = a[sortField];
-      let bValue: any = b[sortField];
-      
-      // Handle date fields
-      if (sortField === 'startDate' || sortField === 'dueDate' || sortField === 'expectedInvoiceDate') {
-        aValue = aValue ? new Date(aValue).getTime() : 0;
-        bValue = bValue ? new Date(bValue).getTime() : 0;
-      }
-      
-      // Handle numeric fields
-      if (sortField === 'feeAmount') {
-        aValue = parseFloat(aValue || '0');
-        bValue = parseFloat(bValue || '0');
-      }
-      
-      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
-      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
+      return matchesSearch && matchesStatus && matchesPriority;
     });
 
   // Sorting function
-  const handleSort = (field: keyof Milestone | keyof Subtask) => {
+  const handleSort = (field: keyof Module | keyof Subtask) => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
-      setSortField(field as keyof Milestone);
+      setSortField(field as keyof Module);
       setSortDirection('asc');
     }
   };
 
-  // Sort milestones and subtasks
-  const sortedMilestones = [...filteredMilestones].sort((a, b) => {
-    const aValue = a[sortField as keyof Milestone];
-    const bValue = b[sortField as keyof Milestone];
+  // Sort modules and subtasks
+  const sortedModules = [...filteredModules].sort((a, b) => {
+          const aValue = a[sortField as keyof Module];
+      const bValue = b[sortField as keyof Module];
     
     if (aValue === bValue) return 0;
     if (aValue === null || aValue === undefined) return 1;
@@ -235,51 +235,51 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
   // Handle bulk selection
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedMilestones(filteredMilestones.map(m => m.id));
-    } else {
-      setSelectedMilestones([]);
-    }
+              setSelectedModules(filteredModules.map(m => m.id));
+          } else {
+        setSelectedModules([]);
+      }
   };
 
-  const handleSelectMilestone = (milestoneId: string, checked: boolean) => {
+  const handleSelectModule = (moduleId: string, checked: boolean) => {
     if (checked) {
-      setSelectedMilestones(prev => [...prev, milestoneId]);
+      setSelectedModules(prev => [...prev, moduleId]);
     } else {
-      setSelectedMilestones(prev => prev.filter(id => id !== milestoneId));
+      setSelectedModules(prev => prev.filter(id => id !== moduleId));
     }
   };
 
   // Handle bulk status update
   const handleBulkStatusUpdate = (newStatus: string) => {
-    if (selectedMilestones.length === 0) return;
+    if (selectedModules.length === 0) return;
     
     // Validate bulk status updates
-    const invalidMilestones = selectedMilestones.filter(milestoneId => {
-      const milestone = milestones.find(m => m.id === milestoneId);
-      if (!milestone) return false;
+    const invalidModules = selectedModules.filter(moduleId => {
+      const module = modules.find(m => m.id === moduleId);
+      if (!module) return false;
       
-      // Allow moving backwards from 'done' to other statuses, but prevent going back to 'todo'
-      if (milestone.status === 'done' && newStatus === 'todo') {
+      // Allow moving backwards from 'completed' to other statuses, but prevent going back to 'not_started'
+      if (module.status === 'completed' && newStatus === 'not_started') {
         return true;
       }
-      // Prevent setting to 'done' without going through 'review'
-              if (newStatus === 'done' && milestone.status !== 'client_review') {
+      // Prevent setting to 'completed' without going through 'client_review'
+      if (newStatus === 'completed' && module.status !== 'client_review') {
         return true;
       }
       
       return false;
     });
     
-    if (invalidMilestones.length > 0) {
+    if (invalidModules.length > 0) {
       toast({ 
         title: 'Validation Error', 
-        description: 'Some milestones cannot be updated due to status transition rules', 
+        description: 'Some modules cannot be updated due to status transition rules', 
         variant: 'destructive' 
       });
       return;
     }
     
-    bulkStatusUpdateMutation.mutate({ milestoneIds: selectedMilestones, status: newStatus });
+    bulkStatusUpdateMutation.mutate({ moduleIds: selectedModules, status: newStatus });
   };
 
   // Utility functions
@@ -292,10 +292,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
     });
   };
 
-  const formatCurrency = (amount?: string) => {
-    if (!amount) return 'KSh 0';
-    return `KSh ${parseFloat(amount).toLocaleString()}`;
-  };
+
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
@@ -309,15 +306,14 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'todo': return 'bg-gray-100 text-gray-800';
+      case 'not_started': return 'bg-gray-100 text-gray-800';
       case 'in_progress': return 'bg-blue-100 text-blue-800';
+      case 'fc_review': return 'bg-purple-100 text-purple-800';
       case 'qa': return 'bg-purple-100 text-purple-800';
       case 'client_review': return 'bg-indigo-100 text-indigo-800';
-      case 'done': return 'bg-green-100 text-green-800';
-      case 'finished': return 'bg-green-100 text-green-800';
-      case 'delayed': return 'bg-orange-100 text-orange-800';
+      case 'completed': return 'bg-green-100 text-green-800';
       case 'overdue': return 'bg-red-100 text-red-800';
-      case 'on_hold': return 'bg-red-100 text-red-800';
+      case 'on_hold': return 'bg-orange-100 text-orange-800';
       case 'cancelled': return 'bg-gray-100 text-gray-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -359,12 +355,11 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
       'todo': 'Not Started',
       'not_started': 'Not Started',
       'in_progress': 'In Progress',
-      'started': 'Started',
       'ongoing': 'Ongoing',
       'qa': 'QA',
       'client_review': 'Client Review',
       'done': 'Completed',
-      'finished': 'Finished',
+              'completed': 'Completed',
       'overdue': 'Overdue',
       'delayed': 'Delayed',
       'on_hold': 'On Hold',
@@ -409,56 +404,25 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
     }
   };
 
-  // Calculate accurate progress percentage for milestones based on subtasks
-  const calculateMilestoneProgress = (milestone: Milestone) => {
-    if (!milestone.subtasks || milestone.subtasks.length === 0) {
+    // Calculate accurate progress percentage for modules based on subtasks
+  const calculateModuleProgress = (module: Module) => {
+    if (!module.subtasks || module.subtasks.length === 0) {
       return 0;
     }
     
-    const totalSubtasks = milestone.subtasks.length;
-    const completedSubtasks = milestone.subtasks.filter(subtask => 
-      subtask.status === 'finished'
-    ).length;
-    
-    // Weight by priority for more accurate progress
-    const weightedProgress = milestone.subtasks.reduce((total, subtask) => {
-      const priorityWeight = {
-        'low': 1,
-        'medium': 2,
-        'high': 3,
-        'critical': 4
-      }[subtask.priority] || 1;
-      
-      const progress = subtask.status === 'finished' ? 100 : 
-                      subtask.status === 'ongoing' ? 75 :
-                      subtask.status === 'started' ? 25 : 0;
-      
-      return total + (progress * priorityWeight);
-    }, 0);
-    
-    const totalWeight = milestone.subtasks.reduce((total, subtask) => {
-      const priorityWeight = {
-        'low': 1,
-        'medium': 2,
-        'high': 3,
-        'critical': 4
-      }[subtask.priority] || 1;
-      return total + priorityWeight;
-    }, 0);
-    
-    return totalWeight > 0 ? Math.round(weightedProgress / totalWeight) : 0;
+    return calculateSubtaskWeightBasedProgress(module.subtasks);
   };
 
-  if (milestones.length === 0) {
+  if (modules.length === 0) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Milestones</CardTitle>
+          <CardTitle>Modules</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="text-center py-12 text-gray-500">
             <CheckCircle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p>No milestones found for this project.</p>
+            <p>No modules found for this project.</p>
           </div>
         </CardContent>
       </Card>
@@ -468,8 +432,8 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Milestones</CardTitle>
-        <p className="text-sm text-gray-600">Track progress across all project milestones</p>
+        <CardTitle>Modules</CardTitle>
+        <p className="text-sm text-gray-600">Track progress across all project modules</p>
       </CardHeader>
       <CardContent>
         {/* Filters and Search */}
@@ -478,7 +442,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
             <div className="relative lg:col-span-2">
               <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
               <Input
-                placeholder="Search milestones..."
+                placeholder="Search modules..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -511,28 +475,15 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
               </SelectContent>
             </Select>
 
-            <Select value={billingFilter} onValueChange={setBillingFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="Filter by billing" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Billing Statuses</SelectItem>
-                <SelectItem value="none">None</SelectItem>
-                <SelectItem value="to_send">To Send</SelectItem>
-                <SelectItem value="sent">Sent</SelectItem>
-                <SelectItem value="paid">Paid</SelectItem>
-                <SelectItem value="overdue">Overdue</SelectItem>
-                <SelectItem value="processing">Processing</SelectItem>
-              </SelectContent>
-            </Select>
+
           </div>
 
           {/* Bulk Actions */}
-          {selectedMilestones.length > 0 && (
+          {selectedModules.length > 0 && (
             <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center space-x-2">
                 <span className="text-sm font-medium text-blue-900">
-                  {selectedMilestones.length} milestone(s) selected
+                  {selectedModules.length} module(s) selected
                 </span>
               </div>
               <div className="flex items-center space-x-2">
@@ -546,32 +497,32 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                     {bulkStatusUpdateMutation.isPending ? (
                       <div className="flex items-center">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600 mr-2"></div>
-                        <span className="text-sm text-gray-500">Updating {selectedMilestones.length} items...</span>
+                        <span className="text-sm text-gray-500">Updating {selectedModules.length} items...</span>
                       </div>
                     ) : (
                       <SelectValue placeholder="Update status" />
                     )}
                   </SelectTrigger>
-                  <SelectContent>
-                    {/* Check if any selected milestones are completed to determine available options */}
+                  <SelectContent className="bg-blue-50 border-blue-200">
+                    {/* Check if any selected modules are completed to determine available options */}
                     {(() => {
-                      const hasCompletedMilestones = selectedMilestones.some(milestoneId => {
-                        const milestone = milestones.find(m => m.id === milestoneId);
-                        return milestone?.status === 'done';
+                      const hasCompletedModules = selectedModules.some(moduleId => {
+                        const module = modules.find(m => m.id === moduleId);
+                        return module?.status === 'completed';
                       });
                       
                       return (
                         <>
-                          {/* Only show 'todo' if no completed milestones are selected */}
-                          {!hasCompletedMilestones && (
-                            <SelectItem value="todo">Not Started</SelectItem>
+                          {/* Only show 'not_started' if no completed modules are selected */}
+                          {!hasCompletedModules && (
+                            <SelectItem value="not_started">Not Started</SelectItem>
                           )}
                           <SelectItem value="in_progress">In Progress</SelectItem>
+                          <SelectItem value="fc_review">FC Review</SelectItem>
                           <SelectItem value="qa">QA</SelectItem>
                           <SelectItem value="client_review">Client Review</SelectItem>
-                          <SelectItem value="client_review">Client Review</SelectItem>
-                          <SelectItem value="done">Completed</SelectItem>
-                          <SelectItem value="delayed">Delayed</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                          <SelectItem value="overdue">Overdue</SelectItem>
                           <SelectItem value="on_hold">On Hold</SelectItem>
                           <SelectItem value="cancelled">Cancelled</SelectItem>
                         </>
@@ -583,7 +534,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                   variant="outline"
                   size="sm"
                   disabled={bulkStatusUpdateMutation.isPending}
-                  onClick={() => setSelectedMilestones([])}
+                  onClick={() => setSelectedModules([])}
                   className={bulkStatusUpdateMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''}
                 >
                   Clear Selection
@@ -600,7 +551,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
               <div className="bg-white rounded-lg shadow-lg p-4 flex items-center space-x-3">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600"></div>
                 <span className="text-sm font-medium text-gray-700">
-                  Processing {selectedMilestones.length} milestone{selectedMilestones.length !== 1 ? 's' : ''}...
+                  Processing {selectedModules.length} module{selectedModules.length !== 1 ? 's' : ''}...
                 </span>
               </div>
             </div>
@@ -610,7 +561,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
               <tr className="border-b border-gray-200">
                 <th className="text-left p-3">
                   <Checkbox
-                    checked={selectedMilestones.length === filteredMilestones.length && filteredMilestones.length > 0}
+                    checked={selectedModules.length === filteredModules.length && filteredModules.length > 0}
                     disabled={bulkStatusUpdateMutation.isPending}
                     onCheckedChange={handleSelectAll}
                   />
@@ -620,7 +571,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                   onClick={() => handleSort('name')}
                 >
                   <div className="flex items-center space-x-1">
-                    <span>Milestone</span>
+                    <span>Module</span>
                     {sortField === 'name' && (
                       <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                     )}
@@ -661,33 +612,11 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                     )}
                   </div>
                 </th>
-                <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                  onClick={() => handleSort('expectedInvoiceDate')}
-                >
-                  <div className="flex items-center space-x-1">
-                    <CalendarDays className="h-4 w-4" />
-                    <span>Expected Invoice</span>
-                    {sortField === 'expectedInvoiceDate' && (
-                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                    )}
-                  </div>
-                </th>
-                                 <th className="text-left p-3">Expected Collection</th>
-                 <th className="text-left p-3">Required Days</th>
+
+                                 <th className="text-left p-3">Required Days</th>
+                 <th className="text-left p-3">Duration</th>
                  <th className="text-left p-3">Segment</th>
-                <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                  onClick={() => handleSort('feeAmount')}
-                >
-                  <div className="flex items-center space-x-1">
-                    <DollarSign className="h-4 w-4" />
-                    <span>Amount</span>
-                    {sortField === 'feeAmount' && (
-                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                    )}
-                  </div>
-                </th>
+
                 <th 
                   className="text-left p-3 cursor-pointer hover:bg-gray-50"
                   onClick={() => handleSort('status')}
@@ -699,43 +628,33 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                     )}
                   </div>
                 </th>
-                <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                  onClick={() => handleSort('billingStatus')}
-                >
-                  <div className="flex items-center space-x-1">
-                    <span>Invoice Status</span>
-                    {sortField === 'billingStatus' && (
-                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                    )}
-                  </div>
-                </th>
+
                 <th className="text-left p-3">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sortedMilestones.map((milestone) => (
-                <React.Fragment key={milestone.id}>
-                  {/* Main Milestone Row */}
+              {sortedModules.map((module) => (
+                <React.Fragment key={module.id}>
+                  {/* Main Module Row */}
                   <tr className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="p-3">
                       <Checkbox
-                        checked={selectedMilestones.includes(milestone.id)}
+                        checked={selectedModules.includes(module.id)}
                         disabled={bulkStatusUpdateMutation.isPending}
-                        onCheckedChange={(checked) => handleSelectMilestone(milestone.id, checked as boolean)}
+                        onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
                       />
                     </td>
                     <td className="p-3">
                       <div className="flex items-center space-x-2">
                         {/* Expand/Collapse Button */}
-                        {milestone.subtasks && milestone.subtasks.length > 0 && (
+                        {module.subtasks && module.subtasks.length > 0 && (
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => toggleMilestoneExpansion(milestone.id)}
+                            onClick={() => toggleModuleExpansion(module.id)}
                             className="h-6 w-6 p-0 hover:bg-gray-200"
                           >
-                            {expandedMilestones.has(milestone.id) ? (
+                            {expandedModules.has(module.id) ? (
                               <ChevronDown className="h-4 w-4" />
                             ) : (
                               <ChevronRight className="h-4 w-4" />
@@ -743,62 +662,57 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                           </Button>
                         )}
                         <div>
-                          <div className="font-medium text-gray-900">{milestone.name}</div>
-                          {milestone.description && (
+                          <div className="font-medium text-gray-900">{module.name}</div>
+                          {module.description && (
                             <div className="text-sm text-gray-500 truncate max-w-xs">
-                              {milestone.description}
+                              {module.description}
                             </div>
                           )}
                           {/* Subtask count indicator */}
-                          {milestone.subtasks && milestone.subtasks.length > 0 && (
+                          {module.subtasks && module.subtasks.length > 0 && (
                             <div className="text-xs text-blue-600 mt-1">
-                              {milestone.subtasks.length} subtask{milestone.subtasks.length !== 1 ? 's' : ''}
+                              {module.subtasks.length} subtask{module.subtasks.length !== 1 ? 's' : ''}
                             </div>
                           )}
                         </div>
                       </div>
                     </td>
                   <td className="p-3">
-                    <Badge className={getPriorityColor(milestone.priority)}>
-                      {milestone.priority.charAt(0).toUpperCase() + milestone.priority.slice(1)}
+                    <Badge className={getPriorityColor(module.priority)}>
+                      {module.priority.charAt(0).toUpperCase() + module.priority.slice(1)}
                     </Badge>
                   </td>
                   <td className="p-3 text-sm text-gray-600">
-                    {formatDate(milestone.startDate)}
+                    {formatDate(module.startDate)}
                   </td>
                   <td className="p-3 text-sm text-gray-600">
-                    {formatDate(milestone.dueDate)}
+                    {formatDate(module.dueDate)}
                   </td>
                   <td className="p-3 text-sm text-gray-600">
-                    {formatDate(milestone.expectedInvoiceDate)}
+                    {module.assignedUser ? `${module.assignedUser.firstName || ''} ${module.assignedUser.lastName || ''}`.trim() || module.assignedUser.email : 'Unassigned'}
                   </td>
-                                     <td className="p-3 text-sm text-gray-600">
-                     {calculateCollectionDate(milestone.expectedInvoiceDate)}
-                   </td>
-                   <td className="p-3 text-sm text-gray-600">
-                     {calculateRequiredDays(milestone.startDate, milestone.dueDate)}
-                   </td>
-                   <td className="p-3">
-                     <Badge variant="outline" className="capitalize">
-                       {projectSegment}
-                     </Badge>
-                   </td>
-                  <td className="p-3 text-sm font-medium text-gray-900">
-                    {formatCurrency(milestone.feeAmount)}
+                  <td className="p-3 text-sm text-gray-600">
+                    {module.startDate && module.dueDate ? 
+                      Math.ceil((new Date(module.dueDate).getTime() - new Date(module.startDate).getTime()) / (1000 * 60 * 60 * 24)) + ' days' : 
+                      'Not set'
+                    }
+                  </td>
+                  <td className="p-3 text-sm text-gray-600">
+                    {projectSegment ? projectSegment.charAt(0).toUpperCase() + projectSegment.slice(1) : 'Private'}
                   </td>
                                      <td className="p-3">
                      <Select
-                       value={milestone.status}
-                       disabled={updateStatusMutation.isPending}
-                       onValueChange={(value) => updateStatusMutation.mutate({
-                         milestoneId: milestone.id,
+                       value={module.status}
+                       disabled={updateModuleStatusMutation.isPending}
+                       onValueChange={(value) => updateModuleStatusMutation.mutate({
+                         moduleId: module.id,
                          status: value
                        })}
                      >
                        <SelectTrigger className={`w-32 relative ${
-                         updateStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
-                       } ${milestone.status === 'done' ? 'bg-green-50 border-green-200' : milestone.status === 'client_review' ? 'bg-yellow-50 border-yellow-200' : milestone.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
-                         {updateStatusMutation.isPending ? (
+                         updateModuleStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                       } ${module.status === 'completed' ? 'bg-green-50 border-green-200' : module.status === 'client_review' ? 'bg-yellow-50 border-yellow-200' : module.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
+                         {updateModuleStatusMutation.isPending ? (
                            <div className="flex items-center">
                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
                              <span className="text-sm text-gray-500">Processing...</span>
@@ -808,56 +722,24 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                          )}
                        </SelectTrigger>
                        <SelectContent>
-                         {/* Show all statuses except 'todo' if milestone is completed */}
-                         {milestone.status !== 'done' && (
-                           <SelectItem value="todo">Not Started</SelectItem>
-                         )}
+                         <SelectItem value="not_started">Not Started</SelectItem>
                          <SelectItem value="in_progress">In Progress</SelectItem>
+                         <SelectItem value="fc_review">FC Review</SelectItem>
                          <SelectItem value="qa">QA</SelectItem>
                          <SelectItem value="client_review">Client Review</SelectItem>
-                         <SelectItem value="done">Completed</SelectItem>
-                         <SelectItem value="delayed">Delayed</SelectItem>
+                         <SelectItem value="completed">Completed</SelectItem>
+                         <SelectItem value="overdue">Overdue</SelectItem>
                          <SelectItem value="on_hold">On Hold</SelectItem>
                          <SelectItem value="cancelled">Cancelled</SelectItem>
                        </SelectContent>
                      </Select>
                    </td>
-                   <td className="p-3">
-                     <Select
-                       value={milestone.billingStatus}
-                       disabled={updateBillingStatusMutation.isPending}
-                       onValueChange={(value) => updateBillingStatusMutation.mutate({
-                         milestoneId: milestone.id,
-                         billingStatus: value
-                       })}
-                     >
-                       <SelectTrigger className={`w-32 relative ${
-                         updateBillingStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
-                       } ${milestone.billingStatus === 'paid' ? 'bg-green-50 border-green-200' : milestone.billingStatus === 'sent' ? 'bg-blue-50 border-blue-200' : milestone.billingStatus === 'to_send' ? 'bg-orange-50 border-orange-200' : milestone.billingStatus === 'overdue' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
-                         {updateBillingStatusMutation.isPending ? (
-                           <div className="flex items-center">
-                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600 mr-2"></div>
-                             <span className="text-sm text-gray-500">Updating...</span>
-                           </div>
-                         ) : (
-                           <SelectValue />
-                         )}
-                       </SelectTrigger>
-                       <SelectContent>
-                         <SelectItem value="none">Not Sent</SelectItem>
-                         <SelectItem value="to_send">To Send</SelectItem>
-                         <SelectItem value="sent">Sent</SelectItem>
-                         <SelectItem value="paid">Paid</SelectItem>
-                         <SelectItem value="overdue">Overdue</SelectItem>
-                         <SelectItem value="processing">Processing</SelectItem>
-                       </SelectContent>
-                     </Select>
-                   </td>
+
                   <td className="p-3">
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => onEdit(milestone)}
+                      onClick={() => onEdit(module)}
                     >
                       <Edit className="h-4 w-4 mr-1" />
                       Edit
@@ -865,24 +747,24 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                   </td>
                 </tr>
 
-                {/* Subtasks for expanded milestones */}
-                {expandedMilestones.has(milestone.id) && milestone.subtasks && milestone.subtasks.length > 0 && (
+                {/* Subtasks for expanded modules */}
+                {expandedModules.has(module.id) && module.subtasks && module.subtasks.length > 0 && (
                   <tr className="border-b border-gray-100">
                     <td colSpan={11} className="p-0">
-                      <div className="bg-gray-50 border-t border-gray-200">
+                      <div className="bg-blue-50 border-t border-blue-200">
                         <table className="w-full border-collapse">
                           <thead>
-                            <tr className="border-b border-gray-200">
+                            <tr className="border-b border-blue-200">
                               <th className="text-left p-3">
                                 <Checkbox
-                                  checked={selectedMilestones.includes(milestone.id)}
+                                  checked={selectedModules.includes(module.id)}
                                   disabled={bulkStatusUpdateMutation.isPending}
-                                  onCheckedChange={(checked) => handleSelectMilestone(milestone.id, checked as boolean)}
+                                  onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
                                 />
                               </th>
                               <th 
                                 className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('name' as keyof Milestone)}
+                                onClick={() => handleSort('name' as keyof Module)}
                               >
                                 <div className="flex items-center space-x-1">
                                   <span>Subtask</span>
@@ -893,7 +775,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                               </th>
                               <th 
                                 className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('priority' as keyof Milestone)}
+                                onClick={() => handleSort('priority' as keyof Module)}
                               >
                                 <div className="flex items-center space-x-1">
                                   <span>Priority</span>
@@ -904,7 +786,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                               </th>
                               <th 
                                 className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('startDate' as keyof Milestone)}
+                                onClick={() => handleSort('startDate' as keyof Module)}
                               >
                                 <div className="flex items-center space-x-1">
                                   <CalendarDays className="h-4 w-4" />
@@ -916,7 +798,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                               </th>
                               <th 
                                 className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('dueDate' as keyof Milestone)}
+                                onClick={() => handleSort('dueDate' as keyof Module)}
                               >
                                 <div className="flex items-center space-x-1">
                                   <CalendarDays className="h-4 w-4" />
@@ -926,12 +808,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                                   )}
                                 </div>
                               </th>
-                              <th className="text-left p-3">
-                                <div className="flex items-center space-x-1">
-                                  <Clock className="h-4 w-4" />
-                                  <span>Estimated Hours</span>
-                                </div>
-                              </th>
+
                               <th className="text-left p-3">
                                 <div className="flex items-center space-x-1">
                                   <CalendarDays className="h-4 w-4" />
@@ -941,7 +818,13 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                               <th className="text-left p-3">
                                 <div className="flex items-center space-x-1">
                                   <User className="h-4 w-4" />
-                                  <span>Assigned To</span>
+                                  <span>Developer</span>
+                                </div>
+                              </th>
+                              <th className="text-left p-3">
+                                <div className="flex items-center space-x-1">
+                                  <UserCheck className="h-4 w-4" />
+                                  <span>Functional Consultant</span>
                                 </div>
                               </th>
                               <th className="text-left p-3">
@@ -952,7 +835,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                               </th>
                               <th 
                                 className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('status' as keyof Milestone)}
+                                onClick={() => handleSort('status' as keyof Module)}
                               >
                                 <div className="flex items-center space-x-1">
                                   <span>Status</span>
@@ -966,13 +849,13 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                             </tr>
                           </thead>
                           <tbody>
-                            {milestone.subtasks.map((subtask) => (
-                              <tr key={subtask.id} className="border-b border-gray-100 hover:bg-gray-50">
+                            {module.subtasks.map((subtask) => (
+                              <tr key={subtask.id} className="border-b border-blue-100 hover:bg-blue-50">
                                 <td className="p-3">
                                   <Checkbox
-                                    checked={selectedMilestones.includes(milestone.id)}
+                                    checked={selectedModules.includes(module.id)}
                                     disabled={bulkStatusUpdateMutation.isPending}
-                                    onCheckedChange={(checked) => handleSelectMilestone(milestone.id, checked as boolean)}
+                                    onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
                                   />
                                 </td>
                                 <td className="p-3">
@@ -996,20 +879,33 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                                 <td className="p-3 text-sm text-gray-600">
                                   {formatDate(subtask.dueDate)}
                                 </td>
-                                <td className="p-3 text-sm text-gray-600">
-                                  {subtask.estimatedHours || 'N/A'}
-                                </td>
+
                                 <td className="p-3 text-sm text-gray-600">
                                   {subtask.estimatedDays || 'N/A'}
                                 </td>
                                 <td className="p-3 text-sm text-gray-600">
-                                  {subtask.assignedUser ? (
+                                  {subtask.assignedDev ? (
                                     <div className="flex items-center space-x-2">
                                       <User className="h-4 w-4 text-gray-500" />
                                       <span className="font-medium">
-                                        {subtask.assignedUser.firstName && subtask.assignedUser.lastName 
-                                          ? `${subtask.assignedUser.firstName} ${subtask.assignedUser.lastName}`
-                                          : subtask.assignedUser.email
+                                        {subtask.assignedDev.firstName && subtask.assignedDev.lastName 
+                                          ? `${subtask.assignedDev.firstName} ${subtask.assignedDev.lastName}`
+                                          : subtask.assignedDev.email
+                                        }
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-400">Unassigned</span>
+                                  )}
+                                </td>
+                                <td className="p-3 text-sm text-gray-600">
+                                  {subtask.assignedConsultant ? (
+                                    <div className="flex items-center space-x-2">
+                                      <UserCheck className="h-4 w-4 text-gray-500" />
+                                      <span className="font-medium">
+                                        {subtask.assignedConsultant.firstName && subtask.assignedConsultant.lastName 
+                                          ? `${subtask.assignedConsultant.firstName} ${subtask.assignedConsultant.lastName}`
+                                          : subtask.assignedConsultant.email
                                         }
                                       </span>
                                     </div>
@@ -1036,16 +932,16 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                                 <td className="p-3">
                                   <Select
                                     value={subtask.status}
-                                    disabled={updateStatusMutation.isPending}
-                                    onValueChange={(value) => updateStatusMutation.mutate({
-                                      milestoneId: milestone.id,
+                                    disabled={updateSubtaskStatusMutation.isPending}
+                                    onValueChange={(value) => updateSubtaskStatusMutation.mutate({
+                                      subtaskId: subtask.id,
                                       status: value
                                     })}
                                   >
                                     <SelectTrigger className={`w-32 relative ${
-                                      updateStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
-                                    } ${subtask.status === 'finished' ? 'bg-green-50 border-green-200' : subtask.status === 'started' ? 'bg-blue-50 border-blue-200' : subtask.status === 'ongoing' ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
-                                      {updateStatusMutation.isPending ? (
+                                      updateSubtaskStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                                    } ${subtask.status === 'completed' ? 'bg-green-50 border-green-200' : subtask.status === 'in_progress' ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+                                      {updateSubtaskStatusMutation.isPending ? (
                                         <div className="flex items-center">
                                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
                                           <span className="text-sm text-gray-500">Processing...</span>
@@ -1054,11 +950,13 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                                         <SelectValue />
                                       )}
                                     </SelectTrigger>
-                                    <SelectContent>
+                                    <SelectContent className="bg-blue-50 border-blue-200">
                                       <SelectItem value="not_started">Not Started</SelectItem>
-                                      <SelectItem value="started">Started</SelectItem>
-                                      <SelectItem value="ongoing">Ongoing</SelectItem>
-                                      <SelectItem value="finished">Finished</SelectItem>
+                                      <SelectItem value="in_progress">In Progress</SelectItem>
+                                      <SelectItem value="fc_review">FC Review</SelectItem>
+                                      <SelectItem value="qa">QA</SelectItem>
+                                      <SelectItem value="client_review">Client Review</SelectItem>
+                                      <SelectItem value="completed">Completed</SelectItem>
                                       <SelectItem value="overdue">Overdue</SelectItem>
                                       <SelectItem value="on_hold">On Hold</SelectItem>
                                       <SelectItem value="cancelled">Cancelled</SelectItem>
@@ -1070,7 +968,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => onEdit({ ...milestone, subtasks: milestone.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
+                                    onClick={() => onEdit({ ...module, subtasks: module.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
                                   >
                                     <Edit className="h-4 w-4 mr-1" />
                                     Edit
@@ -1093,21 +991,7 @@ export default function MilestoneTable({ milestones, projectSegment, onEdit }: M
         {/* Summary */}
         <div className="mt-6 flex items-center justify-between text-sm text-gray-600">
           <div>
-            Showing {filteredMilestones.length} of {milestones.length} milestones
-          </div>
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <span>Total Value:</span>
-              <span className="font-medium">
-                {formatCurrency(milestones.reduce((sum, m) => sum + parseFloat(m.feeAmount || '0'), 0).toString())}
-              </span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <span>Paid:</span>
-              <span className="font-medium text-green-600">
-                {formatCurrency(milestones.filter(m => m.billingStatus === 'sent').reduce((sum, m) => sum + parseFloat(m.feeAmount || '0'), 0).toString())} {/* Changed from 'paid' to 'sent' */}
-              </span>
-            </div>
+            Showing {filteredModules.length} of {modules.length} modules
           </div>
         </div>
       </CardContent>

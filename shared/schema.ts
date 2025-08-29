@@ -75,18 +75,18 @@ export const taskPriorityEnum = pgEnum("task_priority", [
 
 export const taskStatusEnum = pgEnum("task_status", [
   "not_started", // Will display as "Not Started" in frontend
-  "started",     // Work has begun
   "ongoing",     // Actively being worked on
-  "finished",    // Completed
-  "overdue",     // Task is overdue
-  "todo",        // Legacy - will display as "Not Started" in frontend
-  "in_progress", // Legacy - will display as "Ongoing" in frontend
+  "in_progress", // Actively being worked on
+  "fc_review",   // Ready for Functional Consultant review
   "qa",          // Added QA status
   "client_review", // Added client review status
+  "finished",    // Completed
   "done",        // Legacy - will display as "Finished" in frontend
+  "overdue",     // Task is overdue
   "delayed",     // Added delayed status
   "on_hold",     // Added on hold status
   "cancelled",   // Added cancelled status
+  "todo",        // Legacy - will display as "Not Started" in frontend
 ]);
 
 // Billing lifecycle for milestones (keeping as billingStatus in DB, will display as Invoice Status in frontend)
@@ -166,7 +166,7 @@ export const teams = pgTable("teams", {
 export const projects = pgTable("projects", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 200 }).notNull(), // Keep existing name field
-  description: text("description").notNull(), // Keep existing description field
+  description: text("description"), // Database has this as optional
   client: varchar("client", { length: 200 }),
   // New contact fields
   contactPerson: varchar("contact_person"),
@@ -174,7 +174,7 @@ export const projects = pgTable("projects", {
   contactEmail: varchar("contact_email"),
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date").notNull(),
-  status: projectStatusEnum("status").notNull().default("planning"),
+  status: projectStatusEnum("status").notNull().default("planning"), // Use existing projectStatus enum
   segment: projectSegmentEnum("segment").notNull().default("private"), // Added segment field
   budget: decimal("budget", { precision: 12, scale: 2 }), // Keep as budget in DB, will display as Contract Amount in frontend
   teamId: varchar("team_id").references(() => teams.id),
@@ -184,32 +184,26 @@ export const projects = pgTable("projects", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Tasks table (keeping existing structure, adding weight field)
-export const tasks = pgTable("tasks", {
+// Modules table (renamed from tasks, billing fields moved to milestones)
+export const modules = pgTable("modules", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 200 }).notNull(),
   description: text("description"),
   priority: taskPriorityEnum("priority").notNull().default("medium"),
-  status: taskStatusEnum("status").notNull().default("todo"),
+  status: text("status").notNull().default("todo"), // Use text to match existing database
   startDate: timestamp("start_date"),
   dueDate: timestamp("due_date"),
   estimatedHours: integer("estimated_hours"),
   actualHours: integer("actual_hours").default(0),
-  // Financials / assignment additions for milestones
-  feeAmount: decimal("fee_amount", { precision: 12, scale: 2 }),
-  billingStatus: billingStatusEnum("billing_status").notNull().default("none"),
-  // New weight field for milestone calculations
+  // Weight field for module calculations
   weight: integer("weight").default(2), // Calculated from priority: low=1, medium=2, high=3, critical=4
-  // Invoice and collection dates
-  expectedInvoiceDate: timestamp("expected_invoice_date"), // Added expected invoice date
-  expectedCollectionDate: timestamp("expected_collection_date"), // Added expected collection date
-  // Invoice tracking fields
-  invoiceSentAt: timestamp("invoice_sent_at"), // When invoice was actually sent
-  paymentReceivedAt: timestamp("payment_received_at"), // When payment was received
-  overdueFlag: boolean("overdue_flag").default(false), // Flag for overdue milestones
   projectId: varchar("project_id").references(() => projects.id).notNull(),
+  // Phase information since modules belong to phases
+  phaseNumber: integer("phase_number"),
+  phaseName: varchar("phase_name", { length: 100 }),
+  phase: varchar("phase", { length: 100 }), // Added phase column for better tracking
   assignedUserId: varchar("assigned_user_id").references(() => users.id),
-  assignedTeamId: varchar("assigned_team_id").references(() => teams.id),
+  assignedTeamId: varchar("assigned_team_id").references(() => teams.id), // Auto-assigned from project team
   createdById: varchar("created_by_id").references(() => users.id).notNull(),
   completedAt: timestamp("completed_at"),
   progressPercent: integer("progress_percent").notNull().default(0),
@@ -217,12 +211,62 @@ export const tasks = pgTable("tasks", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Subtasks table for tasks under milestones
+// Milestones table for invoicable entities (can contain multiple modules)
+export const milestones = pgTable("milestones", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 200 }).notNull(),
+  description: text("description"),
+  // Financials / billing fields moved here from modules
+  feeAmount: decimal("fee_amount", { precision: 12, scale: 2 }),
+  billingStatus: billingStatusEnum("billing_status").notNull().default("none"),
+  // Invoice and collection dates
+  expectedInvoiceDate: timestamp("expected_invoice_date"),
+  expectedCollectionDate: timestamp("expected_collection_date"),
+  // Invoice tracking fields
+  invoiceSentAt: timestamp("invoice_sent_at"),
+  paymentReceivedAt: timestamp("payment_received_at"),
+  overdueFlag: boolean("overdue_flag").default(false),
+  projectId: varchar("project_id").references(() => projects.id).notNull(),
+  createdById: varchar("created_by_id").references(() => users.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Project Phases table for managing project phases
+export const projectPhases = pgTable("project_phases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").references(() => projects.id, { onDelete: 'cascade' }).notNull(),
+  phaseNumber: integer("phase_number").notNull(),
+  phaseType: varchar("phase_type", { length: 50 }).notNull(), // initiation_contracting, requirements_design, etc.
+  phaseName: varchar("phase_name", { length: 100 }).notNull(),
+  description: text("description"),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  status: varchar("status", { length: 20 }).notNull().default("not_started"), // not_started, in_progress, completed, on_hold
+  progress: integer("progress").notNull().default(0), // percentage 0-100
+  deliverables: jsonb("deliverables"), // Array of deliverable items
+  completionReport: text("completion_report"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  uniqueProjectPhase: index("unique_project_phase").on(table.projectId, table.phaseNumber),
+}));
+
+// Module-milestone relationship table (many modules can belong to one milestone)
+export const moduleMilestones = pgTable("module_milestones", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  moduleId: varchar("module_id").references(() => modules.id, { onDelete: 'cascade' }).notNull(),
+  milestoneId: varchar("milestone_id").references(() => milestones.id, { onDelete: 'cascade' }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Subtasks table for modules (updated to reference modules instead of milestones)
 export const subtasks = pgTable("subtasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 200 }).notNull(),
   description: text("description"),
-  status: taskStatusEnum("status").notNull().default("not_started"),
+  status: text("status").notNull().default("not_started"), // Use text to match existing database
   priority: taskPriorityEnum("priority").notNull().default("medium"),
   startDate: timestamp("start_date"),
   dueDate: timestamp("due_date"),
@@ -231,8 +275,10 @@ export const subtasks = pgTable("subtasks", {
   actualHours: integer("actual_hours").default(0),
   actualDays: integer("actual_days").default(0),
   progressPercent: integer("progress_percent").notNull().default(0),
-  milestoneId: varchar("milestone_id").references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+  moduleId: varchar("module_id").references(() => modules.id, { onDelete: 'cascade' }).notNull(),
   assignedUserId: varchar("assigned_user_id").references(() => users.id),
+  assignedDevId: varchar("assigned_dev_id").references(() => users.id), // Developer assigned to subtask
+  assignedConsultantId: varchar("assigned_consultant_id").references(() => users.id), // Functional consultant assigned to subtask
   createdById: varchar("created_by_id").references(() => users.id).notNull(),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -268,11 +314,11 @@ export const projectAttachments = pgTable("project_attachments", {
   uploadedAt: timestamp("uploaded_at").defaultNow(),
 });
 
-// Task dependencies
-export const taskDependencies = pgTable("task_dependencies", {
+// Module dependencies
+export const moduleDependencies = pgTable("module_dependencies", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  taskId: varchar("task_id").references(() => tasks.id).notNull(),
-  dependsOnTaskId: varchar("depends_on_task_id").references(() => tasks.id).notNull(),
+  moduleId: varchar("module_id").references(() => modules.id, { onDelete: 'cascade' }).notNull(),
+  dependsOnModuleId: varchar("depends_on_module_id").references(() => modules.id, { onDelete: 'cascade' }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -327,8 +373,8 @@ export const userCalendarSettings = pgTable("user_calendar_settings", {
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   managedProjects: many(projects, { relationName: "manager" }),
-  assignedTasks: many(tasks, { relationName: "assignee" }),
-  createdTasks: many(tasks, { relationName: "creator" }),
+  assignedModules: many(modules, { relationName: "assignee" }),
+  createdModules: many(modules, { relationName: "creator" }),
   teamMemberships: many(teamMembers),
   notifications: many(notifications),
   uploadedAttachments: many(projectAttachments),
@@ -351,31 +397,63 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
     fields: [projects.teamId],
     references: [teams.id],
   }),
-  tasks: many(tasks),
+  modules: many(modules),
   attachments: many(projectAttachments),
   invoices: many(invoiceReports),
   collections: many(invoiceCollections),
 }));
 
-export const tasksRelations = relations(tasks, ({ one, many }) => ({
+export const modulesRelations = relations(modules, ({ one, many }) => ({
   project: one(projects, {
-    fields: [tasks.projectId],
+    fields: [modules.projectId],
     references: [projects.id],
   }),
   assignedUser: one(users, {
-    fields: [tasks.assignedUserId],
+    fields: [modules.assignedUserId],
     references: [users.id],
     relationName: "assignee",
   }),
   createdBy: one(users, {
-    fields: [tasks.createdById],
+    fields: [modules.createdById],
     references: [users.id],
     relationName: "creator",
   }),
-  dependencies: many(taskDependencies, { relationName: "task" }),
-  dependentTasks: many(taskDependencies, { relationName: "dependsOn" }),
+  dependencies: many(moduleDependencies, { relationName: "module" }),
+  dependentModules: many(moduleDependencies, { relationName: "dependsOn" }),
   invoices: many(invoiceReports),
   collections: many(invoiceCollections),
+}));
+
+export const milestonesRelations = relations(milestones, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [milestones.projectId],
+    references: [projects.id],
+  }),
+  createdBy: one(users, {
+    fields: [milestones.createdById],
+    references: [users.id],
+    relationName: "creator",
+  }),
+  modules: many(moduleMilestones),
+}));
+
+export const projectPhasesRelations = relations(projectPhases, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [projectPhases.projectId],
+    references: [projects.id],
+  }),
+  modules: many(modules, { relationName: "phaseModules" }),
+}));
+
+export const moduleMilestonesRelations = relations(moduleMilestones, ({ one }) => ({
+  module: one(modules, {
+    fields: [moduleMilestones.moduleId],
+    references: [modules.id],
+  }),
+  milestone: one(milestones, {
+    fields: [moduleMilestones.milestoneId],
+    references: [milestones.id],
+  }),
 }));
 
 export const teamMembersRelations = relations(teamMembers, ({ one, many }) => ({
@@ -428,15 +506,15 @@ export const projectAttachmentsRelations = relations(projectAttachments, ({ one 
   }),
 }));
 
-export const taskDependenciesRelations = relations(taskDependencies, ({ one }) => ({
-  task: one(tasks, {
-    fields: [taskDependencies.taskId],
-    references: [tasks.id],
-    relationName: "task",
+export const moduleDependenciesRelations = relations(moduleDependencies, ({ one }) => ({
+  module: one(modules, {
+    fields: [moduleDependencies.moduleId],
+    references: [modules.id],
+    relationName: "module",
   }),
-  dependsOnTask: one(tasks, {
-    fields: [taskDependencies.dependsOnTaskId],
-    references: [tasks.id],
+  dependsOnModule: one(modules, {
+    fields: [moduleDependencies.dependsOnModuleId],
+    references: [modules.id],
     relationName: "dependsOn",
   }),
 }));
@@ -485,10 +563,16 @@ export const insertProjectSchema = createInsertSchema(projects).omit({
   updatedAt: true,
 });
 
-export const insertTaskSchema = createInsertSchema(tasks).omit({
+export const insertModuleSchema = createInsertSchema(modules).omit({
   id: true,
   actualHours: true,
   completedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertMilestoneSchema = createInsertSchema(milestones).omit({
+  id: true,
   createdAt: true,
   updatedAt: true,
 });
@@ -517,7 +601,7 @@ export const insertProjectAttachmentSchema = createInsertSchema(projectAttachmen
   uploadedAt: true,
 });
 
-export const insertTaskDependencySchema = createInsertSchema(taskDependencies).omit({
+export const insertModuleDependencySchema = createInsertSchema(moduleDependencies).omit({
   id: true,
   createdAt: true,
 });
@@ -546,8 +630,14 @@ export type UpdateTeam = Partial<InsertTeam>;
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = z.infer<typeof insertProjectSchema>;
 
-export type Task = typeof tasks.$inferSelect;
-export type InsertTask = z.infer<typeof insertTaskSchema>;
+export type Module = typeof modules.$inferSelect;
+export type InsertModule = z.infer<typeof insertModuleSchema>;
+
+export type Milestone = typeof milestones.$inferSelect;
+export type InsertMilestone = typeof milestones.$inferInsert;
+
+export type ModuleMilestone = typeof moduleMilestones.$inferSelect;
+export type InsertModuleMilestone = typeof moduleMilestones.$inferInsert;
 
 export type Subtask = typeof subtasks.$inferSelect;
 export type InsertSubtask = z.infer<typeof insertSubtaskSchema>;
@@ -558,8 +648,8 @@ export type InsertTeamMember = z.infer<typeof insertTeamMemberSchema>;
 export type ProjectAttachment = typeof projectAttachments.$inferSelect;
 export type InsertProjectAttachment = z.infer<typeof insertProjectAttachmentSchema>;
 
-export type TaskDependency = typeof taskDependencies.$inferSelect;
-export type InsertTaskDependency = z.infer<typeof insertTaskDependencySchema>;
+export type ModuleDependency = typeof moduleDependencies.$inferSelect;
+export type InsertModuleDependency = z.infer<typeof insertModuleDependencySchema>;
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
@@ -601,7 +691,7 @@ export type InsertExternalNotificationRecipient = typeof externalNotificationRec
 // Invoice reports table for tracking sent invoices
 export const invoiceReports = pgTable("invoice_reports", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  taskId: varchar("task_id").references(() => tasks.id).notNull(),
+  moduleId: varchar("module_id").references(() => modules.id).notNull(),
   projectId: varchar("project_id").references(() => projects.id).notNull(),
   invoiceNumber: varchar("invoice_number", { length: 100 }).unique().notNull(),
   invoiceDate: timestamp("invoice_date").notNull(),
@@ -634,7 +724,7 @@ export const monthlyTargets = pgTable("monthly_targets", {
 export const invoiceCollections = pgTable("invoice_collections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   invoiceId: varchar("invoice_id").references(() => invoiceReports.id).notNull(),
-  taskId: varchar("task_id").references(() => tasks.id).notNull(),
+  moduleId: varchar("module_id").references(() => modules.id).notNull(),
   projectId: varchar("project_id").references(() => projects.id).notNull(),
   collectionDate: timestamp("collection_date").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
@@ -647,9 +737,9 @@ export const invoiceCollections = pgTable("invoice_collections", {
 });
 
 export const invoiceReportsRelations = relations(invoiceReports, ({ one, many }) => ({
-  task: one(tasks, {
-    fields: [invoiceReports.taskId],
-    references: [tasks.id],
+  module: one(modules, {
+    fields: [invoiceReports.moduleId],
+    references: [modules.id],
   }),
   project: one(projects, {
     fields: [invoiceReports.projectId],
@@ -675,9 +765,9 @@ export const invoiceCollectionsRelations = relations(invoiceCollections, ({ one 
     fields: [invoiceCollections.invoiceId],
     references: [invoiceReports.id],
   }),
-  task: one(tasks, {
-    fields: [invoiceCollections.taskId],
-    references: [tasks.id],
+  module: one(modules, {
+    fields: [invoiceCollections.moduleId],
+    references: [modules.id],
   }),
   project: one(projects, {
     fields: [invoiceCollections.projectId],

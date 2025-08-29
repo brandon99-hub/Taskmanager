@@ -1,5 +1,5 @@
 import cors from 'cors';
-import type { Express } from 'express';
+import type { Express, Request, Response, NextFunction } from 'express';
 
 export function setupCORS(app: Express) {
   const corsOptions = {
@@ -29,21 +29,32 @@ export function setupCORS(app: Express) {
       }
     },
     
-    // Allowed HTTP methods
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    // Allowed HTTP methods - Enhanced
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     
-    // Allowed headers
+    // Allowed headers - Enhanced
     allowedHeaders: [
       'Origin',
       'X-Requested-With',
       'Content-Type',
       'Accept',
       'Authorization',
-      'X-CSRF-Token'
+      'X-CSRF-Token',
+      'X-Request-ID',
+      'X-Client-Version',
+      'X-API-Key',
+      'X-Forwarded-For',
+      'X-Real-IP'
     ],
     
-    // Expose headers to client
-    exposedHeaders: ['X-CSRF-Token'],
+    // Expose headers to client - Enhanced
+    exposedHeaders: [
+      'X-CSRF-Token',
+      'X-Request-ID',
+      'X-RateLimit-Limit',
+      'X-RateLimit-Remaining',
+      'X-RateLimit-Reset'
+    ],
     
     // How long to cache preflight requests (24 hours)
     maxAge: 86400,
@@ -51,9 +62,27 @@ export function setupCORS(app: Express) {
     // Handle preflight requests
     preflightContinue: false,
     optionsSuccessStatus: 204,
+    
+    // Enhanced security options
   };
   
   app.use(cors(corsOptions));
+  
+  // Enhanced CORS error handling and logging
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    if (err.message === 'Not allowed by CORS') {
+      // Log blocked CORS requests for security monitoring
+      console.warn(`CORS Blocked: ${req.method} ${req.path} from ${req.ip} - Origin: ${req.get('Origin')}`);
+      
+      // Return a more secure error response
+      return res.status(403).json({
+        error: 'CORS Error',
+        message: 'Cross-origin request not allowed',
+        code: 'CORS_VIOLATION'
+      });
+    }
+    next(err);
+  });
 }
 
 function getAllowedOrigins(): (string | RegExp)[] {

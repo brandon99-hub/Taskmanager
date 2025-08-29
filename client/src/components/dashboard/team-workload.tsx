@@ -140,8 +140,8 @@ export default function TeamWorkload() {
           
                       <div className="space-y-3">
               <h4 className="text-sm font-medium text-gray-900">Top Team Members</h4>
-              {bestTeam.members.slice(0, isMobile ? 3 : 4).map((member) => (
-                <div key={member.userId} className="flex items-center justify-between">
+              {bestTeam.members.slice(0, isMobile ? 3 : 4).map((member, index) => (
+                <div key={`best-team-${bestTeam.teamId}-${member.userId}-${index}`} className="flex items-center justify-between">
                   <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
                     <Avatar className={`${isMobile ? 'w-6 h-6' : 'w-8 h-8'} flex-shrink-0`}>
                       <AvatarImage src={member.user.profileImageUrl} />
@@ -159,14 +159,14 @@ export default function TeamWorkload() {
                           : member.user.email
                         }
                       </p>
-                      <p className="text-xs text-gray-600">
-                        {member.completedTasks}/{member.totalTasks} tasks
-                        {member.highPriorityTasks > 0 && (
-                          <span className="ml-1 text-orange-600">
-                            ({member.completedHighPriorityTasks}/{member.highPriorityTasks} high priority)
-                          </span>
-                        )}
-                      </p>
+                                              <p className="text-xs text-gray-600">
+                          {member.completedTasks}/{member.totalTasks} subtasks
+                          {member.highPriorityTasks > 0 && (
+                            <span className="ml-1 text-orange-600">
+                              ({member.completedHighPriorityTasks}/{member.highPriorityTasks} high priority)
+                            </span>
+                          )}
+                        </p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-2 flex-shrink-0">
@@ -209,7 +209,7 @@ export default function TeamWorkload() {
               
               return (
                 <div 
-                  key={member.userId} 
+                  key={`workload-${member.userId}`} 
                   className={`flex items-center ${isMobile ? 'flex-col space-y-2' : 'justify-between'}`}
                   data-testid={`workload-member-${member.userId}`}
                 >
@@ -248,7 +248,7 @@ export default function TeamWorkload() {
                   <div className={`flex items-center ${isMobile ? 'w-full justify-between' : 'space-x-3'}`}>
                     <div className={`${isMobile ? 'text-left' : 'text-right'}`}>
                       <p className="text-xs text-gray-600" data-testid={`text-member-tasks-${member.userId}`}>
-                        {member.completedTasks}/{member.totalTasks} tasks
+                        {member.completedTasks}/{member.totalTasks} subtasks
                       </p>
                     </div>
                     

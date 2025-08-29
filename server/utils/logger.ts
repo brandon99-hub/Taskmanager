@@ -94,27 +94,57 @@ transports.push(
   })
 );
 
+// Exception logs (uncaught exceptions)
+transports.push(
+  new DailyRotateFile({
+    filename: path.join(logDir, 'exceptions-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '50m',
+    maxFiles: '90d',
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.json()
+    ),
+  })
+);
+
+// Rejection logs (unhandled promise rejections)
+transports.push(
+  new DailyRotateFile({
+    filename: path.join(logDir, 'rejections-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '50m',
+    maxFiles: '90d',
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.json()
+    ),
+  })
+);
+
 // Create the logger
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'development' ? 'debug' : 'info'),
   levels,
-  format,
   transports,
+  // Enhanced error handling
+  exitOnError: false,
   // Handle uncaught exceptions and unhandled rejections
   exceptionHandlers: [
     new DailyRotateFile({
       filename: path.join(logDir, 'exceptions-%DATE%.log'),
       datePattern: 'YYYY-MM-DD',
-      maxSize: '20m',
-      maxFiles: '30d',
+      maxSize: '50m',
+      maxFiles: '90d',
     }),
   ],
+  // Handle unhandled promise rejections
   rejectionHandlers: [
     new DailyRotateFile({
       filename: path.join(logDir, 'rejections-%DATE%.log'),
       datePattern: 'YYYY-MM-DD',
-      maxSize: '20m',
-      maxFiles: '30d',
+      maxSize: '50m',
+      maxFiles: '90d',
     }),
   ],
 });
@@ -137,6 +167,61 @@ const securityLogger = winston.createLogger({
 });
 
 // Export loggers and helper functions
+
+// Enhanced error logging with security context
+export function logSecurityError(error: any, context: any = {}) {
+  logger.error('Security Error', {
+    error: {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      statusCode: error.statusCode,
+    },
+    context: {
+      ...context,
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV,
+      hostname: require('os').hostname(),
+      processId: process.pid,
+    }
+  });
+}
+
+// Enhanced access logging
+export function logAccess(req: any, res: any, responseTime: number) {
+  const accessData = {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    path: req.path,
+    statusCode: res.statusCode,
+    responseTime,
+    ip: req.ip,
+    userAgent: req.get('User-Agent'),
+    userId: req.user?.id || 'anonymous',
+    userRole: req.user?.role || 'anonymous',
+    referer: req.get('Referer'),
+  };
+
+  // Log to access log file
+  const accessLogger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.json()
+    ),
+    transports: [
+      new DailyRotateFile({
+        filename: path.join(logDir, 'access-%DATE%.log'),
+        datePattern: 'YYYY-MM-DD',
+        maxSize: '20m',
+        maxFiles: '30d',
+      })
+    ]
+  });
+
+  accessLogger.info('Access Log', accessData);
+}
+
 export default logger;
 export { securityLogger };
 

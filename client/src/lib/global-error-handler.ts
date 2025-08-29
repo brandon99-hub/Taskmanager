@@ -7,13 +7,16 @@ export function setupGlobalErrorHandling() {
     const error = event.reason;
     
     // Handle database connection errors and security issues
-    if (error?.message?.includes('ETIMEDOUT') || 
-        error?.message?.includes('ECONNREFUSED') ||
-        error?.message?.includes('500') ||
-        error?.message?.includes('Internal Server Error') ||
-        error?.message?.includes('NetworkError') ||
-        error?.message?.includes('Failed to fetch') ||
-        error?.message?.includes('timeout')) {
+    if (error && typeof error === 'object' && 'message' in error && 
+        (typeof error.message === 'string' && (
+          error.message.includes('ETIMEDOUT') || 
+          error.message.includes('ECONNREFUSED') ||
+          error.message.includes('500') ||
+          error.message.includes('Internal Server Error') ||
+          error.message.includes('NetworkError') ||
+          error.message.includes('Failed to fetch') ||
+          error.message.includes('timeout')
+        ))) {
       
       // Clear any cached data and redirect to login
       localStorage.removeItem('taskflow-auth');
@@ -32,13 +35,16 @@ export function setupGlobalErrorHandling() {
     const error = event.error;
     
     // Handle database connection errors and security issues
-    if (error?.message?.includes('ETIMEDOUT') || 
-        error?.message?.includes('ECONNREFUSED') ||
-        error?.message?.includes('500') ||
-        error?.message?.includes('Internal Server Error') ||
-        error?.message?.includes('NetworkError') ||
-        error?.message?.includes('Failed to fetch') ||
-        error?.message?.includes('timeout')) {
+    if (error && typeof error === 'object' && 'message' in error &&
+        (typeof error.message === 'string' && (
+          error.message.includes('ETIMEDOUT') || 
+          error.message.includes('ECONNREFUSED') ||
+          error.message.includes('500') ||
+          error.message.includes('Internal Server Error') ||
+          error.message.includes('NetworkError') ||
+          error.message.includes('Failed to fetch') ||
+          error.message.includes('timeout')
+        ))) {
       
       // Clear any cached data and redirect to login
       localStorage.removeItem('taskflow-auth');
@@ -76,11 +82,14 @@ export function setupGlobalErrorHandling() {
       return response;
     } catch (error) {
       // Handle network errors
-      if (error?.message?.includes('ETIMEDOUT') || 
-          error?.message?.includes('ECONNREFUSED') ||
-          error?.message?.includes('NetworkError') ||
-          error?.message?.includes('Failed to fetch') ||
-          error?.message?.includes('timeout')) {
+      if (error && typeof error === 'object' && 'message' in error &&
+          (typeof error.message === 'string' && (
+            error.message.includes('ETIMEDOUT') || 
+            error.message.includes('ECONNREFUSED') ||
+            error.message.includes('NetworkError') ||
+            error.message.includes('Failed to fetch') ||
+            error.message.includes('timeout')
+          ))) {
         
         // Clear any cached data and redirect to login
         localStorage.removeItem('taskflow-auth');

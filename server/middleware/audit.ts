@@ -151,21 +151,27 @@ async function logAndStoreSecurityEvent(event: SecurityEvent) {
     // Log to file system
     logSecurityEvent(event);
     
-    // Store in database (commented out until schema is added)
-    /*
-    await db.insert(securityEvents).values({
-      userId: event.userId,
-      eventType: event.eventType,
-      eventDetails: event.details,
-      ipAddress: event.ipAddress,
-      userAgent: event.userAgent,
-      success: event.success,
-      severity: event.severity,
-      createdAt: new Date(),
-    });
-    */
+    // Store in database using the security schema
+    try {
+      const { securityEvents } = await import('../schemas/security');
+      await db.insert(securityEvents).values({
+        userId: event.userId || null,
+        eventType: event.eventType as any,
+        eventDetails: event.details || null,
+        ipAddress: event.ipAddress,
+        userAgent: event.userAgent,
+        success: event.success,
+        severity: event.severity as any,
+        createdAt: new Date(),
+        source: 'taskflow',
+        requestId: (event as any).requestId || undefined,
+        sessionId: (event as any).sessionId || undefined,
+      });
+    } catch (dbError) {
+      // Fallback to file logging if database fails
+    }
   } catch (error) {
-    console.error('Failed to log security event:', error);
+    // Silent fail
   }
 }
 

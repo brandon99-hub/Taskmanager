@@ -180,22 +180,23 @@ export default function Navigation() {
     <nav className="bg-surface shadow-sm border-b border-gray-200 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex justify-between h-14 sm:h-16">
-          <div className="flex items-center min-w-0 flex-1">
+          {/* Left side - Logo and Brand */}
+          <div className="flex items-center">
             <div className="flex-shrink-0 flex items-center">
               {/* AppKings Logo */}
               <img 
                 src="/Appkings.png" 
                 alt="AppKings Logo" 
-                className="h-12 w-auto mr-3"
+                className="h-16 w-auto mr-4"
               />
-              <h1 className="text-lg sm:text-xl font-medium text-gray-900 truncate" data-testid="text-app-title">
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate" data-testid="text-app-title">
                 {isMobile ? "AppKings" : "AppKings Solutions"}
               </h1>
             </div>
-            
-            {/* Desktop Navigation */}
-            <div className="hidden md:block ml-10">
-              <div className="flex items-baseline space-x-4">
+          </div>
+          
+          {/* Center - Desktop Navigation */}
+          <div className="hidden md:flex items-center justify-center flex-1">
                 {navigationItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = location === item.path;
@@ -213,8 +214,6 @@ export default function Navigation() {
                     </Link>
                   );
                 })}
-              </div>
-            </div>
           </div>
           
           {/* Right side with logo and user menu */}
@@ -274,7 +273,7 @@ export default function Navigation() {
                   </div>
                 )}
                 
-                <ScrollArea className="max-h-80">
+                <ScrollArea className="max-h-96">
                   {filteredNotifications.length === 0 ? (
                     <div className="p-4 text-center text-gray-500">
                       <Bell className="h-8 w-8 mx-auto mb-2 text-gray-300" />
@@ -343,21 +342,6 @@ export default function Navigation() {
                     </div>
                   )}
                 </ScrollArea>
-                
-                {filteredNotifications.length > 0 && (
-                  <div className="p-3 border-t bg-gray-50">
-                    <Link href="/home">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full text-xs text-gray-600 hover:text-gray-700"
-                        onClick={() => setIsNotificationOpen(false)}
-                      >
-                        View all notifications
-                      </Button>
-                    </Link>
-                  </div>
-                )}
               </DropdownMenuContent>
             </DropdownMenu>
             

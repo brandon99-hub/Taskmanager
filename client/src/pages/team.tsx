@@ -60,6 +60,9 @@ export default function Team() {
     financeEmail: 'finance@company.com',
     accountManagerEmail: 'accountmanager@company.com'
   });
+
+  // Debug log for initial state
+  console.log('Initial segment leader data:', segmentLeaderData);
   
   // Loading state for segment leader save
   const [isSavingSegmentLeaders, setIsSavingSegmentLeaders] = useState(false);
@@ -72,7 +75,9 @@ export default function Team() {
         credentials: 'include' 
       });
       if (!res.ok) return { financeEmail: '', accountManagerEmail: '' };
-      return res.json();
+      const data = await res.json();
+      console.log('System emails loaded:', data); // Debug log
+      return data;
     },
     enabled: !!isAuthenticated,
   });
@@ -180,6 +185,8 @@ export default function Team() {
         setIsSegmentLeaderModalOpen(false);
         // Refresh data if needed
         queryClient.invalidateQueries({ queryKey: ['/api/segment-leaders'] });
+        // Also refresh the system emails to show the updated values
+        queryClient.invalidateQueries({ queryKey: ['/api/system-config/emails'] });
       } else {
         throw new Error('Failed to save segment leaders');
       }
@@ -277,6 +284,18 @@ export default function Team() {
       form.setValue('accountManagerEmail', systemEmails.accountManagerEmail || '');
     }
   }, [isCreateTeamOpen, systemEmails, form]);
+
+  // Auto-fill segment leader emails when system emails are loaded
+  useEffect(() => {
+    if (systemEmails) {
+      console.log('Updating segment leader data with system emails:', systemEmails); // Debug log
+      setSegmentLeaderData(prev => ({
+        ...prev,
+        financeEmail: systemEmails.financeEmail || 'finance@company.com',
+        accountManagerEmail: systemEmails.accountManagerEmail || 'accountmanager@company.com'
+      }));
+    }
+  }, [systemEmails]);
 
   // Fetch teams and workload data
 
@@ -1214,7 +1233,7 @@ export default function Team() {
               <CardContent className="text-center py-12">
                 <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-workload">No workload data available</h3>
-                <p className="text-gray-600">Team members with assigned tasks will appear here</p>
+                <p className="text-gray-600">Team members with assigned subtasks will appear here</p>
               </CardContent>
             </Card>
           ) : (
@@ -1265,7 +1284,7 @@ export default function Team() {
                       <div className="flex items-center space-x-6">
                         <div className="text-right">
                           <p className="text-sm font-medium" data-testid={`text-member-tasks-${member.userId}`}>
-                            {member.completedTasks}/{member.totalTasks} tasks
+                            {member.completedTasks}/{member.totalTasks} subtasks
                           </p>
                           <p className="text-xs text-gray-600">
                             {member.workloadPercentage}% completion rate
@@ -1374,7 +1393,7 @@ export default function Team() {
                       <div className="text-3xl font-bold text-purple-700 mb-1">
                         {teamDetails?.totalTasks || 0}
                       </div>
-                      <div className="text-sm text-purple-600 font-medium">Total Tasks</div>
+                      <div className="text-sm text-purple-600 font-medium">Total Subtasks</div>
                       <div className="text-xs text-purple-500 mt-1">
                         {teamDetails?.members?.reduce((sum: number, m: any) => sum + (m.completedTasks || 0), 0) || 0} completed
                       </div>
@@ -1501,7 +1520,7 @@ export default function Team() {
                           <div className="flex items-center space-x-6">
                             <div className="text-right">
                               <p className="text-sm font-medium">
-                                {member.completedTasks || 0}/{member.totalTasks || 0} tasks
+                                {member.completedTasks || 0}/{member.totalTasks || 0} subtasks
                               </p>
                               <p className="text-xs text-gray-600">
                                 {member.workloadPercentage || 0}% completion rate

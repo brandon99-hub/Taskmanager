@@ -1,7 +1,7 @@
 import { emailService, EmailNotificationData } from './emailService';
 import { storage } from '../storage';
-import { InsertNotification } from '@shared/schema';
-import { formatDueDate, shouldSendDueSoonNotification, getNotificationThreshold } from '@shared/dateUtils';
+import { InsertNotification } from '../../shared/schema';
+import { formatDueDate, shouldSendDueSoonNotification, getNotificationThreshold } from '../../shared/dateUtils';
 
 export interface NotificationContext {
   task?: any;

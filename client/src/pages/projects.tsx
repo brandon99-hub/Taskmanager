@@ -16,6 +16,7 @@ import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangl
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { calculateWeightBasedProgress } from "@/lib/utils";
 
 export default function Projects() {
   const auth = useAuth() as any;
@@ -45,6 +46,20 @@ export default function Projects() {
 
   const { data: projects = [], isLoading: projectsLoading, error } = useQuery<any[]>({
     queryKey: ['/api/projects'],
+    enabled: !!isAuthenticated,
+  });
+
+  // Fetch milestones for all projects to calculate weight-based progress
+  const { data: allMilestones = [], isLoading: milestonesLoading } = useQuery<any[]>({
+    queryKey: ['/api/tasks'],
+    queryFn: async () => {
+      const res = await fetch('/api/tasks', { 
+        credentials: 'include', 
+        cache: 'no-store' 
+      });
+      if (!res.ok) throw new Error('Failed to fetch tasks');
+      return res.json();
+    },
     enabled: !!isAuthenticated,
   });
   const [query, setQuery] = useState("");
@@ -115,6 +130,12 @@ export default function Projects() {
     return overdueTasks.filter((task: any) => task.projectId === projectId).length;
   };
 
+  // Calculate weight-based progress for a project using our utility function
+  const getProjectWeightBasedProgress = (projectId: string) => {
+    const projectMilestones = allMilestones.filter(milestone => milestone.projectId === projectId);
+    return calculateWeightBasedProgress(projectMilestones);
+  };
+
   const handleDeactivateProject = async (e: React.MouseEvent, project: any) => {
     e.stopPropagation();
     
@@ -157,7 +178,7 @@ export default function Projects() {
     }
   }, [error, toast]);
 
-  if (isLoading || !isAuthenticated) {
+  if (isLoading || milestonesLoading || !isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
@@ -348,6 +369,7 @@ export default function Projects() {
                   <th className="text-left p-3">Segment</th>
                   <th className="text-left p-3">Status</th>
                   <th className="text-left p-3">Progress</th>
+                  <th className="text-left p-3">Overdue</th>
                   <th className="text-left p-3">Client Email</th>
                   <th className="text-left p-3">Contract Amount</th>
                   <th className="text-left p-3">Paid</th>
@@ -360,6 +382,7 @@ export default function Projects() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {currentProjects.map((project: any) => {
+                  const overdueCount = getProjectOverdueCount(project.id);
                   const milestoneCount = project.milestoneCount || 0;
                   const completedMilestoneCount = project.completedMilestoneCount || 0;
                   const completionRate = milestoneCount > 0 ? Math.round((completedMilestoneCount / milestoneCount) * 100) : 0;
@@ -435,10 +458,34 @@ export default function Projects() {
                         </Badge>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex items-center gap-2">
-                          <Progress value={project.progress} className="h-2 w-16" />
-                          <span className="text-sm text-gray-600">{project.progress}%</span>
-                        </div>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center gap-2 cursor-help">
+                              <Progress value={getProjectWeightBasedProgress(project.id)} className="h-2 w-16" />
+                              <span className="text-sm text-gray-600">{getProjectWeightBasedProgress(project.id)}%</span>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Weight-based progress (Critical=4, High=3, Medium=2, Low=1)</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </td>
+                      <td className="px-4 py-4">
+                        {overdueCount > 0 ? (
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <Badge variant="destructive" className="flex items-center space-x-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                <span>{overdueCount}</span>
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{overdueCount} overdue task{overdueCount > 1 ? 's' : ''}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <span className="text-sm text-gray-500">-</span>
+                        )}
                       </td>
 
                       <td className="px-4 py-4 text-sm text-gray-900">
@@ -597,12 +644,19 @@ export default function Projects() {
                           </Badge>
                         </div>
                         <span className="text-sm text-gray-500" data-testid={`text-project-progress-${project.id}`}>
-                          {project.progress}% Complete
+                          {getProjectWeightBasedProgress(project.id)}% Complete
                         </span>
                       </div>
 
                       {/* Progress Bar */}
-                      <Progress value={project.progress} className="h-2" data-testid={`progress-project-${project.id}`} />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Progress value={getProjectWeightBasedProgress(project.id)} className="h-2 cursor-help" data-testid={`progress-project-${project.id}`} />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Weight-based progress (Critical=4, High=3, Medium=2, Low=1)</p>
+                        </TooltipContent>
+                      </Tooltip>
 
                       {/* Project Details */}
                       <div className="space-y-2 text-sm text-gray-600">

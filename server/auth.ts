@@ -6,7 +6,7 @@ import type { Express, RequestHandler } from "express";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 import { emailService } from "./services/emailService";
-import { registerUserSchema, loginUserSchema, type RegisterUser, type LoginUser } from "@shared/schema";
+import { registerUserSchema, loginUserSchema, type RegisterUser, type LoginUser } from "../shared/schema";
 import { enhancedRegisterUserSchema, enhancedPasswordSchema, assessPasswordStrength } from "./middleware/validation";
 import { trackFailedLogin, isAccountLocked, clearFailedAttempts } from "./middleware/audit";
 import { logAuthSuccess, logAuthFailure, logAccountLockout } from "./utils/logger";
@@ -18,11 +18,15 @@ export function getSession() {
     throw new Error("SESSION_SECRET environment variable is required");
   }
   
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL environment variable is required");
+  }
+  
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
+    createTableIfMissing: true,
     ttl: sessionTtl,
     tableName: "sessions",
   });
@@ -63,12 +67,13 @@ export async function setupAuth(app: Express) {
   passport.use(new LocalStrategy(
     {
       usernameField: 'email',
-      passwordField: 'password'
+      passwordField: 'password',
+      passReqToCallback: true // This allows us to access the request object
     },
-    async (email, password, done) => {
+    async (req: any, email, password, done) => {
       try {
-        const clientIP = ''; // Will be set by middleware
-        const userAgent = ''; // Will be set by middleware
+        const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+        const userAgent = req.get('User-Agent') || 'unknown';
         
         // Check if account is locked
         if (isAccountLocked(email) || isAccountLocked(clientIP)) {
@@ -192,7 +197,6 @@ export async function setupAuth(app: Express) {
           }))
         });
       }
-      console.error("Registration error:", error);
       res.status(500).json({ message: "Failed to register user" });
     }
   });
@@ -245,7 +249,6 @@ export async function setupAuth(app: Express) {
       const { password, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
     } catch (error) {
-      console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
     }
   });
@@ -285,7 +288,6 @@ export async function setupAuth(app: Express) {
 
       res.json({ message: "If an account with that email exists, we've sent a reset link" });
     } catch (error) {
-      console.error("Forgot password error:", error);
       res.status(500).json({ message: "Failed to process request" });
     }
   });
@@ -314,7 +316,6 @@ export async function setupAuth(app: Express) {
 
       res.json({ message: "Password reset successfully" });
     } catch (error) {
-      console.error("Reset password error:", error);
       res.status(500).json({ message: "Failed to reset password" });
     }
   });

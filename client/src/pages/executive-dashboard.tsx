@@ -214,9 +214,10 @@ export default function ExecutiveDashboard() {
 
     // Revenue calculations - Use corrected invoice report data for consistency
     // The invoice report now uses milestone due dates (not completion dates) and includes ALL milestones
-    const totalRevenue = invoice?.monthlyTargets?.total || 0; // Total expected revenue for the year
+    const expectedRevenue = invoice?.monthlyTargets?.total || 0; // Total expected revenue for the year
+    const totalRevenue = invoice?.invoiceSent?.total || 0; // Total revenue (invoices sent)
     const collectedRevenue = invoice?.actualCollections?.total || 0; // Actually collected revenue
-    const pendingRevenue = totalRevenue - collectedRevenue; // Pending revenue
+    const pendingRevenue = totalRevenue - collectedRevenue; // Pending revenue (sent but not paid)
 
     // Use the corrected invoice data for yearly metrics
     const yearlyTarget = invoice?.monthlyTargets?.total || 0;
@@ -262,6 +263,7 @@ export default function ExecutiveDashboard() {
       completedMilestones,
       inProgressMilestones,
       overdueMilestones,
+      expectedRevenue,
       totalRevenue,
       collectedRevenue,
       pendingRevenue,
@@ -373,9 +375,6 @@ export default function ExecutiveDashboard() {
               <div className="w-24 h-24 mx-auto bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl shadow-2xl flex items-center justify-center animate-pulse">
                 <BarChart3 className="h-12 w-12 text-white animate-bounce" />
               </div>
-              {/* Rotating rings around the icon */}
-              <div className="absolute inset-0 border-4 border-blue-300 border-t-blue-600 rounded-2xl animate-spin"></div>
-              <div className="absolute inset-2 border-4 border-purple-300 border-t-purple-600 rounded-2xl animate-spin" style={{ animationDirection: 'reverse', animationDuration: '2s' }}></div>
             </div>
 
             {/* Main loading text */}
@@ -484,64 +483,20 @@ export default function ExecutiveDashboard() {
     );
   }
   
-  // Invoice data preparation for the new invoice chart
+    // Invoice data preparation for the new invoice chart - Clean and Simple
   const invoiceChartData = (() => {
-    if (!tasksData || !projectsData) return [];
+    if (!invoiceData || !invoiceData.monthlyTrend) return [];
     
-    // Get filtered data based on selected period
-    const filteredTasks = filterDataByPeriod(tasksData, selectedPeriod, selectedYear, selectedMonth);
-    const filteredProjects = filterDataByPeriod(projectsData, selectedPeriod, selectedYear, selectedMonth);
-    
-    // Group invoices by time period
-    const timeGroups = new Map();
-    
-    filteredTasks.forEach((task: any) => {
-      if (task.status === 'done' && task.feeAmount) {
-        const taskDate = new Date(task.dueDate || task.createdAt || Date.now());
-        let timeKey = '';
-        
-        switch (selectedPeriod) {
-          case 'month':
-            timeKey = taskDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-            break;
-          case 'quarter':
-            const quarter = Math.ceil((taskDate.getMonth() + 1) / 3);
-            timeKey = `Q${quarter} ${taskDate.getFullYear()}`;
-            break;
-          case 'year':
-            timeKey = taskDate.getFullYear().toString();
-            break;
-          default:
-            timeKey = taskDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-        }
-        
-        if (!timeGroups.has(timeKey)) {
-          timeGroups.set(timeKey, { sent: 0, paid: 0, sentAmount: 0, paidAmount: 0 });
-        }
-        
-        const group = timeGroups.get(timeKey);
-        group.sent += 1;
-        group.sentAmount += parseFloat(task.feeAmount || '0');
-        
-        if (task.billingStatus === 'sent') {
-          group.paid += 1;
-          group.paidAmount += parseFloat(task.feeAmount || '0');
-        }
-      }
-    });
-    
-    // Convert to array and sort by date
-    return Array.from(timeGroups.entries()).map(([timeKey, data]) => ({
-      timeKey,
-      sent: data.sent,
-      paid: data.paid,
-      sentAmount: data.sentAmount,
-      paidAmount: data.paidAmount,
-      pending: data.sent - data.paid,
-      pendingAmount: data.sentAmount - data.paidAmount
-    })).sort((a, b) => {
-      // Sort by date (simple string comparison for now)
-      return a.timeKey.localeCompare(b.timeKey);
+    // Transform the invoice data for the chart
+    return invoiceData.monthlyTrend.map((month: any) => ({
+      month: month.month,
+      sent: month.invoicesSent || 0,
+      paid: month.invoicesPaid || 0,
+      sentAmount: month.sent || 0,
+      paidAmount: month.paid || 0
+    })).sort((a: any, b: any) => {
+      const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return monthOrder.indexOf(a.month) - monthOrder.indexOf(b.month);
     });
   })();
 
@@ -581,15 +536,24 @@ export default function ExecutiveDashboard() {
     { name: 'Overdue', value: metrics.overdueMilestones, color: '#EF4444' }
   ];
 
-  // Prepare data for the new pie chart - use actual collected revenue
-  const segmentPerformanceData = Object.entries(metrics.segmentData)
-    .filter(([segment, data]: [string, any]) => data.collectedRevenue > 0) // Only show segments with actual revenue
-    .map(([segment, data]: [string, any]) => ({
-      name: segment.charAt(0).toUpperCase() + segment.slice(1),
-      value: data.collectedRevenue, // Use actual collected revenue instead of budget
-      color: segment === 'academic' ? '#3B82F6' : segment === 'parastals' ? '#10B981' : '#8B5CF6' // Assign colors based on segment
-    }))
-    .sort((a, b) => b.value - a.value); // Sort by revenue descending
+  // Prepare data for the new pie chart - use REAL invoice data from API
+  const segmentPerformanceData = (() => {
+    if (!invoiceData || !invoiceData.segmentBreakdown) return [];
+    
+    // Use real segment data from invoice API
+    const segmentBreakdown = invoiceData.segmentBreakdown;
+    
+    return segmentBreakdown
+      .filter((segment: any) => segment.collected > 0) // Only show segments with actual collections
+      .map((segment: any) => ({
+        name: segment.segment.charAt(0).toUpperCase() + segment.segment.slice(1),
+        value: segment.collected || 0, // Use real collected amount
+        color: segment.segment === 'academic' ? '#3B82F6' : 
+               segment.segment === 'parastals' ? '#10B981' : 
+               segment.segment === 'private' ? '#8B5CF6' : '#6B7280' // Default color for other segments
+      }))
+      .sort((a: any, b: any) => b.value - a.value); // Sort by revenue descending
+  })();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
@@ -598,8 +562,8 @@ export default function ExecutiveDashboard() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
         
         {/* Executive Dashboard Header */}
-        <div className="mb-12">
-          <div className="text-center mb-8">
+        <div className="mb-6">
+          <div className="text-center mb-4">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl mb-6">
               <BarChart3 className="h-8 w-8 text-white" />
             </div>
@@ -704,7 +668,7 @@ export default function ExecutiveDashboard() {
         </div>
 
         {/* Executive KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-6">
           {/* Total Revenue */}
           <Card className="bg-gradient-to-br from-emerald-600 to-green-700 border-0 shadow-2xl transform hover:scale-105 transition-all duration-300">
             <CardHeader className="pb-4">
@@ -810,8 +774,8 @@ export default function ExecutiveDashboard() {
         </div>
 
         {/* Executive Charts Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-12">
-          {/* Invoice Sent vs Paid Chart - More compact */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          {/* Invoice Sent vs Paid Chart - Fresh Start */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
             <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-emerald-50 to-green-100/80">
               <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-3">
@@ -821,219 +785,158 @@ export default function ExecutiveDashboard() {
                 Invoice Sent vs Paid
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-4">
-              {/* Chart Description */}
-              <div className="mb-3 text-center">
-                <p className="text-slate-600 text-xs">
-                  Track your invoice collection performance over time
-                </p>
-                        </div>
-              
-              {/* Invoice Chart */}
+            <CardContent className="p-6">
               {!invoiceChartData || invoiceChartData.length === 0 ? (
-                <div className="h-56 flex items-center justify-center">
+                <div className="h-48 flex items-center justify-center">
                   <div className="text-center text-slate-500">
-                    <div className="text-lg font-medium mb-2">📊 Loading Invoice Data...</div>
-                    <div className="text-sm">Preparing invoice chart with real-time data</div>
+                    <div className="text-sm font-medium">📊 No invoice data available</div>
+                    <div className="text-xs text-slate-400 mt-1">Select a different time period</div>
                   </div>
                 </div>
               ) : (
                 <>
-                <div className="h-56">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={invoiceChartData}>
-                    <defs>
-                        <linearGradient id="sentGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.8} />
-                          <stop offset="100%" stopColor="#3B82F6" stopOpacity={0.1} />
-                      </linearGradient>
-                        <linearGradient id="paidGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#10B981" stopOpacity={0.8} />
-                          <stop offset="100%" stopColor="#10B981" stopOpacity={0.1} />
-                      </linearGradient>
-                        <linearGradient id="pendingGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.8} />
-                          <stop offset="100%" stopColor="#F59E0B" stopOpacity={0.1} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" opacity={0.6} />
-                    <XAxis 
-                        dataKey="timeKey" 
-                        stroke="#64748b" 
-                      axisLine={false}
-                      tickLine={false}
-                        tick={{ fill: '#475569', fontSize: 12 }} 
-                    />
-                    <YAxis 
-                        yAxisId="left"
-                        stroke="#64748b" 
-                      axisLine={false}
-                      tickLine={false}
-                        tick={{ fill: '#475569', fontSize: 12 }}
-                        label={{ value: 'Invoice Count', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#475569' } }}
-                      />
-                      <YAxis 
-                        yAxisId="right"
-                        orientation="right"
-                        stroke="#64748b" 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{ fill: '#475569', fontSize: 12 }}
-                        label={{ value: 'Amount (KSH)', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fill: '#475569' } }}
-                      />
-                      
-                      {/* Enhanced Tooltip */}
-                    <Tooltip 
-                      content={({ active, payload, label }) => {
-                        if (active && payload && payload.length) {
-                          const data = payload[0].payload;
-                          return (
-                            <div className="bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl shadow-2xl p-4 max-w-sm">
-                              <div className="space-y-3">
-                                <div className="border-b border-slate-200 pb-2">
-                                    <h3 className="font-bold text-slate-800 text-lg">{data.timeKey}</h3>
-                                    <p className="text-sm text-slate-600">Invoice Summary</p>
-                                </div>
-                                
-                                <div className="space-y-2">
-                                  <div className="flex justify-between">
+                  <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={invoiceChartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" opacity={0.6} />
+                        <XAxis 
+                          dataKey="month" 
+                          stroke="#64748b" 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fill: '#475569', fontSize: 12 }} 
+                        />
+                        <YAxis 
+                          yAxisId="left"
+                          stroke="#64748b" 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fill: '#475569', fontSize: 12 }}
+                          label={{ value: 'Invoice Count', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#64748b' } }}
+                        />
+                        <YAxis 
+                          yAxisId="right"
+                          orientation="right"
+                          stroke="#64748b" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fill: '#475569', fontSize: 12 }}
+                          label={{ value: 'Amount (KES)', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fill: '#64748b' } }}
+                        />
+                        
+                        <Tooltip 
+                          content={({ active, payload, label }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-white border border-slate-200 rounded-lg shadow-lg p-4">
+                                  <div className="text-sm font-semibold mb-3 text-slate-800">{data.month}</div>
+                                  <div className="space-y-2">
+                                    <div className="flex justify-between items-center">
                                       <span className="text-slate-600">Invoices Sent:</span>
-                                      <span className="font-semibold text-blue-600">{data.sent}</span>
-                                  </div>
-                                  <div className="flex justify-between">
+                                      <span className="text-blue-600 font-semibold">{data.sent}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
                                       <span className="text-slate-600">Invoices Paid:</span>
-                                      <span className="font-semibold text-green-600">{data.paid}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                      <span className="text-slate-600">Pending:</span>
-                                      <span className="font-semibold text-orange-600">{data.pending}</span>
-                                  </div>
-                                </div>
-                                
-                                  <div className="space-y-2 pt-2 border-t border-slate-200">
-                                  <div className="flex justify-between">
+                                      <span className="text-green-600 font-semibold">{data.paid}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
                                       <span className="text-slate-600">Amount Sent:</span>
-                                      <span className="font-semibold text-blue-600">KSh {data.sentAmount.toLocaleString()}</span>
-                                  </div>
-                                  <div className="flex justify-between">
+                                      <span className="text-blue-600 font-semibold">KSh {data.sentAmount.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
                                       <span className="text-slate-600">Amount Paid:</span>
-                                      <span className="font-semibold text-green-600">KSh {data.paidAmount.toLocaleString()}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                      <span className="text-slate-600">Pending Amount:</span>
-                                      <span className="font-semibold text-orange-600">KSh {data.pendingAmount.toLocaleString()}</span>
+                                      <span className="text-green-600 font-semibold">KSh {data.paidAmount.toLocaleString()}</span>
+                                    </div>
                                   </div>
                                 </div>
-                                
-                                  <div className="bg-gradient-to-r from-blue-50 to-green-50 p-3 rounded-lg border border-blue-200">
-                                    <div className="text-center text-sm text-blue-800">
-                                      <div className="font-semibold mb-1">Collection Rate</div>
-                                      <div className="text-lg font-bold text-blue-900">
-                                        {data.sentAmount > 0 ? ((data.paidAmount / data.sentAmount) * 100).toFixed(1) : 0}%
-                                      </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
-                    />
-                    
-                      <Legend />
-                      
-                      {/* Invoice Count Bars */}
-                      <Bar 
-                        yAxisId="left"
-                        dataKey="sent" 
-                        fill="url(#sentGradient)" 
-                      radius={[4, 4, 0, 0]}
-                        name="Invoices Sent"
-                        maxBarSize={40}
-                        opacity={0.8}
-                      />
-                      <Bar 
-                        yAxisId="left"
-                        dataKey="paid" 
-                        fill="url(#paidGradient)" 
-                      radius={[4, 4, 0, 0]}
-                        name="Invoices Paid"
-                        maxBarSize={40}
-                      opacity={0.9}
-                    />
-                    
-                      {/* Amount Line */}
-                    <Line 
-                        yAxisId="right"
-                      type="monotone" 
-                        dataKey="sentAmount" 
-                        stroke="#3B82F6" 
-                        strokeWidth={3}
-                        name="Amount Sent (KSH)"
-                        dot={{ fill: '#3B82F6', strokeWidth: 2, r: 6 }}
-                        activeDot={{ r: 8, stroke: '#3B82F6', strokeWidth: 3 }}
-                      />
-                      <Line
-                        yAxisId="right"
-                        type="monotone"
-                        dataKey="paidAmount" 
-                        stroke="#10B981" 
-                        strokeWidth={3}
-                        name="Amount Paid (KSH)"
-                        dot={{ fill: '#10B981', strokeWidth: 2, r: 6 }}
-                        activeDot={{ r: 8, stroke: '#10B981', strokeWidth: 3 }}
-                      />
-                  </ComposedChart>
-                </ResponsiveContainer>
-                </div>
-                
-                {/* Invoice Summary Metrics */}
-                <div className="mt-6 p-4 bg-gradient-to-r from-slate-50 to-blue-50 rounded-xl border border-slate-200">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="text-center">
-                    <div className="text-lg font-bold text-blue-700">
-                        {invoiceChartData.reduce((sum, item) => sum + item.sent, 0)}
-                    </div>
-                      <div className="text-xs text-blue-600">Total Sent</div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        
+                        <Legend 
+                          wrapperStyle={{
+                            paddingTop: '20px',
+                            fontSize: '12px',
+                            fontWeight: '500'
+                          }}
+                        />
+                        
+                        {/* Invoice Count Bars */}
+                        <Bar 
+                          yAxisId="left"
+                          dataKey="sent" 
+                          fill="#3B82F6" 
+                          radius={[4, 4, 0, 0]}
+                          name="Invoices Sent"
+                          maxBarSize={40}
+                          opacity={0.8}
+                        />
+                        <Bar 
+                          yAxisId="left"
+                          dataKey="paid" 
+                          fill="#10B981" 
+                          radius={[4, 4, 0, 0]}
+                          name="Invoices Paid"
+                          maxBarSize={40}
+                          opacity={0.8}
+                        />
+                        
+                        {/* Amount Lines */}
+                        <Line 
+                          yAxisId="right"
+                          type="monotone" 
+                          dataKey="sentAmount" 
+                          stroke="#3B82F6" 
+                          strokeWidth={3}
+                          name="Amount Sent"
+                          dot={{ fill: '#3B82F6', r: 4, strokeWidth: 2, stroke: '#fff' }}
+                          activeDot={{ r: 6, stroke: '#3B82F6', strokeWidth: 2, fill: '#fff' }}
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="paidAmount" 
+                          stroke="#10B981" 
+                          strokeWidth={3}
+                          name="Amount Paid"
+                          dot={{ fill: '#10B981', r: 4, strokeWidth: 2, stroke: '#fff' }}
+                          activeDot={{ r: 6, stroke: '#10B981', strokeWidth: 2, fill: '#fff' }}
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
                   </div>
-                    <div className="text-center">
-                      <div className="text-lg font-bold text-green-600">
-                        {invoiceChartData.reduce((sum, item) => sum + item.paid, 0)}
+                  
+                  {/* Summary Metrics */}
+                  <div className="mt-6 grid grid-cols-2 gap-4">
+                    <div className="text-center p-4 bg-blue-50 rounded-xl border border-blue-200">
+                      <div className="text-2xl font-bold text-blue-700 mb-1">
+                        {invoiceChartData.reduce((sum: any, item: any) => sum + item.sent, 0)}
                       </div>
-                      <div className="text-xs text-green-600">Total Paid</div>
+                      <div className="text-sm text-blue-600 font-medium">Total Sent</div>
+                      <div className="text-xs text-blue-500 mt-1">
+                        KSh {invoiceChartData.reduce((sum: any, item: any) => sum + item.sentAmount, 0).toLocaleString()}
+                      </div>
                     </div>
-                    <div className="text-center">
-                      <div className="text-lg font-bold text-orange-600">
-                        {invoiceChartData.reduce((sum, item) => sum + item.pending, 0)}
+                    <div className="text-center p-4 bg-green-50 rounded-xl border border-green-200">
+                      <div className="text-2xl font-bold text-green-700 mb-1">
+                        {invoiceChartData.reduce((sum: any, item: any) => sum + item.paid, 0)}
                       </div>
-                      <div className="text-xs text-orange-600">Pending</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-lg font-bold text-purple-600">
-                        {(() => {
-                          const totalSent = invoiceChartData.reduce((sum, item) => sum + item.sentAmount, 0);
-                          const totalPaid = invoiceChartData.reduce((sum, item) => sum + item.paidAmount, 0);
-                          return totalSent > 0 ? ((totalPaid / totalSent) * 100).toFixed(1) : 0;
-                        })()}%
+                      <div className="text-sm text-green-600 font-medium">Total Paid</div>
+                      <div className="text-xs text-green-500 mt-1">
+                        KSh {invoiceChartData.reduce((sum: any, item: any) => sum + item.paidAmount, 0).toLocaleString()}
                       </div>
-                      <div className="text-xs text-purple-600">Collection Rate</div>
                     </div>
                   </div>
-                  </div>
-                
-                {/* Chart Description */}
-                <div className="text-center text-sm text-slate-600 mt-4">
-                  <p className="font-medium text-slate-700">💰 Invoice Collection Performance</p>
-                  <p className="mt-1">Track sent vs paid invoices with amounts in KSH</p>
-                </div>
                 </>
               )}
             </CardContent>
           </Card>
 
-          {/* Main Content with Smooth Transitions */}
-          <div className={`space-y-8 transition-all duration-300 ease-in-out ${isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'}`}>
+          {/* Main Content with Smooth Transitions - Equal width */}
+          <div className={`space-y-6 transition-all duration-300 ease-in-out ${isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'}`}>
           {/* Revenue Overview - Line Chart with Real Data */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
             <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-emerald-50 to-green-100/80">
@@ -1044,8 +947,8 @@ export default function ExecutiveDashboard() {
                 Revenue Overview
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-8">
-              <div className="h-80">
+            <CardContent className="p-6">
+              <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={invoice.monthlyTrend && invoice.monthlyTrend.length > 0 ? invoice.monthlyTrend.map((month: any) => ({
                     month: month.month,
@@ -1105,15 +1008,15 @@ export default function ExecutiveDashboard() {
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
-              <div className="grid grid-cols-2 gap-6 mt-6">
-                <div className="text-center p-4 bg-emerald-50 rounded-xl">
-                  <div className="text-2xl font-bold text-emerald-700">
+              <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="text-center p-3 bg-emerald-50 rounded-xl">
+                  <div className="text-xl font-bold text-emerald-700">
                     {formatCurrency(metrics.collectedRevenue)}
                   </div>
                   <p className="text-sm text-emerald-600 font-medium">Collected</p>
                 </div>
-                <div className="text-center p-4 bg-orange-50 rounded-xl">
-                  <div className="text-2xl font-bold text-orange-700">
+                <div className="text-center p-3 bg-orange-50 rounded-xl">
+                  <div className="text-xl font-bold text-orange-700">
                     {formatCurrency(metrics.pendingRevenue)}
                   </div>
                   <p className="text-sm text-orange-600 font-medium">Pending</p>
@@ -1122,10 +1025,10 @@ export default function ExecutiveDashboard() {
             </CardContent>
           </Card>
 
-            {/* Strategic Charts Section - Takes 2/3 width */}
+            {/* Strategic Charts Section */}
             <div className="space-y-6">
-          {/* Monthly Performance & Achievement Analysis */}
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-indigo-50/30">
+          {/* Monthly Performance & Achievement Analysis - Full Width */}
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-indigo-50/30 w-full">
             <CardHeader className="bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-t-lg">
               <CardTitle className="text-lg text-white flex items-center gap-2">
                 <TrendingUp className="h-5 w-5" />
@@ -1190,7 +1093,8 @@ export default function ExecutiveDashboard() {
                           achievement: 'Achievement %'
                         };
                         const label = map[String(name)] || String(name);
-                        const formatted = name === 'achievement' 
+                        // Ensure achievement shows only percentage, no currency
+                        const formatted = String(name) === 'achievement'
                           ? `${Number(value)}%`
                           : `KSh ${Number(value).toLocaleString()}`;
                         return [formatted, label];
@@ -1234,7 +1138,7 @@ export default function ExecutiveDashboard() {
               </CardDescription>
             </CardHeader>
             <CardContent className="p-6">
-              <div className="h-96 relative">
+              <div className="h-80 relative">
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsPieChart>
                     <Pie
@@ -1250,7 +1154,7 @@ export default function ExecutiveDashboard() {
                       animationDuration={1500}
                       animationBegin={0}
                     >
-                      {segmentPerformanceData.map((entry, index) => (
+                      {segmentPerformanceData.map((entry: any, index: any) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
@@ -1273,7 +1177,7 @@ export default function ExecutiveDashboard() {
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="text-center">
                     <div className="text-2xl font-bold text-gray-800">
-                          {(segmentPerformanceData.reduce((sum, item) => sum + item.value, 0) / 1000000).toFixed(1)}M
+                          {(segmentPerformanceData.reduce((sum: any, item: any) => sum + item.value, 0) / 1000000).toFixed(1)}M
                     </div>
                     <div className="text-sm text-gray-600">Total Collected</div>
                   </div>
@@ -1282,21 +1186,23 @@ export default function ExecutiveDashboard() {
             </CardContent>
           </Card>
         </div>
+              </div>
+      </div>
 
-                {/* Performance & Support Overview */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+      {/* Performance & Support Overview */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           {/* Task Progress - Pie Chart */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
             <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-indigo-50 to-indigo-100/80">
-              <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-3">
+              <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-3">
                 <div className="p-2 bg-gradient-to-r from-indigo-500 to-blue-600 rounded-lg">
-                  <Target className="h-5 w-5 text-white" />
+                  <Target className="h-4 w-4 text-white" />
                 </div>
                 Milestone Progress Overview
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-8">
-              <div className="h-80">
+            <CardContent className="p-6">
+              <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsPieChart>
                     <Pie
@@ -1305,8 +1211,8 @@ export default function ExecutiveDashboard() {
                       cy="50%"
                       labelLine={false}
                       label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      innerRadius={50}
-                      outerRadius={90}
+                      innerRadius={40}
+                      outerRadius={80}
                       fill="#8884d8"
                       dataKey="value"
                       animationDuration={1500}
@@ -1336,48 +1242,82 @@ export default function ExecutiveDashboard() {
           {/* Support Projects Overview */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
             <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-purple-50 to-purple-100/80">
-              <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-3">
+              <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-3">
                 <div className="p-2 bg-gradient-to-r from-purple-500 to-violet-600 rounded-lg">
-                  <Eye className="h-5 w-5 text-white" />
+                  <Eye className="h-4 w-4 text-white" />
                 </div>
                 Support Projects Overview
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-8">
-              <div className="space-y-8">
-                <div className="text-center p-6 bg-purple-50 rounded-2xl">
-                      <div className="text-4xl font-bold text-purple-700 mb-3">{metrics.onSLAProjects}</div>
-                      <p className="text-lg text-purple-600 font-medium">Currently on SLA</p>
+            <CardContent className="p-6">
+              <div className="space-y-6">
+                <div className="text-center p-4 bg-purple-50 rounded-2xl">
+                      <div className="text-3xl font-bold text-purple-700 mb-2">{metrics.onSLAProjects}</div>
+                      <p className="text-base text-purple-600 font-medium">Currently on SLA</p>
                 </div>
                 
-                <div className="text-center p-6 bg-green-50 rounded-2xl">
-                  <div className="text-4xl font-bold text-green-700 mb-3">{metrics.completedProjects}</div>
-                  <p className="text-lg text-green-600 font-medium">Successfully Completed</p>
+                <div className="text-center p-4 bg-green-50 rounded-2xl">
+                  <div className="text-3xl font-bold text-green-700 mb-2">{metrics.completedProjects}</div>
+                  <p className="text-base text-green-600 font-medium">Successfully Completed</p>
                 </div>
                 
-                <div className="pt-6 border-t border-slate-200">
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="text-lg font-semibold text-slate-700">Success Rate</span>
-                    <span className="text-2xl font-bold text-slate-800">
+                <div className="pt-4 border-t border-slate-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-base font-semibold text-slate-700">Success Rate</span>
+                    <span className="text-xl font-bold text-slate-800">
                           {formatPercentage(metrics.onSLAProjects, metrics.completedProjects + metrics.onSLAProjects)}%
                     </span>
                   </div>
                   <Progress 
                         value={formatPercentage(metrics.onSLAProjects, metrics.completedProjects + metrics.onSLAProjects)} 
-                    className="h-4 bg-slate-200"
+                    className="h-3 bg-slate-200"
                   />
-                  <p className="text-sm text-slate-600 mt-3 text-center font-medium">
+                  <p className="text-xs text-slate-600 mt-2 text-center font-medium">
                         Projects that moved from completed to SLA
                   </p>
                 </div>
               </div>
             </CardContent>
           </Card>
+
+          {/* Executive Actions & Insights */}
+          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
+            <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-blue-50 to-blue-100/80">
+              <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-3">
+                <div className="p-2 bg-gradient-to-r from-blue-500 to-cyan-600 rounded-lg">
+                  <Zap className="h-4 w-4 text-white" />
+                </div>
+                Executive Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6">
+              <div className="space-y-3">
+                <Button variant="outline" className="w-full justify-start h-12 bg-gradient-to-r from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 border-blue-200 text-blue-800" size="sm">
+                  <FileText className="h-4 w-4 mr-2" />
+                  Generate Monthly Report
+                </Button>
+                
+                <Button variant="outline" className="w-full justify-start h-12 bg-gradient-to-r from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 border-purple-200 text-purple-800" size="sm">
+                  <Users className="h-4 w-4 mr-2" />
+                  Review Team Performance
+                </Button>
+                
+                <Button variant="outline" className="w-full justify-start h-12 bg-gradient-to-r from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 border-green-200 text-green-800" size="sm">
+                  <DollarSign className="h-4 w-4 mr-3" />
+                  Financial Overview
+                </Button>
+                
+                <Button variant="outline" className="w-full justify-start h-12 bg-gradient-to-r from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 border-orange-200 text-orange-800" size="sm">
+                  <Target className="h-4 w-4 mr-2" />
+                  Set Milestone Targets
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Executive Actions & Insights */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Recent Activity */}
+        {/* Recent Activity Section */}
+        <div className="mb-6">
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
             <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-slate-50 to-slate-100/80">
               <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-3">
@@ -1387,77 +1327,40 @@ export default function ExecutiveDashboard() {
                 Recent Activity
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-8">
-              <div className="space-y-6">
-                <div className="flex items-center gap-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200/50">
+            <CardContent className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200/50">
                   <div className="p-2 bg-green-500 rounded-lg">
-                    <CheckCircle className="h-5 w-5 text-white" />
+                    <CheckCircle className="h-4 w-4 text-white" />
                   </div>
                   <div>
-                    <p className="text-base font-semibold text-green-800">Project Completed</p>
-                    <p className="text-sm text-green-600">Academic Portal v2.0 finished successfully</p>
+                    <p className="text-sm font-semibold text-green-800">Project Completed</p>
+                    <p className="text-xs text-green-600">Academic Portal v2.0 finished successfully</p>
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-4 p-4 bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl border border-orange-200/50">
+                <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl border border-orange-200/50">
                   <div className="p-2 bg-orange-500 rounded-lg">
-                    <AlertTriangle className="h-5 w-5 text-white" />
+                    <AlertTriangle className="h-4 w-4 text-white" />
                   </div>
                   <div>
-                    <p className="text-base font-semibold text-orange-800">Milestone Overdue</p>
-                    <p className="text-sm text-orange-600">Private Sector CRM - Phase 2 delayed</p>
+                    <p className="text-sm font-semibold text-orange-800">Milestone Overdue</p>
+                    <p className="text-xs text-orange-600">Private Sector CRM - Phase 2 delayed</p>
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-4 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200/50">
+                <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200/50">
                   <div className="p-2 bg-blue-500 rounded-lg">
-                    <DollarSign className="h-5 w-5 text-white" />
+                    <DollarSign className="h-4 w-4 text-white" />
                   </div>
                   <div>
-                    <p className="text-base font-semibold text-blue-800">Payment Received</p>
-                    <p className="text-sm text-blue-600">Parastals Project invoice paid</p>
+                    <p className="text-sm font-semibold text-blue-800">Payment Received</p>
+                    <p className="text-xs text-blue-600">Parastals Project invoice paid</p>
                   </div>
                 </div>
               </div>
             </CardContent>
           </Card>
-
-          {/* Quick Actions */}
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
-            <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-blue-50 to-blue-100/80">
-              <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-gradient-to-r from-blue-500 to-cyan-600 rounded-lg">
-                  <Zap className="h-5 w-5 text-white" />
-                </div>
-                Executive Actions
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-8">
-              <div className="space-y-4">
-                <Button variant="outline" className="w-full justify-start h-14 bg-gradient-to-r from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 border-blue-200 text-blue-800" size="lg">
-                  <FileText className="h-5 w-5 mr-3" />
-                  Generate Monthly Report
-                </Button>
-                
-                <Button variant="outline" className="w-full justify-start h-14 bg-gradient-to-r from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 border-purple-200 text-purple-800" size="lg">
-                  <Users className="h-5 w-5 mr-3" />
-                  Review Team Performance
-                </Button>
-                
-                <Button variant="outline" className="w-full justify-start h-14 bg-gradient-to-r from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 border-green-200 text-green-800" size="lg">
-                  <DollarSign className="h-5 w-5 mr-3" />
-                  Financial Overview
-                </Button>
-                
-                <Button variant="outline" className="w-full justify-start h-14 bg-gradient-to-r from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 border-orange-200 text-orange-800" size="lg">
-                  <Target className="h-5 w-5 mr-3" />
-                  Set Milestone Targets
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-            </div>
-          </div>
         </div>
       </div>
     </div>

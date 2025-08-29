@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Download, X, CalendarDays, UserCircle2, Users, DollarSign } from "lucide-react";
+import { Plus, Download, X, CalendarDays, UserCircle2, Users, DollarSign, ChevronDown, ChevronRight, Clock, FolderOpen } from "lucide-react";
 import { useLocation, useSearch } from "wouter";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
@@ -26,7 +26,8 @@ const createProjectSchema = z.object({
   endDate: z.string().min(1, "End date is required"),
   segment: z.enum(["academic", "parastals", "private"]).default("private"),
   teamId: z.string().optional().or(z.literal("none")),
-  budget: z.string().optional(),
+  budget: z.string().default("0.00"),
+
   status: z.enum(["planning", "active", "on_hold", "completed", "on_support", "inactive"]).optional(),
 }).refine((data) => {
   const start = new Date(data.startDate);
@@ -39,32 +40,45 @@ const createProjectSchema = z.object({
 
 type CreateProjectData = z.infer<typeof createProjectSchema>;
 
-type NewTaskRow = {
+type NewMilestoneRow = {
   id?: string; // For edit mode
   name: string;
   description?: string;
-  priority: 'low' | 'medium' | 'high' | 'critical';
-  startDate?: string;
-  dueDate?: string;
-  assignedUserId?: string;
   feeAmount?: string;
   expectedInvoiceDate?: string;
+  expectedCollectionDate?: string;
   status?: string;
   billingStatus?: string;
-  subtasks?: Array<{
+  errors?: { name?: string; feeAmount?: string; expectedInvoiceDate?: string };
+};
+
+type NewModuleRow = {
     id?: string; // For edit mode
     name: string;
     description?: string;
-    status?: string;
     priority: 'low' | 'medium' | 'high' | 'critical';
     startDate?: string;
     dueDate?: string;
-    estimatedHours?: string;
-    estimatedDays?: number;
     assignedUserId?: string;
-    progressPercent?: number;
-  }>;
-  errors?: { startDate?: string; dueDate?: string; name?: string; feeAmount?: string; expectedInvoiceDate?: string };
+    status?: string;
+    phaseNumber?: number;
+    phaseName?: string;
+    subtasks?: Array<{
+      id?: string; // For edit mode
+      name: string;
+      description?: string;
+      status?: string;
+      priority: 'low' | 'medium' | 'high' | 'critical';
+      startDate?: string;
+      dueDate?: string;
+    
+      estimatedDays?: number;
+      assignedDevId?: string;
+      assignedConsultantId?: string;
+      progressPercent?: number;
+      errors?: { startDate?: string; dueDate?: string };
+    }>;
+    errors?: { startDate?: string; dueDate?: string; name?: string };
 };
 
 export default function CreateProjectModal({ project, onClose }: { project?: any; onClose?: () => void }) {
@@ -74,10 +88,106 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   const [isOpen, setIsOpen] = useState(!!project);
   const [pathname, setLocation] = useLocation();
   const search = useSearch();
-  const [tasks, setTasks] = useState<NewTaskRow[]>([]);
+  const [milestones, setMilestones] = useState<NewMilestoneRow[]>([]);
+  const [modules, setModules] = useState<NewModuleRow[]>([]);
+  const [phases, setPhases] = useState<any[]>([]);
+  
   const [isProcessingMilestones, setIsProcessingMilestones] = useState(false);
   const [milestoneProgress, setMilestoneProgress] = useState({ current: 0, total: 0, message: '' });
+  const [expandedSubtasks, setExpandedSubtasks] = useState<Set<string>>(new Set());
+  const [collapsedModuleSubtasks, setCollapsedModuleSubtasks] = useState<Set<string>>(new Set());
   const isEditMode = !!project;
+  
+  // Debug modules state changes
+  useEffect(() => {
+    // Silent monitoring
+  }, [modules]);
+
+  // Debug phases state changes
+  useEffect(() => {
+    // Silent monitoring - uncomment for debugging
+    // console.log('Phases state changed:', phases);
+  }, [phases]);
+  
+  // Debug modal state changes (only log significant changes)
+  useEffect(() => {
+    // Silent monitoring
+  }, [isOpen, isEditMode, project?.id]);
+
+  // Initialize phases with hardcoded project phases (matching PhaseOverview component interface)
+  useEffect(() => {
+    if (phases.length === 0) {
+      const initialPhases = [
+        {
+          id: '1',
+          phaseNumber: 1,
+          phaseName: 'Initiation & Contracting',
+          description: 'Project setup and contract finalization',
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: [],
+          modules: []
+        },
+        {
+          id: '2',
+          phaseNumber: 2,
+          phaseName: 'Requirements Gathering & Design',
+          description: 'Requirements analysis and system design',
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: [],
+          modules: []
+        },
+        {
+          id: '3',
+          phaseNumber: 3,
+          phaseName: 'System Customization & Development',
+          description: 'System development and customization',
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: [],
+          modules: []
+        },
+        {
+          id: '4',
+          phaseNumber: 4,
+          phaseName: 'Testing & Validation',
+          description: 'System testing and validation',
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: [],
+          modules: []
+        },
+        {
+          id: '5',
+          phaseNumber: 5,
+          phaseName: 'Deployment & Go-Live',
+          description: 'System deployment and go-live',
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: [],
+          modules: []
+        },
+        {
+          id: '6',
+          phaseNumber: 6,
+          phaseName: 'Transition & Closure',
+          description: 'Project transition and closure',
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: [],
+          modules: []
+        }
+      ];
+      setPhases(initialPhases);
+    }
+  }, []);
 
   const form = useForm<CreateProjectData>({
     resolver: zodResolver(createProjectSchema),
@@ -90,7 +200,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       endDate: "",
       segment: "private",
       teamId: "none",
-      budget: "",
+      budget: "0.00",
       status: "planning",
     },
   });
@@ -120,11 +230,48 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     return team?.name || 'Team';
   };
 
+  // Helper functions for subtask expansion
+  const toggleSubtasks = (milestoneIndex: number) => {
+    const key = `milestone-${milestoneIndex}`;
+    setExpandedSubtasks(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(key)) {
+        newSet.delete(key);
+      } else {
+        newSet.add(key);
+      }
+      return newSet;
+    });
+  };
+
+  const isSubtasksExpanded = (milestoneIndex: number) => {
+    return expandedSubtasks.has(`milestone-${milestoneIndex}`);
+  };
+  
+  // Helper functions for module subtask expansion
+  const toggleModuleSubtasks = (phaseIndex: number, moduleIndex: number) => {
+    const key = `module-${phaseIndex}-${moduleIndex}`;
+    setCollapsedModuleSubtasks(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(key)) {
+        newSet.delete(key);
+      } else {
+        newSet.add(key);
+      }
+      return newSet;
+    });
+  };
+
+  const areModuleSubtasksCollapsed = (phaseIndex: number, moduleIndex: number) => {
+    return collapsedModuleSubtasks.has(`module-${phaseIndex}-${moduleIndex}`);
+  };
+
   // Auto-open modal in edit mode and prefill form
   useEffect(() => {
     if (project) {
       setIsOpen(true);
-      form.reset({
+      console.log('Edit mode activated for project:', project.id, project.name);
+      const formData = {
         client: project.client || "",
         contactPerson: project.contactPerson || "",
         contactPhone: project.contactPhone || "",
@@ -135,9 +282,22 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         teamId: project.teamId || "none",
         budget: project.budget ? String(project.budget) : "",
         status: project.status || "planning",
-      });
+      };
+      console.log('Setting form data:', formData);
+      form.reset(formData);
+      
+      // Check form validity after reset
+      setTimeout(() => {
+        console.log('Form validity after reset:', {
+          isValid: form.formState.isValid,
+          errors: form.formState.errors,
+          values: form.getValues()
+        });
+      }, 100);
+    } else {
+      setIsOpen(false);
     }
-  }, [project]);
+  }, [project, form]);
 
   // Reset team selection when segment changes (unless in edit mode)
   useEffect(() => {
@@ -154,30 +314,223 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     }
   }, [currentSegment, teams, form, isEditMode]);
 
-  // Fetch existing milestones in edit mode
-  const { data: existingMilestones = [] } = useQuery<any[]>({
-    queryKey: ['/api/projects', project?.id, 'tasks'],
+  // Prevent form state corruption by stabilizing the form
+  useEffect(() => {
+    if (isOpen && !isEditMode) {
+      // Ensure form is properly initialized for new projects but preserve any existing segment selection
+      const currentSegment = form.getValues('segment') || 'private';
+      form.reset({
+        client: "",
+        contactPerson: "",
+        contactPhone: "",
+        contactEmail: "",
+        startDate: "",
+        endDate: "",
+        segment: currentSegment, // Preserve segment selection
+        teamId: "none",
+        budget: "",
+        status: "planning",
+      });
+      setModules([]);
+      setExpandedSubtasks(new Set());
+    }
+  }, [isOpen, isEditMode, form]);
+
+  // Fetch existing modules in edit mode
+  const { data: existingModules = [], isLoading: modulesLoading, error: modulesError } = useQuery<any[]>({
+    queryKey: ['/api/projects', project?.id, 'modules'],
     queryFn: async () => {
       if (!project?.id) return [];
-      const res = await fetch(`/api/projects/${project.id}/tasks`, { credentials: 'include', cache: 'no-store' });
-      if (!res.ok) return [];
-      return res.json();
+      const res = await fetch(`/api/projects/${project.id}/modules`, { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) {
+        return [];
+      }
+      const data = await res.json();
+      return data;
     },
     enabled: isEditMode && isOpen && !!project?.id,
   });
 
+  // Fetch existing milestones in edit mode
+  const { data: existingMilestones = [], isLoading: milestonesLoading, error: milestonesError } = useQuery<any[]>({
+    queryKey: ['/api/projects', project?.id, 'milestones'],
+    queryFn: async () => {
+      if (!project?.id) return [];
+      const res = await fetch(`/api/projects/${project.id}/milestones`, { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) {
+        return [];
+      }
+      const data = await res.json();
+      return data;
+    },
+    enabled: isEditMode && isOpen && !!project?.id,
+  });
+  
+  // Debug query state (only log significant changes)
+  useEffect(() => {
+    // Silent monitoring
+  }, [modulesLoading, modulesError, existingModules, milestonesLoading, milestonesError, existingMilestones, project?.id]);
+
+  // Load existing modules into modules state when editing
+  useEffect(() => {
+    if (isEditMode && existingModules.length > 0) {
+      console.log('Loading existing modules into state:', existingModules);
+      const modulesWithPhase = existingModules.map((module: any) => ({
+        ...module,
+        phaseNumber: module.phaseNumber || 1,
+        phaseName: module.phaseName || 'Initiation & Contracting',
+        // Ensure dates are properly formatted for the form
+        startDate: module.startDate ? new Date(module.startDate).toISOString().slice(0, 10) : undefined,
+        dueDate: module.dueDate ? new Date(module.dueDate).toISOString().slice(0, 10) : undefined,
+        // Preserve subtasks with proper formatting and assignments
+        subtasks: (module.subtasks || []).map((subtask: any) => ({
+          ...subtask,
+          startDate: subtask.startDate ? new Date(subtask.startDate).toISOString().slice(0, 10) : '',
+          dueDate: subtask.dueDate ? new Date(subtask.dueDate).toISOString().slice(0, 10) : '',
+          estimatedDays: subtask.estimatedDays ? String(subtask.estimatedDays) : '',
+          assignedDevId: subtask.assignedDevId || undefined,
+          assignedConsultantId: subtask.assignedConsultantId || undefined
+        }))
+      }));
+      console.log('Modules with phase info:', modulesWithPhase);
+      setModules(modulesWithPhase);
+    }
+  }, [isEditMode, existingModules, project]);
+
+  // Load existing milestones into milestones state when editing
+  useEffect(() => {
+    if (isEditMode && existingMilestones.length > 0) {
+      console.log('Loading existing milestones into state:', existingMilestones);
+      const milestonesWithFormattedDates = existingMilestones.map((milestone: any) => ({
+        ...milestone,
+        // Ensure dates are properly formatted for the form
+        expectedInvoiceDate: milestone.expectedInvoiceDate ? new Date(milestone.expectedInvoiceDate).toISOString().slice(0, 10) : '',
+        expectedCollectionDate: milestone.expectedCollectionDate ? new Date(milestone.expectedCollectionDate).toISOString().slice(0, 10) : '',
+        // Ensure fee amount is properly formatted for the form
+        feeAmount: milestone.feeAmount ? String(milestone.feeAmount) : '',
+      }));
+      console.log('Milestones with formatted dates:', milestonesWithFormattedDates);
+      setMilestones(milestonesWithFormattedDates);
+    } else if (isEditMode && existingMilestones.length === 0) {
+      console.log('No existing milestones found for project:', project?.id);
+    }
+  }, [isEditMode, existingMilestones, project]);
+
+  // Load existing phases when editing (organize modules by phase)
+  useEffect(() => {
+    if (isEditMode && existingModules.length > 0) {
+      // Start with existing phases and merge modules into them
+      setPhases(prevPhases => {
+        const updatedPhases = [...prevPhases];
+        
+        // Group modules by phase
+        const phaseMap = new Map();
+        
+        existingModules.forEach((module: any) => {
+          const phaseNumber = module.phaseNumber || 1;
+          const phaseName = module.phaseName || `Phase ${phaseNumber}`;
+          
+          console.log(`Processing module ${module.name} for phase ${phaseNumber}`);
+          
+          if (!phaseMap.has(phaseNumber)) {
+            phaseMap.set(phaseNumber, {
+              id: phaseNumber,
+              name: phaseName,
+              description: `Phase ${phaseNumber}: ${phaseName}`,
+              status: 'not_started',
+              modules: []
+            });
+          }
+          
+          phaseMap.get(phaseNumber).modules.push({
+            ...module,
+            // Ensure module dates are properly formatted for form inputs
+            startDate: module.startDate ? new Date(module.startDate).toISOString().slice(0, 10) : '',
+            dueDate: module.dueDate ? new Date(module.dueDate).toISOString().slice(0, 10) : '',
+            // Ensure subtasks have properly formatted dates for form inputs
+            subtasks: (module.subtasks || []).map((subtask: any) => ({
+              ...subtask,
+              startDate: subtask.startDate ? new Date(subtask.startDate).toISOString().slice(0, 10) : '',
+              dueDate: subtask.dueDate ? new Date(subtask.dueDate).toISOString().slice(0, 10) : '',
+              estimatedDays: subtask.estimatedDays ? String(subtask.estimatedDays) : '',
+              // Preserve assigned user IDs for dev and consultant
+              assignedDevId: subtask.assignedDevId || undefined,
+              assignedConsultantId: subtask.assignedConsultantId || undefined
+            }))
+          });
+        });
+        
+        console.log('Phase map created:', Array.from(phaseMap.entries()));
+        
+        // Merge modules into existing phases
+        updatedPhases.forEach(phase => {
+          const phaseModules = phaseMap.get(parseInt(phase.id));
+          if (phaseModules) {
+            phase.modules = phaseModules.modules;
+            // Update phase name if it was customized
+            if (phaseModules.name !== `Phase ${phase.id}`) {
+              phase.name = phaseModules.name;
+            }
+          } else {
+            phase.modules = [];
+          }
+        });
+        
+        console.log('Updated phases with existing modules:', updatedPhases);
+        console.log('Phase 1 modules count:', updatedPhases[0]?.modules?.length);
+        return updatedPhases;
+      });
+      
+      console.log('Loaded existing modules:', existingModules);
+    } else if (isEditMode && existingModules.length === 0) {
+      console.log('No existing modules found for project:', project?.id);
+      // Keep existing phases but clear their modules
+      setPhases(prevPhases => 
+        prevPhases.map(phase => ({ ...phase, modules: [] }))
+      );
+    }
+  }, [isEditMode, existingModules, project]);
+
+  // Keep modules state in sync with phases (only for new projects, not edit mode)
+  useEffect(() => {
+    if (!isEditMode) {
+      const allModules = phases.flatMap(phase => phase.modules || []);
+      setModules(allModules);
+    }
+  }, [phases, isEditMode]);
+
   // Fetch team members for the form's selected team (for new projects or when changing teams)
-  const { data: teamMembers = [] } = useQuery<any[]>({
+  const { data: teamMembers = [], isLoading: teamMembersLoading, error: teamMembersError } = useQuery<any[]>({
     queryKey: ['/api/team-members', form.watch('teamId')],
     queryFn: async () => {
-      const teamId = form.getValues('teamId');
+      const teamId = form.watch('teamId');
       if (!teamId || teamId === 'none') return [];
-      const res = await fetch(`/api/teams/${teamId}`, { credentials: 'include', cache: 'no-store' });
-      if (!res.ok) return [];
-      const json = await res.json();
-      return json.members?.map((m: any) => m.user) ?? [];
+      
+      try {
+        const res = await fetch(`/api/teams/${teamId}`, { credentials: 'include', cache: 'no-store' });
+        if (!res.ok) {
+          return [];
+        }
+        const json = await res.json();
+        const members = json.members?.map((m: any) => ({
+          ...m.user,
+          role: m.role // Preserve the role information from team member
+        })) ?? [];
+        
+        // Check for duplicates
+        const uniqueMembers = members.filter((member: any, index: number, array: any[]) => 
+          array.findIndex(m => m.id === member.id) === index
+        );
+        
+        return uniqueMembers;
+      } catch (error) {
+        return [];
+      }
     },
     enabled: isOpen && !!form.watch('teamId') && form.watch('teamId') !== 'none',
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnMount: false,
+    retry: 1,
   });
 
   // Fetch team members for the existing project's team (for edit mode)
@@ -185,17 +538,34 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     queryKey: ['/api/project-team-members', project?.teamId],
     queryFn: async () => {
       if (!project?.teamId) return [];
-      const res = await fetch(`/api/teams/${project.teamId}`, { credentials: 'include', cache: 'no-store' });
-      if (!res.ok) return [];
-      const json = await res.json();
-      return json.members?.map((m: any) => m.user) ?? [];
+      try {
+        const res = await fetch(`/api/teams/${project.teamId}`, { credentials: 'include', cache: 'no-store' });
+        if (!res.ok) return [];
+        const json = await res.json();
+        const members = json.members?.map((m: any) => ({
+          ...m.user,
+          role: m.role // Preserve the role information from team member
+        })) ?? [];
+        
+        // Check for duplicates
+        const uniqueMembers = members.filter((member: any, index: number, array: any[]) => 
+          array.findIndex(m => m.id === member.id) === index
+        );
+        
+        return uniqueMembers;
+      } catch (error) {
+        return [];
+      }
     },
     enabled: isEditMode && isOpen && !!project?.teamId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnMount: false,
   });
 
   // Load existing milestones in edit mode
   useEffect(() => {
     if (isEditMode && existingMilestones.length > 0) {
+
       const milestoneTasks = existingMilestones.map((m: any) => ({
         id: m.id, // Keep the ID for updates
         name: m.name,
@@ -208,6 +578,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         expectedInvoiceDate: m.expectedInvoiceDate ? new Date(m.expectedInvoiceDate).toISOString().slice(0, 10) : '',
         status: m.status,
         billingStatus: m.billingStatus,
+        // Preserve phase information
+        phaseNumber: m.phaseNumber || 1,
+        phaseName: m.phaseName || 'Initiation & Contracting',
         // Include subtasks if they exist
         subtasks: m.subtasks ? m.subtasks.map((subtask: any) => ({
           id: subtask.id,
@@ -217,13 +590,15 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           priority: subtask.priority,
           startDate: subtask.startDate ? new Date(subtask.startDate).toISOString().slice(0, 10) : '',
           dueDate: subtask.dueDate ? new Date(subtask.dueDate).toISOString().slice(0, 10) : '',
-          estimatedHours: subtask.estimatedHours ? String(subtask.estimatedHours) : '',
+
           estimatedDays: subtask.estimatedDays ? String(subtask.estimatedDays) : '',
           assignedUserId: subtask.assignedUserId || undefined,
+          assignedDevId: subtask.assignedDevId || undefined,
+          assignedConsultantId: subtask.assignedConsultantId || undefined,
           progressPercent: subtask.progressPercent || 0
         })) : []
       }));
-      setTasks(milestoneTasks);
+      setMilestones(milestoneTasks);
     }
   }, [isEditMode, existingMilestones]);
 
@@ -231,17 +606,12 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     mutationFn: async (data: CreateProjectData) => {
       const payload = {
         ...data,
-        budget: data.budget ? String(data.budget) : undefined,
+        budget: data.budget ? Number(data.budget.replace(/,/g, '')) : undefined,
         startDate: new Date(data.startDate),
         endDate: new Date(data.endDate),
         teamId: data.teamId === "none" ? undefined : data.teamId || undefined,
         client: data.client || undefined,
       };
-      
-      // Log payload for debugging (only in development)
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Sending payload:', payload);
-      }
       
       const response = isEditMode
         ? await apiRequest("PUT", `/api/projects/${project.id}`, payload)
@@ -275,125 +645,287 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     },
   });
 
-  const onSubmit = (data: CreateProjectData) => {
-    // Client-side validation for task timelines and required fields
+  // Enhanced date validation functions
+  const validateDateRanges = (data: CreateProjectData, allModules: NewModuleRow[]) => {
     const projectStart = data.startDate ? new Date(data.startDate) : undefined;
     const projectEnd = data.endDate ? new Date(data.endDate) : undefined;
-
-    let hasErrors = false;
-    const validated = tasks.map((t) => {
-      const errors: NewTaskRow['errors'] = {};
-      const start = t.startDate ? new Date(t.startDate) : undefined;
-      const due = t.dueDate ? new Date(t.dueDate) : undefined;
-
-      if (!t.name || t.name.trim().length === 0) {
-        errors.name = 'Task name is required';
-        hasErrors = true;
+    const errors: { [key: string]: string } = {};
+    const moduleErrors: { [key: string]: { [key: string]: string } } = {};
+    
+    // Validate project dates
+    if (projectStart && projectEnd && projectStart >= projectEnd) {
+      errors.endDate = 'End date must be after start date';
+    }
+    
+    // Validate module dates against project timeline
+    allModules.forEach((module, moduleIndex) => {
+      const moduleStart = module.startDate ? new Date(module.startDate) : undefined;
+      const moduleEnd = module.dueDate ? new Date(module.dueDate) : undefined;
+      const moduleKey = `module-${moduleIndex}`;
+      
+      if (moduleStart && moduleEnd && moduleStart >= moduleEnd) {
+        if (!moduleErrors[moduleKey]) moduleErrors[moduleKey] = {};
+        moduleErrors[moduleKey].dueDate = 'Module end date must be after start date';
       }
-      if (!due) {
-        errors.dueDate = 'Deadline is required';
-        hasErrors = true;
+      
+      if (projectStart && moduleStart && moduleStart < projectStart) {
+        if (!moduleErrors[moduleKey]) moduleErrors[moduleKey] = {};
+        moduleErrors[moduleKey].startDate = 'Module start cannot be before project start';
       }
-      if (start && due && start > due) {
-        errors.startDate = 'Start cannot be after deadline';
-        hasErrors = true;
+      
+      if (projectEnd && moduleEnd && moduleEnd > projectEnd) {
+        if (!moduleErrors[moduleKey]) moduleErrors[moduleKey] = {};
+        moduleErrors[moduleKey].dueDate = 'Module end cannot be after project end';
       }
-      if (projectStart && start && start < projectStart) {
-        errors.startDate = 'Start cannot be before project start';
-        hasErrors = true;
+      
+      // Validate subtask dates against module timeline
+      if (module.subtasks) {
+        module.subtasks.forEach((subtask, subtaskIndex) => {
+          const subtaskStart = subtask.startDate ? new Date(subtask.startDate) : undefined;
+          const subtaskEnd = subtask.dueDate ? new Date(subtask.dueDate) : undefined;
+          const subtaskKey = `subtask-${moduleIndex}-${subtaskIndex}`;
+          
+          if (subtaskStart && subtaskEnd && subtaskStart >= subtaskEnd) {
+            if (!moduleErrors[subtaskKey]) moduleErrors[subtaskKey] = {};
+            moduleErrors[subtaskKey].dueDate = 'Subtask end date must be after start date';
+          }
+          
+          if (moduleStart && subtaskStart && subtaskStart < moduleStart) {
+            if (!moduleErrors[subtaskKey]) moduleErrors[subtaskKey] = {};
+            moduleErrors[subtaskKey].startDate = 'Subtask start cannot be before module start';
+          }
+          
+          if (moduleEnd && subtaskEnd && subtaskEnd > moduleEnd) {
+            if (!moduleErrors[subtaskKey]) moduleErrors[subtaskKey] = {};
+            moduleErrors[subtaskKey].dueDate = 'Subtask end cannot be after module end';
+          }
+        });
       }
-      if (projectEnd && due && due > projectEnd) {
-        errors.dueDate = 'Deadline cannot be after project end';
-        hasErrors = true;
-      }
-      if (!t.feeAmount || isNaN(Number(t.feeAmount))) {
-        errors.feeAmount = 'Fee amount is required';
-        hasErrors = true;
-      }
-
-      return { ...t, errors };
     });
-    if (hasErrors) {
-      setTasks(validated);
-      toast({ title: 'Fix milestone details', description: 'Please resolve the highlighted milestone errors before saving the project.', variant: 'destructive' });
+    
+    return { projectErrors: errors, moduleErrors };
+  };
+  
+  // Function to apply validation errors to the UI
+  const applyValidationErrors = (moduleErrors: { [key: string]: { [key: string]: string } }) => {
+    const updatedPhases = phases.map(phase => ({
+      ...phase,
+      modules: phase.modules.map((module: any, moduleIndex: number) => {
+        const moduleKey = `module-${moduleIndex}`;
+        const moduleErrorsForThis = moduleErrors[moduleKey] || {};
+        
+        const updatedSubtasks = (module.subtasks || []).map((subtask: any, subtaskIndex: number) => {
+          const subtaskKey = `subtask-${moduleIndex}-${subtaskIndex}`;
+          const subtaskErrorsForThis = moduleErrors[subtaskKey] || {};
+          
+          return {
+            ...subtask,
+            errors: subtaskErrorsForThis
+          };
+        });
+        
+        return {
+          ...module,
+          errors: moduleErrorsForThis,
+          subtasks: updatedSubtasks
+        };
+      })
+    }));
+    
+    setPhases(updatedPhases);
+  };
+
+  const onSubmit = (data: CreateProjectData) => {
+    console.log('onSubmit called with data:', data);
+    console.log('Form errors:', form.formState.errors);
+    console.log('Form is valid:', form.formState.isValid);
+    console.log('Form is dirty:', form.formState.isDirty);
+    console.log('Form is submitting:', form.formState.isSubmitting);
+    
+    // Check if form has validation errors
+    if (!form.formState.isValid) {
+      console.log('Form is not valid, cannot submit');
+      toast({
+        title: 'Form Validation Error',
+        description: 'Please fix the form errors before submitting.',
+        variant: 'destructive'
+      });
       return;
     }
 
+    // Extract all modules from phases
+    const allModules = phases.flatMap((phase, phaseIndex) => 
+      (phase.modules || []).map((module: any) => ({
+        ...module,
+        // Ensure phase information is preserved
+        phaseNumber: module.phaseNumber || phaseIndex + 1,
+        phaseName: module.phaseName || phase.phaseName || phase.name || `Phase ${phaseIndex + 1}`
+      }))
+    );
+    console.log('All modules from phases:', allModules);
+    console.log('Phases state:', phases);
+    console.log('Module phase numbers:', allModules.map(m => ({ name: m.name, phaseNumber: m.phaseNumber, phaseName: m.phaseName })));
+    
+    // Enhanced date validation
+    const { projectErrors, moduleErrors } = validateDateRanges(data, allModules);
+    
+    // Check for any validation errors
+    if (Object.keys(projectErrors).length > 0 || Object.keys(moduleErrors).length > 0) {
+      // Apply errors to form and UI
+      Object.keys(projectErrors).forEach(field => {
+        form.setError(field as any, { message: projectErrors[field] });
+      });
+      
+      applyValidationErrors(moduleErrors);
+      
+      toast({
+        title: 'Validation Errors',
+        description: 'Please fix the date conflicts before saving the project.',
+        variant: 'destructive'
+      });
+      return;
+    }
+    
+    // Filter out incomplete modules (those without required fields)
+    const completeModules = allModules.filter(t => 
+      t.name && t.name.trim().length > 0 && 
+      t.dueDate
+    );
+    console.log('Complete modules after filtering:', completeModules);
+    console.log('Incomplete modules:', allModules.filter(t => 
+      !t.name || t.name.trim().length === 0 || 
+      !t.dueDate
+    ));
+    
+    const incompleteModules = allModules.filter(t => 
+      !t.name || t.name.trim().length === 0 || 
+      !t.dueDate
+    );
+
+    // Show warning if there are incomplete modules, but don't block submission
+    if (incompleteModules.length > 0) {
+      toast({ 
+        title: 'Incomplete Modules', 
+        description: `${incompleteModules.length} module(s) are incomplete and will be skipped. You can still save the project.`, 
+        variant: 'default' 
+      });
+    }
+
+    console.log('Submitting project with data:', data);
+    console.log('Complete modules:', completeModules);
+    console.log('Milestones:', milestones);
+    
     createProjectMutation.mutate(data, {
       onSuccess: async (project) => {
-        // Handle milestones for both create and edit modes
-        if (validated.length > 0) {
+        console.log('Project mutation successful:', project);
+        
+        // Handle modules for both create and edit modes
+        if (completeModules.length > 0) {
           try {
-            await processMilestones(validated, project, isEditMode);
+            console.log('Processing modules and milestones...');
+            await processModulesAndMilestones(completeModules, project, isEditMode);
+            
+            // Only show success and close modal after milestones are processed successfully
+            setIsOpen(false);
+            form.reset();
+            if (onClose) onClose();
+            toast({
+              title: "Success",
+              description: isEditMode ? "Project updated successfully" : "Project created successfully",
+            });
           } catch (error) {
             console.error('Error during milestone processing:', error);
             toast({
               title: "Warning",
-              description: "Project updated but some milestones failed to process.",
+              description: "Project created but milestones failed to process. Please try again.",
               variant: "destructive",
             });
+            // Don't close modal or show success if milestones failed
           }
+        } else {
+          console.log('No modules to process, showing success immediately');
+          // No milestones to process, show success immediately
+          setIsOpen(false);
+          form.reset();
+          if (onClose) onClose();
+          toast({
+            title: "Success",
+            description: isEditMode ? "Project updated successfully" : "Project created successfully",
+          });
         }
-        
-        // Now close the modal and show success
-        setIsOpen(false);
-        form.reset();
-        if (onClose) onClose();
-        toast({
-          title: "Success",
-          description: isEditMode ? "Project updated successfully" : "Project created successfully",
-        });
+      },
+      onError: (error) => {
+        console.error('Project mutation failed:', error);
       }
     });
   };
 
-  // New function to detect changes in milestones
-  const detectMilestoneChanges = (currentTasks: NewTaskRow[], existingMilestones: any[]) => {
-    const changes: { type: 'create' | 'update' | 'delete'; milestone: any; original?: any }[] = [];
+    // Enhanced function to detect changes in modules with detailed comparison
+  const detectModuleChanges = (currentModules: NewModuleRow[], existingModules: any[]) => {
+    const changes: { type: 'create' | 'update' | 'delete'; module: any; original?: any; changedFields?: string[] }[] = [];
     
-    // Create a map of existing milestones by ID
-    const existingMap = new Map(existingMilestones.map(m => [m.id, m]));
-    const currentMap = new Map(currentTasks.filter(t => (t as any).id).map(t => [(t as any).id, t]));
+    // Create a map of existing modules by ID
+    const existingMap = new Map(existingModules.map(m => [m.id, m]));
+    const currentMap = new Map(currentModules.filter(t => (t as any).id).map(t => [(t as any).id, t]));
     
     // Check for updates and creations
-    currentTasks.forEach(task => {
-      if ((task as any).id) {
-        // Existing milestone - check for changes
-        const existing = existingMap.get((task as any).id);
+    currentModules.forEach(module => {
+      if ((module as any).id) {
+        // Existing module - check for changes
+        const existing = existingMap.get((module as any).id);
         if (existing) {
-          const hasChanges = 
-            task.name !== existing.name ||
-            task.description !== (existing.description || '') ||
-            task.priority !== existing.priority ||
-            task.startDate !== (existing.startDate ? new Date(existing.startDate).toISOString().slice(0, 10) : '') ||
-            task.dueDate !== (existing.dueDate ? new Date(existing.dueDate).toISOString().slice(0, 10) : '') ||
-            task.assignedUserId !== existing.assignedUserId ||
-            task.feeAmount !== String(existing.feeAmount || '') ||
-            task.expectedInvoiceDate !== (existing.expectedInvoiceDate ? new Date(existing.expectedInvoiceDate).toISOString().slice(0, 10) : '');
+          const changedFields: string[] = [];
           
-          if (hasChanges) {
+          // Check each field for changes
+          if (module.name !== existing.name) changedFields.push('name');
+          if (module.description !== (existing.description || '')) changedFields.push('description');
+          if (module.priority !== existing.priority) changedFields.push('priority');
+          if (module.startDate !== (existing.startDate ? new Date(existing.startDate).toISOString().slice(0, 10) : '')) changedFields.push('startDate');
+          if (module.dueDate !== (existing.dueDate ? new Date(existing.dueDate).toISOString().slice(0, 10) : '')) changedFields.push('dueDate');
+          if (module.assignedUserId !== existing.assignedUserId) changedFields.push('assignedUserId');
+          if (module.phaseNumber !== existing.phaseNumber) changedFields.push('phaseNumber');
+          if (module.phaseName !== existing.phaseName) changedFields.push('phaseName');
+          
+          // Deep compare subtasks with preserved assignment IDs
+          const currentSubtasks = (module.subtasks || []).map((st: any) => ({
+            ...st,
+            assignedDevId: st.assignedDevId || undefined,
+            assignedConsultantId: st.assignedConsultantId || undefined
+          }));
+          const existingSubtasks = (existing.subtasks || []).map((st: any) => ({
+            ...st,
+            assignedDevId: st.assignedDevId || undefined,
+            assignedConsultantId: st.assignedConsultantId || undefined
+          }));
+          
+          if (JSON.stringify(currentSubtasks) !== JSON.stringify(existingSubtasks)) {
+            changedFields.push('subtasks');
+          }
+          
+          if (changedFields.length > 0) {
             changes.push({
               type: 'update',
-              milestone: task,
-              original: existing
+              module: module,
+              original: existing,
+              changedFields
             });
           }
         }
       } else {
-        // New milestone
+        // New module
         changes.push({
           type: 'create',
-          milestone: task
+          module: module
         });
       }
     });
     
     // Check for deletions
-    existingMilestones.forEach(existing => {
+    existingModules.forEach(existing => {
       if (!currentMap.has(existing.id)) {
         changes.push({
           type: 'delete',
-          milestone: existing
+          module: existing
         });
       }
     });
@@ -401,220 +933,638 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     return changes;
   };
 
-  // Enhanced milestone processing with change detection
-  const processMilestones = async (validated: any[], project: any, isEditMode: boolean) => {
-    if (isEditMode && existingMilestones.length > 0) {
-      // Use change detection for better performance
-      const changes = detectMilestoneChanges(validated, existingMilestones);
-      console.log(`🔄 Processing ${changes.length} changes instead of ${validated.length} total milestones`);
-      
-      if (changes.length === 0) {
-        console.log('✅ No changes detected, skipping milestone processing');
-        return;
+  // Helper function to clean payload values
+  const cleanPayloadValue = (value: any) => {
+    if (value === null || value === undefined || value === '') {
+      return undefined;
+    }
+    return value;
+  };
+
+  // Helper function to validate and format dates
+  const formatDate = (dateValue: any) => {
+    if (!dateValue || dateValue === '') {
+      return undefined;
+    }
+    
+    try {
+      const date = new Date(dateValue);
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date value:', dateValue);
+        return undefined;
       }
+      return date.toISOString();
+    } catch (error) {
+      console.warn('Error formatting date:', dateValue, error);
+      return undefined;
+    }
+  };
+
+  // Helper function to validate and format numbers
+  const formatNumber = (numValue: any) => {
+    if (!numValue || numValue === '') {
+      return undefined;
+    }
+    
+    try {
+      const num = Number(numValue);
+      if (isNaN(num)) {
+        console.warn('Invalid number value:', numValue);
+        return undefined;
+      }
+      return num;
+    } catch (error) {
+      console.warn('Error formatting number:', numValue, error);
+      return undefined;
+    }
+  };
+
+  // Helper function to clean entire payload
+  const cleanPayload = (payload: any) => {
+    const cleaned: any = {};
+    Object.keys(payload).forEach(key => {
+      const value = payload[key];
+      if (value !== null && value !== undefined && value !== '') {
+        cleaned[key] = value;
+      }
+    });
+    return cleaned;
+  };
+
+  // Enhanced module and milestone processing with improved batch handling
+  const processModulesAndMilestones = async (validated: any[], project: any, isEditMode: boolean) => {
+    console.log('processModulesAndMilestones called with:', { validated, project, isEditMode });
+    
+    // Detect changes if in edit mode
+    let processableModules = validated;
+    if (isEditMode && existingModules.length > 0) {
+      const changes = detectModuleChanges(validated, existingModules);
+      console.log('Detected changes:', changes);
       
+      // Only process modules that have changes
+      processableModules = changes
+        .filter(change => change.type === 'create' || change.type === 'update')
+        .map(change => change.module);
+      
+      if (processableModules.length === 0) {
+        console.log('No module changes detected, skipping module processing');
+      }
+    }
+    
+    // Process modules if there are any to process
+    if (processableModules.length > 0) {
       setIsProcessingMilestones(true);
-      setMilestoneProgress({ current: 0, total: changes.length, message: 'Processing milestone changes...' });
+      setMilestoneProgress({ current: 0, total: processableModules.length, message: 'Processing modules...' });
       
-      const results: { milestone: any; success: boolean; error?: string; retries: number }[] = [];
+      // Track processed modules to prevent duplicates
+      const processedModuleIds = new Set();
+      const results: { module: any; success: boolean; error?: string; retries: number }[] = [];
       
-      // Process changes in smaller batches for better performance
+      // Process modules in smaller batches for better performance
       const batchSize = 2;
-      for (let i = 0; i < changes.length; i += batchSize) {
-        const batch = changes.slice(i, i + batchSize);
+      for (let i = 0; i < processableModules.length; i += batchSize) {
+        const batch = processableModules.slice(i, i + batchSize);
         const batchNumber = Math.floor(i / batchSize) + 1;
-        const totalBatches = Math.ceil(changes.length / batchSize);
+        const totalBatches = Math.ceil(processableModules.length / batchSize);
         
         setMilestoneProgress({ 
           current: i, 
-          total: changes.length, 
+          total: processableModules.length, 
           message: `Processing batch ${batchNumber}/${totalBatches}...` 
         });
         
-        const batchPromises = batch.map(async (change) => {
+        // Process batch sequentially to prevent duplicates
+        const batchResults = [];
+        for (const module of batch) {
+          const moduleKey = (module as any).id || `${module.name}-${module.phaseNumber}`;
+          
+          // Skip if already processed
+          if (processedModuleIds.has(moduleKey)) {
+            console.log(`Module ${moduleKey} already processed, skipping`);
+            continue;
+          }
+          
           let retries = 0;
           let success = false;
           let error = '';
           
           while (retries < 3 && !success) {
             try {
-              if (change.type === 'create') {
+              if (isEditMode && (module as any).id) {
+                // Check if module exists before updating
+                const existsResponse = await apiRequest('GET', `/api/modules/${(module as any).id}`);
+                if (!existsResponse.ok) {
+                  console.warn(`Module ${(module as any).id} not found, skipping update`);
+                  success = true;
+                  break;
+                }
+                
+                // Update existing module with only changed fields
                 const payload = {
-                  name: change.milestone.name,
-                  description: change.milestone.description || undefined,
-                  priority: change.milestone.priority,
+                  name: module.name,
+                  description: module.description || undefined,
+                  priority: module.priority,
+                  assignedUserId: module.assignedUserId || undefined,
+                  assignedTeamId: project.teamId, // Auto-assign team from project
+                  startDate: formatDate(module.startDate),
+                  dueDate: formatDate(module.dueDate),
+                  phaseNumber: module.phaseNumber,
+                  phaseName: module.phaseName,
+                  phase: getPhaseTypeFromNumber(module.phaseNumber), // Add phase identifier
+                  status: module.status || 'todo',
+                };
+                
+                const cleanedPayload = cleanPayload(payload);
+                console.log('Cleaned update payload:', cleanedPayload);
+                
+                const updateResponse = await apiRequest('PUT', `/api/modules/${(module as any).id}`, cleanedPayload);
+                  
+                  if (!updateResponse.ok) {
+                    const errorText = await updateResponse.text();
+                  console.error('Module update failed:', updateResponse.status, errorText);
+                    throw new Error(`HTTP ${updateResponse.status}: ${errorText}`);
+                  }
+                  
+                // Process subtasks for this module
+                if (module.subtasks && module.subtasks.length > 0) {
+                  await processSubtasks(module.subtasks, (module as any).id);
+                }
+              } else {
+                // Create new module
+                if (!module.name || !module.dueDate) {
+                  console.warn('Skipping incomplete module:', module.name, 'missing required fields');
+                  success = true;
+                  break;
+                }
+                
+                // Check if module already exists by name and phase
+                const existingCheckResponse = await apiRequest('GET', `/api/projects/${project.id}/modules`);
+                if (existingCheckResponse.ok) {
+                  const existingModules = await existingCheckResponse.json();
+                  const duplicate = existingModules.find((em: any) => 
+                    em.name === module.name && em.phaseNumber === module.phaseNumber
+                  );
+                  if (duplicate) {
+                    console.log(`Module ${module.name} already exists in phase ${module.phaseNumber}, skipping creation`);
+                    success = true;
+                    break;
+                  }
+                }
+                
+                const modulePayload = {
+                  name: module.name,
+                  description: module.description || undefined,
+                  priority: module.priority,
                   projectId: project.id,
-                  assignedUserId: change.milestone.assignedUserId || undefined,
-                  startDate: change.milestone.startDate ? new Date(change.milestone.startDate).toISOString() : undefined,
-                  dueDate: change.milestone.dueDate ? new Date(change.milestone.dueDate).toISOString() : undefined,
-                  feeAmount: change.milestone.feeAmount ? Number(change.milestone.feeAmount) : undefined,
-                  expectedInvoiceDate: change.milestone.expectedInvoiceDate ? new Date(change.milestone.expectedInvoiceDate).toISOString() : undefined,
+                  assignedUserId: module.assignedUserId || undefined,
+                  assignedTeamId: project.teamId, // Auto-assign team from project
+                  startDate: formatDate(module.startDate),
+                  dueDate: formatDate(module.dueDate),
+                  phaseNumber: module.phaseNumber,
+                  phaseName: module.phaseName,
+                  phase: getPhaseTypeFromNumber(module.phaseNumber), // Add phase identifier
+                  status: 'todo',
+                  createdById: user.id,
+                  weight: 2,
+                  progressPercent: 0,
                 };
-                await apiRequest('POST', '/api/tasks', payload);
-                console.log(`✅ Created milestone: ${change.milestone.name}`);
-              } else if (change.type === 'update') {
-                const payload = {
-                  name: change.milestone.name,
-                  description: change.milestone.description || undefined,
-                  priority: change.milestone.priority,
-                  assignedUserId: change.milestone.assignedUserId || undefined,
-                  startDate: change.milestone.startDate ? new Date(change.milestone.startDate).toISOString() : undefined,
-                  dueDate: change.milestone.dueDate ? new Date(change.milestone.dueDate).toISOString() : undefined,
-                  feeAmount: change.milestone.feeAmount ? Number(change.milestone.feeAmount) : undefined,
-                  expectedInvoiceDate: change.milestone.expectedInvoiceDate ? new Date(change.milestone.expectedInvoiceDate).toISOString() : undefined,
-                };
-                await apiRequest('PUT', `/api/tasks/${(change.milestone as any).id}`, payload);
-                console.log(`✅ Updated milestone: ${change.milestone.name}`);
-              } else if (change.type === 'delete') {
-                await apiRequest('DELETE', `/api/tasks/${change.milestone.id}`);
-                console.log(`✅ Deleted milestone: ${change.milestone.name}`);
+                
+                console.log('Creating module with payload:', modulePayload);
+                
+                const cleanedModulePayload = cleanPayload(modulePayload);
+                console.log('Cleaned module payload:', cleanedModulePayload);
+                
+                const moduleResponse = await apiRequest('POST', '/api/modules', cleanedModulePayload);
+                
+                if (!moduleResponse.ok) {
+                  const errorText = await moduleResponse.text();
+                  console.error('Module creation failed:', moduleResponse.status, errorText);
+                  throw new Error(`HTTP ${moduleResponse.status}: ${errorText}`);
+                }
+                
+                const moduleData = await moduleResponse.json();
+
+                // Process subtasks for new module
+                if (module.subtasks && module.subtasks.length > 0) {
+                  await processSubtasks(module.subtasks, moduleData.id);
+                }
+
+                // Invalidate queries to refresh the UI
+                queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'modules'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'phases'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
               }
               
+              // Mark as processed
+              processedModuleIds.add(moduleKey);
               success = true;
             } catch (e: any) {
               retries++;
               error = e?.message || 'Unknown error';
               
               if (retries < 3) {
+                console.log(`Retrying module ${moduleKey}, attempt ${retries + 1}`);
                 await new Promise(resolve => setTimeout(resolve, 1000 * retries));
               }
             }
           }
           
-          return { milestone: change.milestone, success, error, retries };
-        });
+          batchResults.push({ module, success, error, retries });
+        }
         
-        const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
         
-        if (i + batchSize < changes.length) {
+        // Small delay between batches
+        if (i + batchSize < processableModules.length) {
           await new Promise(resolve => setTimeout(resolve, 300));
         }
       }
       
-      // Generate results report
+      // Generate results report for modules
       const successful = results.filter(r => r.success);
       const failed = results.filter(r => !r.success);
       
       if (failed.length === 0) {
         toast({
           title: 'Success',
-          description: `All ${successful.length} milestone changes processed successfully!`,
+          description: `All ${successful.length} modules processed successfully!`,
         });
       } else if (failed.length < successful.length) {
         toast({
           title: 'Partial Success',
-          description: `${successful.length} changes processed, ${failed.length} failed.`,
-          variant: 'default',
+          description: `${successful.length} of ${successful.length + failed.length} modules processed successfully. ${failed.length} failed.`,
+          variant: 'destructive'
         });
       } else {
         toast({
-          title: 'Update Failed',
-          description: `${failed.length} out of ${results.length} changes failed. Please try again.`,
-          variant: 'destructive',
+          title: 'Failed',
+          description: `All ${failed.length} modules failed to process.`,
+          variant: 'destructive'
         });
       }
+    }
+    
+    // Process billing milestones separately
+    if (milestones.length > 0) {
+      setMilestoneProgress({ current: 0, total: milestones.length, message: 'Processing billing milestones...' });
       
-      setIsProcessingMilestones(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      const milestoneResults: { milestone: any; success: boolean; error?: string }[] = [];
       
-    } else {
-      // Original logic for new projects (no change detection needed)
-      const batchSize = 3;
-      const maxRetries = 3;
-      const results: { milestone: any; success: boolean; error?: string; retries: number }[] = [];
-      
-      setIsProcessingMilestones(true);
-      setMilestoneProgress({ current: 0, total: validated.length, message: 'Starting milestone creation...' });
-      
-      try {
-        for (let i = 0; i < validated.length; i += batchSize) {
-          const batch = validated.slice(i, i + batchSize);
-          const batchNumber = Math.floor(i / batchSize) + 1;
-          const totalBatches = Math.ceil(validated.length / batchSize);
-          
+      for (let i = 0; i < milestones.length; i++) {
+        const milestone = milestones[i];
           setMilestoneProgress({ 
-            current: i, 
-            total: validated.length, 
-            message: `Processing batch ${batchNumber}/${totalBatches}...` 
-          });
-          
-          const batchPromises = batch.map(async (t) => {
-            let retries = 0;
-            let success = false;
-            let error = '';
+          current: i + 1, 
+          total: milestones.length, 
+          message: `Processing milestone ${i + 1}/${milestones.length}...` 
+        });
+        
+        try {
+          if (isEditMode && (milestone as any).id) {
+            // Update existing milestone
+            const milestonePayload = {
+              name: milestone.name,
+              description: milestone.description || undefined,
+              feeAmount: formatNumber(milestone.feeAmount),
+              expectedInvoiceDate: formatDate(milestone.expectedInvoiceDate),
+              expectedCollectionDate: formatDate(milestone.expectedCollectionDate),
+              billingStatus: milestone.billingStatus || 'none',
+            };
             
-            while (retries < maxRetries && !success) {
-              try {
-                const payload = {
-                  name: t.name,
-                  description: t.description || undefined,
-                  priority: t.priority,
-                  projectId: project.id,
-                  assignedUserId: t.assignedUserId || undefined,
-                  startDate: t.startDate ? new Date(t.startDate).toISOString() : undefined,
-                  dueDate: t.dueDate ? new Date(t.dueDate).toISOString() : undefined,
-                  feeAmount: t.feeAmount ? Number(t.feeAmount) : undefined,
-                  expectedInvoiceDate: t.expectedInvoiceDate ? new Date(t.expectedInvoiceDate).toISOString() : undefined,
-                };
-
-                await apiRequest('POST', '/api/tasks', payload);
-                success = true;
-              } catch (e: any) {
-                retries++;
-                error = e?.message || 'Unknown error';
-                
-                if (retries < maxRetries) {
-                  await new Promise(resolve => setTimeout(resolve, 1000 * retries));
-                }
-              }
+            // Clean the payload before sending
+            const cleanedMilestonePayload = cleanPayload(milestonePayload);
+            console.log('Cleaned milestone update payload:', cleanedMilestonePayload);
+            
+            const updateResponse = await apiRequest('PUT', `/api/milestones/${(milestone as any).id}`, cleanedMilestonePayload);
+            
+            if (!updateResponse.ok) {
+              const errorText = await updateResponse.text();
+              throw new Error(`HTTP ${updateResponse.status}: ${errorText}`);
             }
+          } else {
+            // Create new milestone
+            const milestonePayload = {
+              name: milestone.name,
+              description: milestone.description || undefined,
+              feeAmount: formatNumber(milestone.feeAmount),
+              expectedInvoiceDate: formatDate(milestone.expectedInvoiceDate),
+              expectedCollectionDate: formatDate(milestone.expectedCollectionDate),
+              billingStatus: milestone.billingStatus || 'none',
+              projectId: project.id,
+              createdById: user.id,
+            };
             
-            return { milestone: t, success, error, retries };
-          });
-          
-          const batchResults = await Promise.all(batchPromises);
-          results.push(...batchResults);
-          
-          if (i + batchSize < validated.length) {
-            await new Promise(resolve => setTimeout(resolve, 500));
+            console.log('Creating milestone with payload:', milestonePayload);
+            console.log('Milestone payload types:', {
+              expectedInvoiceDate: typeof milestonePayload.expectedInvoiceDate,
+              expectedCollectionDate: typeof milestonePayload.expectedCollectionDate,
+              expectedInvoiceDateValue: milestonePayload.expectedInvoiceDate,
+              expectedCollectionDateValue: milestonePayload.expectedCollectionDate
+            });
+            
+            // Clean the payload before sending
+            const cleanedMilestonePayload = cleanPayload(milestonePayload);
+            console.log('Cleaned milestone payload:', cleanedMilestonePayload);
+            
+            const milestoneResponse = await apiRequest('POST', `/api/projects/${project.id}/milestones`, cleanedMilestonePayload);
+            
+            if (!milestoneResponse.ok) {
+              const errorText = await milestoneResponse.text();
+              throw new Error(`HTTP ${milestoneResponse.status}: ${errorText}`);
+            }
+
+            // Invalidate queries to refresh the UI
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'milestones'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'phases'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
           }
+          
+          milestoneResults.push({ milestone, success: true });
+        } catch (error: any) {
+          console.error('Milestone processing failed:', error?.message || 'Unknown error');
+          milestoneResults.push({ milestone, success: false, error: error?.message || 'Unknown error' });
         }
-        
-        const successful = results.filter(r => r.success);
-        const failed = results.filter(r => !r.success);
-        
-        if (failed.length === 0) {
+      }
+      
+      // Generate results report for milestones
+      const successfulMilestones = milestoneResults.filter(r => r.success);
+      const failedMilestones = milestoneResults.filter(r => !r.success);
+      
+      if (failedMilestones.length === 0 && successfulMilestones.length > 0) {
           toast({
             title: 'Success',
-            description: `All ${successful.length} milestones created successfully!`,
+          description: `All ${successfulMilestones.length} billing milestones processed successfully!`,
           });
-        } else if (failed.length < successful.length) {
+      } else if (failedMilestones.length > 0) {
           toast({
-            title: 'Partial Success',
-            description: `${successful.length} milestones created, ${failed.length} failed.`,
-            variant: 'default',
-          });
-        } else {
-          toast({
-            title: 'Creation Failed',
-            description: `${failed.length} out of ${results.length} milestones failed to create. Please try again.`,
-            variant: 'destructive',
-          });
+          title: 'Milestone Processing Issues',
+          description: `${successfulMilestones.length} of ${milestoneResults.length} billing milestones processed successfully. ${failedMilestones.length} failed.`,
+          variant: 'destructive'
+        });
+      }
+    }
+    
+        setIsProcessingMilestones(false);
+    setMilestoneProgress({ current: 0, total: 0, message: '' });
+  };
+
+  // Process modules for a milestone
+  const processModules = async (modules: any[], milestoneId: string) => {
+    for (const module of modules) {
+      try {
+        // Validate required fields
+        if (!module.name || module.name.trim() === '') {
+          console.error('Module name is required:', module);
+          continue;
         }
         
-        queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-      } catch (error) {
-        console.error('Error processing milestones:', error);
-        toast({
-          title: 'Error',
-          description: 'An unexpected error occurred while processing milestones. Please try again.',
-          variant: 'destructive',
+        const modulePayload = {
+          name: module.name.trim(),
+          description: module.description || undefined,
+          priority: module.priority || 'medium',
+          status: module.status || 'not_started',
+          startDate: module.startDate ? new Date(module.startDate).toISOString() : undefined,
+          dueDate: module.dueDate ? new Date(module.dueDate).toISOString() : undefined,
+
+          weight: 2,
+          assignedUserId: module.assignedUserId || undefined,
+          assignedTeamId: null,
+          milestoneId: milestoneId,
+          phaseNumber: module.phaseNumber,
+          phaseName: module.phaseName,
+          createdById: project?.managerId || user.id,
+        };
+        
+        if (module.id) {
+          // Update existing module
+          await apiRequest('PUT', `/api/modules/${module.id}`, modulePayload);
+        } else {
+          // Create new module
+          const moduleResponse = await apiRequest('POST', '/api/modules', modulePayload);
+          const moduleData = await moduleResponse.json();
+          
+          // Process subtasks for this module
+          if (module.subtasks && module.subtasks.length > 0) {
+            await processSubtasks(module.subtasks, moduleData.id);
+          }
+
+          // Invalidate queries to refresh the UI
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'modules'] });
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'phases'] });
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
+        }
+      } catch (error: any) {
+        console.error(`Module processing failed: ${module.name} - ${error?.message || 'Unknown error'}`);
+        // Continue processing other modules even if one fails
+      }
+    }
+  };
+
+  // Helper functions for UI
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'not_started': return 'bg-gray-100 text-gray-800';
+      case 'in_progress': return 'bg-blue-100 text-blue-800';
+      case 'completed': return 'bg-green-100 text-green-800';
+      case 'on_hold': return 'bg-yellow-100 text-yellow-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getPriorityColor = (priority: string) => {
+    switch (priority) {
+      case 'low': return 'bg-green-100 text-green-800';
+      case 'medium': return 'bg-yellow-100 text-yellow-800';
+      case 'high': return 'bg-orange-100 text-orange-800';
+      case 'critical': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  // Helper function to convert phase number to phase type
+  const getPhaseTypeFromNumber = (phaseNumber: number) => {
+    switch (phaseNumber) {
+      case 1: return 'initiation_contracting';
+      case 2: return 'requirements_design';
+      case 3: return 'development';
+      case 4: return 'testing_validation';
+      case 5: return 'deployment_golive';
+      case 6: return 'transition_closure';
+      default: return 'initiation_contracting';
+    }
+  };
+
+  const addModule = (phaseIndex: number) => {
+    const newModule: NewModuleRow = {
+      name: '',
+      description: '',
+      priority: 'medium',
+      status: 'not_started',
+      startDate: '',
+      dueDate: '',
+      phaseNumber: phaseIndex + 1,
+      phaseName: phases[phaseIndex]?.phaseName || phases[phaseIndex]?.name || `Phase ${phaseIndex + 1}`,
+      subtasks: []
+    };
+    
+    const newPhases = [...phases];
+    newPhases[phaseIndex].modules = [...(newPhases[phaseIndex].modules || []), newModule];
+    setPhases(newPhases);
+  };
+
+  const removeModule = (phaseIndex: number, moduleIndex: number) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].modules = newPhases[phaseIndex].modules.filter((_: any, i: number) => i !== moduleIndex);
+    setPhases(newPhases);
+  };
+
+  const updateModule = (phaseIndex: number, moduleIndex: number, field: string, value: any) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].modules[moduleIndex] = {
+      ...newPhases[phaseIndex].modules[moduleIndex],
+      [field]: value
+    };
+    setPhases(newPhases);
+  };
+
+  const addSubtask = (phaseIndex: number, moduleIndex: number) => {
+    const newSubtask = {
+      name: '',
+      description: '',
+      status: 'not_started',
+      priority: 'medium',
+      startDate: '',
+      dueDate: '',
+      estimatedDays: 1,
+      assignedDevId: undefined,
+      assignedConsultantId: undefined
+    };
+    
+    const newPhases = [...phases];
+    newPhases[phaseIndex].modules[moduleIndex].subtasks = [
+      ...(newPhases[phaseIndex].modules[moduleIndex].subtasks || []),
+      newSubtask
+    ];
+    setPhases(newPhases);
+  };
+
+  const removeSubtask = (phaseIndex: number, moduleIndex: number, subtaskIndex: number) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].modules[moduleIndex].subtasks = 
+      newPhases[phaseIndex].modules[moduleIndex].subtasks.filter((_: any, i: number) => i !== subtaskIndex);
+    setPhases(newPhases);
+  };
+
+  const updateSubtask = (phaseIndex: number, moduleIndex: number, subtaskIndex: number, field: string, value: any) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].modules[moduleIndex].subtasks[subtaskIndex] = {
+      ...newPhases[phaseIndex].modules[moduleIndex].subtasks[subtaskIndex],
+      [field]: value
+    };
+    
+    // Debug logging for assignment updates
+    if (field === 'assignedDevId' || field === 'assignedConsultantId') {
+      console.log(`Updated subtask ${subtaskIndex} ${field}:`, value);
+      console.log('Updated subtask object:', newPhases[phaseIndex].modules[moduleIndex].subtasks[subtaskIndex]);
+    }
+    
+    setPhases(newPhases);
+  };
+
+  const addMilestone = () => {
+    const newMilestone: NewMilestoneRow = {
+      name: '',
+      description: '',
+      feeAmount: '',
+      expectedInvoiceDate: '',
+      expectedCollectionDate: '',
+      status: 'not_started',
+      billingStatus: 'none'
+    };
+    setMilestones([...milestones, newMilestone]);
+  };
+
+  const removeMilestone = (index: number) => {
+    const newMilestones = milestones.filter((_, i) => i !== index);
+    setMilestones(newMilestones);
+  };
+
+  const updateMilestone = (index: number, field: string, value: any) => {
+    const newMilestones = [...milestones];
+    newMilestones[index] = {
+      ...newMilestones[index],
+      [field]: value
+    };
+    
+    // Auto-calculate expected collection date when expected invoice date changes
+    if (field === 'expectedInvoiceDate' && value) {
+      const invoiceDate = new Date(value);
+      const collectionDate = new Date(invoiceDate);
+      collectionDate.setDate(collectionDate.getDate() + 30); // 30 days after invoice date
+      
+      newMilestones[index] = {
+        ...newMilestones[index],
+        expectedCollectionDate: collectionDate.toISOString().split('T')[0]
+      };
+    }
+    
+    setMilestones(newMilestones);
+    
+    // Auto-calculate contract amount from milestone fees
+    if (field === 'feeAmount') {
+      const totalAmount = newMilestones.reduce((total, milestone) => {
+        // Remove commas before parsing
+        const cleanValue = (milestone.feeAmount || '0').replace(/,/g, '');
+        const fee = parseFloat(cleanValue) || 0;
+        return total + fee;
+      }, 0);
+      
+      // Update the budget field with the calculated total
+      const formattedAmount = totalAmount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      form.setValue('budget', formattedAmount, { shouldValidate: true });
+    }
+  };
+
+  // Process subtasks for a module
+  const processSubtasks = async (subtasks: any[], moduleId: string) => {
+    for (const subtask of subtasks) {
+      try {
+        // Validate required fields
+        if (!subtask.name || subtask.name.trim() === '') {
+          console.error('Subtask name is required:', subtask);
+          continue;
+        }
+        
+        const payload = {
+          name: subtask.name.trim(),
+          description: subtask.description || undefined,
+          priority: subtask.priority || 'medium',
+          status: subtask.status || 'todo',
+          startDate: subtask.startDate ? new Date(subtask.startDate).toISOString() : undefined,
+          dueDate: subtask.dueDate ? new Date(subtask.dueDate).toISOString() : undefined,
+          estimatedDays: subtask.estimatedDays ? Number(subtask.estimatedDays) : undefined,
+          assignedDevId: subtask.assignedDevId || undefined,
+          assignedConsultantId: subtask.assignedConsultantId || undefined,
+          progressPercent: subtask.progressPercent || 0,
+          moduleId: moduleId, // This links the subtask to the module
+        };
+        
+        // Debug logging for subtask payload
+        console.log(`Processing subtask "${subtask.name}":`, {
+          assignedDevId: subtask.assignedDevId,
+          assignedConsultantId: subtask.assignedConsultantId,
+          payload: payload
         });
-      } finally {
-        setIsProcessingMilestones(false);
+        
+        if (subtask.id) {
+          // Update existing subtask
+          await apiRequest('PUT', `/api/subtasks/${subtask.id}`, payload);
+        } else {
+          // Create new subtask
+          await apiRequest('POST', '/api/subtasks', payload);
+        }
+      } catch (error: any) {
+        console.error(`Subtask processing failed: ${subtask.name} - ${error?.message || 'Unknown error'}`);
+        // Continue processing other subtasks even if one fails
       }
     }
   };
@@ -650,11 +1600,90 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     };
   }, []);
 
+  const handleCancel = () => {
+    if (isEditMode && project) {
+      // Reset to original project data
+      form.reset({
+        client: project.client || "",
+        contactPerson: project.contactPerson || "",
+        contactPhone: project.contactPhone || "",
+        contactEmail: project.contactEmail || "",
+        startDate: project.startDate ? new Date(project.startDate).toISOString().slice(0, 10) : "",
+        endDate: project.endDate ? new Date(project.endDate).toISOString().slice(0, 10) : "",
+        segment: project.segment || "private",
+        teamId: project.teamId || "none",
+        budget: project.budget ? String(project.budget) : "",
+        status: project.status || "planning",
+      });
+      // Don't clear tasks in edit mode to preserve milestones
+    } else {
+      // For new projects, preserve current segment selection instead of resetting to private
+      const currentSegment = form.getValues('segment') || 'private';
+      form.reset({
+        client: "",
+        contactPerson: "",
+        contactPhone: "",
+        contactEmail: "",
+        startDate: "",
+        endDate: "",
+        segment: currentSegment, // Preserve current segment selection
+        teamId: "none",
+        budget: "",
+        status: "planning",
+      });
+      setModules([]);
+    }
+    setIsOpen(false);
+    if (onClose) onClose();
+  };
+
   const canCreateProject = (user?.role === 'admin' || user?.role === 'manager');
 
   if (!canCreateProject) {
     return null;
   }
+
+  // Memoize the current team members to prevent unnecessary re-renders
+  const currentTeamMembers = useMemo(() => {
+    if (isEditMode) {
+      return projectTeamMembers.filter((member: any) => member.id);
+    }
+    return teamMembers.filter((member: any) => member.id);
+  }, [isEditMode, projectTeamMembers, teamMembers]);
+
+  // Create role-based filtered arrays for subtask assignment
+  const developersOnly = useMemo(() => {
+    return currentTeamMembers.filter((member: any) => 
+      member.role === 'BC Developer' || member.role === 'Portal Developer'
+    );
+  }, [currentTeamMembers]);
+
+  const consultantsOnly = useMemo(() => {
+    return currentTeamMembers.filter((member: any) => 
+      member.role === 'Functional Consultant'
+    );
+  }, [currentTeamMembers]);
+
+  // Memoize the filtered team members to prevent duplicate filtering on every render
+  const filteredTeamMembers = useMemo(() => {
+    return currentTeamMembers.filter((member: any, index: number, array: any[]) => 
+      array.findIndex(m => m.id === member.id) === index
+    );
+  }, [currentTeamMembers]);
+
+  // Prevent form inputs from becoming unresponsive
+  const handleInputChange = (field: string, value: any) => {
+    form.setValue(field as any, value, { shouldValidate: false });
+  };
+
+  // Ensure form inputs maintain focus and responsiveness
+  const handleInputFocus = (event: React.FocusEvent<HTMLInputElement>) => {
+    event.target.select();
+  };
+
+  const handleTextareaFocus = (event: React.FocusEvent<HTMLTextAreaElement>) => {
+    event.target.select();
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -663,7 +1692,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           <Button 
             variant="ghost" 
             size="sm" 
-            onClick={() => setIsOpen(true)}
+            onClick={() => {
+              setIsOpen(true);
+            }}
             data-testid={`button-edit-project-${project?.id}`}
           >
             Edit
@@ -713,6 +1744,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                           className="h-11"
                           {...field} 
                           data-testid="input-project-client"
+                          onFocus={handleInputFocus}
                         />
                       </FormControl>
                       <FormMessage />
@@ -732,6 +1764,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                           className="h-11"
                           {...field} 
                           data-testid="input-project-contact-person"
+                          onFocus={handleInputFocus}
                         />
                       </FormControl>
                       <FormMessage />
@@ -753,6 +1786,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                           className="h-11"
                           {...field} 
                           data-testid="input-project-contact-phone"
+                          onFocus={handleInputFocus}
                         />
                       </FormControl>
                       <FormMessage />
@@ -772,6 +1806,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                           className="h-11"
                           {...field} 
                           data-testid="input-project-contact-email"
+                          onFocus={handleInputFocus}
                         />
                       </FormControl>
                       <FormMessage />
@@ -839,11 +1874,18 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                               No teams available for {currentSegment} segment
                             </SelectItem>
                           ) : (
-                            teams.map((team) => (
-                              <SelectItem key={team.id} value={team.id}>
-                                {team.name}
-                              </SelectItem>
-                            ))
+                            teams
+                              .filter((team) => team.id)
+                              .filter((team, index, array) => 
+                                array.findIndex(t => t.id === team.id) === index
+                              )
+                              .map((team, index) => {
+                                return (
+                                  <SelectItem key={`team-${team.id}-${index}`} value={team.id}>
+                                    {team.name}
+                                  </SelectItem>
+                                );
+                              })
                           )}
                         </SelectContent>
                       </Select>
@@ -877,6 +1919,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                           className="h-11"
                           {...field} 
                           data-testid="input-project-start-date"
+                          onFocus={handleInputFocus}
                         />
                       </FormControl>
                       <FormMessage />
@@ -896,6 +1939,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                           className="h-11"
                           {...field} 
                           data-testid="input-project-end-date"
+                          onFocus={handleInputFocus}
                         />
                       </FormControl>
                       <FormMessage />
@@ -945,6 +1989,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                             field.onChange(formattedValue);
                           }}
                           data-testid="input-project-budget"
+                          onFocus={handleInputFocus}
                         />
                       </FormControl>
                       <FormMessage />
@@ -970,12 +2015,11 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value="planning">Planning</SelectItem>
-                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="not_started">Not Started</SelectItem>
+                            <SelectItem value="in_progress">In Progress</SelectItem>
                             <SelectItem value="on_hold">On Hold</SelectItem>
-                            <SelectItem value="completed">Completed</SelectItem>
-                            <SelectItem value="on_support">On Support</SelectItem>
-                            <SelectItem value="inactive">Inactive</SelectItem>
+                            <SelectItem value="finished">Finished</SelectItem>
+                            <SelectItem value="cancelled">Cancelled</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -986,561 +2030,550 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
               </div>
             </div>
 
-            {/* Milestones Section */}
-            <div className="space-y-6">
-              <div className="border-b border-gray-200 pb-4">
-                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                  <Plus className="h-5 w-5 text-indigo-600" />
-                  {isEditMode ? 'Edit Milestones' : 'Create Milestones'}
+            {/* Project Phases Section */}
+            <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-200">
+              <h3 className="text-2xl font-bold text-gray-900 mb-8 flex items-center gap-3">
+                <div className="p-3 bg-gradient-to-br from-purple-500 to-blue-600 rounded-xl">
+                  <Clock className="h-7 w-7 text-white" />
+                </div>
+                Project Phases & Modules
+                <Badge variant="secondary" className="ml-3 bg-gradient-to-r from-purple-100 to-blue-100 text-purple-800 border-purple-200 px-4 py-2 text-sm font-medium">
+                  {phases.length} phases
+                </Badge>
                 </h3>
-                <p className="text-sm text-gray-600 mt-1">Define project milestones and assign team members</p>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-lg font-medium text-gray-900">Project Milestones</h4>
-                  <p className="text-sm text-gray-600">Define the key deliverables and timeline for your project</p>
-                </div>
-                <Button 
-                  type="button" 
-                  variant="default" 
-                  onClick={() => setTasks((prev) => [...prev, { name: '', description: '', priority: 'medium' } as NewTaskRow])}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  <Plus className="h-4 w-4 mr-2" /> Add Milestone
-                </Button>
-              </div>
-              {tasks.length === 0 ? (
-                <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50">
-                  <div className="text-gray-400 mb-4">
-                    <Plus className="h-16 w-16 mx-auto" />
-                  </div>
-                  <h4 className="text-lg font-medium text-gray-900 mb-2">
-                    {isEditMode ? 'No milestones found' : 'No milestones added yet'}
-                  </h4>
-                  <p className="text-sm text-gray-600 mb-4">
-                    {isEditMode ? 'This project doesn\'t have any milestones defined.' : 'Start by adding your first project milestone.'}
-                  </p>
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    onClick={() => setTasks((prev) => [...prev, { name: '', description: '', priority: 'medium' } as NewTaskRow])}
-                    className="border-blue-300 text-blue-700 hover:bg-blue-50"
-                  >
-                    <Plus className="h-4 w-4 mr-2" /> Add Your First Milestone
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {tasks.map((t, idx) => (
-                    <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-6 space-y-6">
-                      {/* Milestone Header */}
-                      <div className="flex items-center justify-between border-b border-gray-200 pb-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                            <span className="text-sm font-semibold text-blue-700">{idx + 1}</span>
+
+              <div className="space-y-8">
+                {phases.sort((a, b) => (a.id || 0) - (b.id || 0)).map((phase, phaseIndex) => (
+                  <div key={`phase-${phase.id || phaseIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                    {/* Phase Header */}
+                    <div className="bg-gradient-to-r from-purple-50 via-blue-50 to-indigo-50 px-6 py-5 border-b border-gray-200">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-4">
+                          <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-purple-600 to-blue-600 rounded-full text-white font-bold text-lg shadow-lg">
+                            {phaseIndex + 1}
                           </div>
                           <div>
-                            <h4 className="font-medium text-gray-900">Milestone #{idx + 1}</h4>
-                            {isEditMode && (t as any).id && (
-                              <div className="flex items-center space-x-2 mt-1">
-                                <Badge variant="outline" className="text-xs">
-                                  {(t as any).status}
-                                </Badge>
-                                <Badge variant="outline" className="text-xs">
-                                  {(t as any).billingStatus || 'none'}
-                                </Badge>
-                              </div>
-                            )}
+                            <h4 className="text-xl font-bold text-gray-900">{phase.name}</h4>
+                            <p className="text-sm text-gray-600 mt-1">{phase.description}</p>
                           </div>
                         </div>
-                        <Button 
-                          type="button" 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => setTasks((prev) => prev.filter((_, i) => i !== idx))}
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        <div className="flex items-center gap-3">
+                          <Badge className={`px-4 py-2 text-sm font-medium ${getStatusColor(phase.status)}`}>
+                            {phase.status.replace('_', ' ')}
+                          </Badge>
+                      <Button 
+                        type="button" 
+                          variant="outline"
+                          size="sm"
+                          onClick={() => addModule(phaseIndex)}
+                            className="text-purple-700 border-purple-300 hover:bg-purple-50 hover:border-purple-400 transition-all duration-200 shadow-sm"
                         >
-                          <X className="h-4 w-4" />
-                        </Button>
+                            <Plus className="h-4 w-4 mr-2" />
+                          Add Module
+                      </Button>
                       </div>
+                      </div>
+                    </div>
+                    
+                    {/* Phase Content */}
+                    <div className="p-6 space-y-6">
+                      {phase.modules.map((module: any, moduleIndex: number) => (
+                        <div key={`module-${phase.id || phaseIndex}-${module.id || moduleIndex}`} className="bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl p-6 border border-gray-200 hover:border-blue-300 transition-all duration-200 shadow-sm">
+                          {/* Module Header */}
+                          <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-4">
+                              <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg text-white font-semibold text-sm shadow-md">
+                                {moduleIndex + 1}
+                              </div>
+                              <div>
+                                <h5 className="text-lg font-semibold text-gray-800">Module {moduleIndex + 1}</h5>
+                                <p className="text-sm text-gray-600">Priority: {module.priority}</p>
+                              </div>
+                              <Badge className={`px-3 py-1 text-xs font-medium ${getPriorityColor(module.priority)}`}>
+                                {module.priority}
+                              </Badge>
+                              </div>
+                              <Button 
+                                type="button" 
+                                variant="ghost" 
+                                size="sm"
+                              onClick={() => removeModule(phaseIndex, moduleIndex)}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50 transition-all duration-200"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
 
-                      {/* Basic Milestone Info */}
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Milestone Name *</label>
-                            <Input 
-                              placeholder="Enter milestone name" 
-                              value={t.name} 
-                              onChange={(e) => setTasks((prev)=>{ 
-                                const c=[...prev]; 
-                                c[idx] = { ...c[idx], name: e.target.value, errors: { ...c[idx].errors, name: undefined } }; 
-                                return c; 
-                              })} 
-                              className="h-11"
+                          {/* Module Fields */}
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-gray-700">Module Name</label>
+                              <Input 
+                                placeholder="Enter module name"
+                              value={module.name}
+                              onChange={(e) => updateModule(phaseIndex, moduleIndex, 'name', e.target.value)}
+                                className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
                             />
-                            {t.errors?.name && <p className="text-xs text-red-600 mt-1">{t.errors.name}</p>}
-                          </div>
-                          
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
-                            <Select value={t.priority} onValueChange={(v)=> setTasks((prev)=>{ 
-                              const c=[...prev]; 
-                              c[idx] = { ...c[idx], priority: v as NewTaskRow['priority'] }; 
-                              return c; 
-                            })}>
-                              <SelectTrigger className="h-11">
-                                <SelectValue placeholder="Select priority" />
-                              </SelectTrigger>
-                              <SelectContent>
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-gray-700">Priority Level</label>
+                              <Select 
+                              value={module.priority}
+                              onValueChange={(value) => updateModule(phaseIndex, moduleIndex, 'priority', value as any)}
+                            >
+                                <SelectTrigger className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200">
+                                <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
                                 <SelectItem value="low">Low Priority</SelectItem>
                                 <SelectItem value="medium">Medium Priority</SelectItem>
                                 <SelectItem value="high">High Priority</SelectItem>
                                 <SelectItem value="critical">Critical Priority</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            </div>
 
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Fee Amount (KSh) *</label>
-                            <Input 
-                              type="text" 
-                              min="0" 
-                              placeholder="0.00" 
-                              value={t.feeAmount || ''} 
-                              onChange={(e)=> {
-                                // Remove commas and non-numeric characters except decimal point
-                                const rawValue = e.target.value.replace(/[^\d.]/g, '');
-                                
-                                // Format with commas for thousands
-                                let formattedValue = rawValue;
-                                if (rawValue.includes('.')) {
-                                  const [whole, decimal] = rawValue.split('.');
-                                  formattedValue = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + decimal;
-                                } else if (rawValue.length > 3) {
-                                  formattedValue = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-                                }
-                                
-                                setTasks((prev)=>{ 
-                                  const c=[...prev]; 
-                                  c[idx] = { ...c[idx], feeAmount: formattedValue, errors: { ...c[idx].errors, feeAmount: undefined } }; 
-                                  return c; 
-                                });
-                              }} 
-                              className="h-11"
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-gray-700">Start Date</label>
+                              <Input 
+                                type="date"
+                                placeholder="Select start date"
+                              value={module.startDate || ''}
+                              onChange={(e) => updateModule(phaseIndex, moduleIndex, 'startDate', e.target.value)}
+                                className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                              />
+                              {module.errors?.startDate && (
+                                <p className="text-xs text-red-500 mt-1">{module.errors.startDate}</p>
+                              )}
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-gray-700">Due Date</label>
+                              <Input 
+                                type="date"
+                                placeholder="Select due date"
+                              value={module.dueDate || ''}
+                              onChange={(e) => updateModule(phaseIndex, moduleIndex, 'dueDate', e.target.value)}
+                                className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
                             />
-                            {t.errors?.feeAmount && <p className="text-xs text-red-600 mt-1">{t.errors.feeAmount}</p>}
+                              {module.errors?.dueDate && (
+                                <p className="text-xs text-red-500 mt-1">{module.errors.dueDate}</p>
+                              )}
+                            </div>
+                            </div>
+
+                          <div className="space-y-2 mb-6">
+                            <label className="text-sm font-medium text-gray-700">Description</label>
+                              <Textarea 
+                              placeholder="Enter module description (optional)"
+                            value={module.description || ''}
+                                                          onChange={(e) => updateModule(phaseIndex, moduleIndex, 'description', e.target.value)}
+                              className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                              rows={3}
+                            />
                           </div>
-                          
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Assign To</label>
-                            <Select value={t.assignedUserId || 'none'} onValueChange={(v)=> setTasks((prev)=>{ 
-                              const c=[...prev]; 
-                              c[idx] = { ...c[idx], assignedUserId: v === 'none' ? undefined : v }; 
-                              return c; 
-                            })}>
-                              <SelectTrigger className="h-11">
-                                <SelectValue placeholder="Select team member" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="none">
-                                  {form.watch('teamId') && form.watch('teamId') !== 'none' 
-                                    ? `${getTeamName(form.watch('teamId'))} - Unassigned`
-                                    : 'Unassigned'
-                                  }
-                                </SelectItem>
-                                {teamMembers.map((m: any) => (
-                                  <SelectItem key={m.id} value={m.id}>
-                                    <div className="flex flex-col items-start">
-                                      <span className="font-medium">
-                                        {m.firstName && m.lastName ? `${m.firstName} ${m.lastName}` : m.email}
-                                      </span>
-                                      {m.role && (
-                                        <span className="text-xs text-gray-500">
-                                          {m.role}
-                                        </span>
+
+                          {/* Subtasks Section - Collapsible */}
+                          <div className="border-t border-gray-200 pt-6">
+                            <div className="flex items-center justify-between mb-5">
+                              <div 
+                                className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-all duration-200"
+                                onClick={() => toggleModuleSubtasks(phaseIndex, moduleIndex)}
+                              >
+                                {areModuleSubtasksCollapsed(phaseIndex, moduleIndex) ? (
+                                  <ChevronRight className="h-4 w-4 text-gray-500" />
+                                ) : (
+                                  <ChevronDown className="h-4 w-4 text-gray-500" />
+                                )}
+                                <h6 className="text-lg font-semibold text-gray-800 flex items-center gap-3">
+                                  <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                                  Subtasks ({(module.subtasks || []).length})
+                                </h6>
+                              </div>
+                              <Button 
+                                type="button" 
+                                variant="outline" 
+                                size="sm"
+                                onClick={() => addSubtask(phaseIndex, moduleIndex)}
+                                className="text-blue-600 border-blue-300 hover:bg-blue-50 hover:border-blue-400 transition-all duration-200"
+                              >
+                                <Plus className="h-4 w-4 mr-2" />
+                                Add Subtask
+                              </Button>
+                            </div>
+
+                            {!areModuleSubtasksCollapsed(phaseIndex, moduleIndex) && (
+                              <div className="space-y-4">
+                                {module.subtasks.map((subtask: any, subtaskIndex: number) => (
+                                  <div key={`subtask-${phase.id || phaseIndex}-${module.id || moduleIndex}-${subtask.id || subtaskIndex}`} className="bg-blue-50 rounded-xl border border-blue-200 p-5 hover:border-blue-300 transition-all duration-200 shadow-sm">
+                                    <div className="flex items-center justify-between mb-4">
+                                      <div className="flex items-center gap-3">
+                                        <div className="flex items-center justify-center w-8 h-8 bg-gradient-to-br from-indigo-400 to-purple-500 rounded-lg text-white font-medium text-xs shadow-sm">
+                                          {subtaskIndex + 1}
+                                        </div>
+                                        <div>
+                                          <h6 className="font-semibold text-gray-800">Subtask {subtaskIndex + 1}</h6>
+                                          <p className="text-sm text-gray-600">Priority: {subtask.priority || 'medium'}</p>
+                                        </div>
+                                        <Badge className={`px-2 py-1 text-xs font-medium ${getPriorityColor(subtask.priority || 'medium')}`}>
+                                          {subtask.priority || 'medium'}
+                                        </Badge>
+                                      </div>
+                                      <Button 
+                                        type="button" 
+                                        variant="ghost" 
+                                        size="sm"
+                                        onClick={() => removeSubtask(phaseIndex, moduleIndex, subtaskIndex)}
+                                        className="text-red-600 hover:text-red-700 hover:bg-red-50 transition-all duration-200"
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+
+                                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                                    <div className="space-y-2">
+                                      <label className="text-xs font-medium text-gray-600">Subtask Name</label>
+                                            <Input 
+                                        placeholder="Enter subtask name"
+                                              value={subtask.name} 
+                                      onChange={(e) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'name', e.target.value)}
+                                        className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm"
+                                    />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <label className="text-xs font-medium text-gray-600">Priority</label>
+                                            <Select 
+                                      value={subtask.priority || 'medium'}
+                                      onValueChange={(value) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'priority', value as any)}
+                                    >
+                                        <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm">
+                                        <SelectValue />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="low">Low</SelectItem>
+                                                <SelectItem value="medium">Medium</SelectItem>
+                                                <SelectItem value="high">High</SelectItem>
+                                                <SelectItem value="critical">Critical</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                    </div>
+                                          </div>
+
+                                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                                    <div className="space-y-2">
+                                      <label className="text-xs font-medium text-gray-600">Start Date</label>
+                                            <Input 
+                                              type="date"
+                                        placeholder="Select start date"
+                                      value={subtask.startDate || ''}
+                                        min={module.startDate || ''}
+                                        max={subtask.dueDate || module.dueDate || ''}
+                                              onChange={(e) => {
+                                                const startDate = e.target.value;
+                                        updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'startDate', startDate);
+                                                
+                                                // Auto-calculate estimated days if both dates are set
+                                                if (startDate && subtask.dueDate) {
+                                                  const start = new Date(startDate);
+                                                  const due = new Date(subtask.dueDate);
+                                          const diffTime = due.getTime() - start.getTime();
+                                          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                          if (diffDays > 0) {
+                                            updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'estimatedDays', diffDays);
+                                          }
+                                        }
+                                      }}
+                                        className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm"
+                                      />
+                                      {subtask.errors?.startDate && (
+                                        <p className="text-xs text-red-500 mt-1">{subtask.errors.startDate}</p>
                                       )}
                                     </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            {form.watch('teamId') && form.watch('teamId') !== 'none' && (
-                              <p className="text-xs text-gray-500 mt-1">
-                                💡 Team: {getTeamName(form.watch('teamId'))} • {teamMembers.length} member{teamMembers.length === 1 ? '' : 's'} available
-                              </p>
+                                    <div className="space-y-2">
+                                      <label className="text-xs font-medium text-gray-600">Due Date</label>
+                                            <Input 
+                                              type="date"
+                                        placeholder="Select due date"
+                                      value={subtask.dueDate || ''}
+                                        min={subtask.startDate || module.startDate || ''}
+                                        max={module.dueDate || ''}
+                                        onFocus={(e) => {
+                                          // Auto-navigate to start date month when opening due date picker
+                                          if (subtask.startDate) {
+                                            const startDate = new Date(subtask.startDate);
+                                            const year = startDate.getFullYear();
+                                            const month = String(startDate.getMonth() + 1).padStart(2, '0');
+                                            e.target.setAttribute('data-month', `${year}-${month}`);
+                                          }
+                                        }}
+                                              onChange={(e) => {
+                                                const dueDate = e.target.value;
+                                        updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'dueDate', dueDate);
+                                                
+                                                // Auto-calculate estimated days if both dates are set
+                                                if (subtask.startDate && dueDate) {
+                                                  const start = new Date(subtask.startDate);
+                                                  const due = new Date(dueDate);
+                                          const diffTime = due.getTime() - start.getTime();
+                                          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                          if (diffDays > 0) {
+                                            updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'estimatedDays', diffDays);
+                                          }
+                                        }
+                                      }}
+                                        className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm"
+                                    />
+                                      {subtask.errors?.dueDate && (
+                                        <p className="text-xs text-red-500 mt-1">{subtask.errors.dueDate}</p>
+                                      )}
+                                    </div>
+                                          </div>
+
+                                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                                    <div className="space-y-2">
+                                      <label className="text-xs font-medium text-gray-600">Estimated Days</label>
+                                            <Input 
+                                              type="number" 
+                                        placeholder="Auto-calculated"
+                                              value={subtask.estimatedDays || ''} 
+                                        readOnly
+                                        className="border-blue-300 bg-gray-50 text-gray-600 cursor-not-allowed transition-all duration-200 text-sm"
+                                      />
+                                      <p className="text-xs text-gray-500 mt-1">
+                                        Calculated from start and end dates
+                                      </p>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <label className="text-xs font-medium text-gray-600">Description</label>
+                                    <Textarea
+                                        placeholder="Enter subtask description (optional)"
+                                      value={subtask.description || ''}
+                                      onChange={(e) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'description', e.target.value)}
+                                        className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm"
+                                      rows={2}
+                                            />
+                                    </div>
+                                          </div>
+
+                                  {/* Team Assignment Section */}
+                                  <div className="border-t border-blue-200 pt-4">
+                                    <h6 className="text-sm font-medium text-blue-700 mb-3 flex items-center gap-2">
+                                      <Users className="h-4 w-4 text-blue-500" />
+                                      Team Assignment
+                                    </h6>
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                      <div className="space-y-2">
+                                        <label className="block text-xs font-medium text-blue-600">
+                                          Developer
+                                        </label>
+                                              <Select 
+                                          value={subtask.assignedDevId || 'unassigned'}
+                                          onValueChange={(value) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'assignedDevId', value === 'unassigned' ? undefined : value)}
+                                        >
+                                          <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 text-sm transition-all duration-200">
+                                            <SelectValue placeholder="Select Developer" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="unassigned">Unassigned</SelectItem>
+                                            {developersOnly && developersOnly.length > 0
+                                              ? developersOnly
+                                                  .map((member: any) => (
+                                                    <SelectItem key={member.id || `dev-${Math.random()}`} value={member.id}>
+                                                      {member.firstName && member.lastName 
+                                                        ? `${member.firstName} ${member.lastName}` 
+                                                        : member.email || 'Unknown User'
+                                                      } ({member.role || 'No Role'})
+                                                      </SelectItem>
+                                                  ))
+                                              : <SelectItem value="no_devs" disabled>No developers available in team</SelectItem>
+                                            }
+                                                </SelectContent>
+                                              </Select>
+                                          </div>
+
+                                      <div className="space-y-2">
+                                        <label className="block text-xs font-medium text-blue-600">
+                                          Functional Consultant
+                                        </label>
+                                              <Select 
+                                          value={subtask.assignedConsultantId || 'unassigned'}
+                                          onValueChange={(value) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'assignedConsultantId', value === 'unassigned' ? undefined : value)}
+                                        >
+                                          <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 text-sm transition-all duration-200">
+                                            <SelectValue placeholder="Select FC" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                            <SelectItem value="unassigned">Unassigned</SelectItem>
+                                            {consultantsOnly && consultantsOnly.length > 0
+                                              ? consultantsOnly
+                                                  .map((member: any) => (
+                                                    <SelectItem key={member.id || `fc-${Math.random()}`} value={member.id}>
+                                                      {member.firstName && member.lastName 
+                                                        ? `${member.firstName} ${member.lastName}` 
+                                                        : member.email || 'Unknown User'
+                                                      } ({member.role || 'No Role'})
+                                                      </SelectItem>
+                                                  ))
+                                              : <SelectItem value="no_consultants" disabled>No consultants available in team</SelectItem>
+                                            }
+                                                </SelectContent>
+                                              </Select>
+                                          </div>
+                                      </div>
+                                  </div>
+                              </div>
+                              ))}
+
+                              {module.subtasks.length === 0 && (
+                                <div className="text-center py-8 text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                                  <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-3">
+                                    <Plus className="h-6 w-6 text-gray-400" />
+                                  </div>
+                                  <p className="text-sm font-medium text-gray-600">No subtasks added yet</p>
+                                  <p className="text-xs text-gray-500 mt-1">Click "Add Subtask" to get started</p>
+                                </div>
+                              )}
+                              </div>
                             )}
                           </div>
                         </div>
-                      </div>
+                      ))}
 
-                      {/* Description */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                        <Textarea 
-                          placeholder="Describe what this milestone involves..." 
-                          value={t.description || ''} 
-                          onChange={(e)=> setTasks((prev)=>{ 
-                            const c=[...prev]; 
-                            c[idx] = { ...c[idx], description: e.target.value }; 
-                            return c; 
-                          })} 
-                          rows={3}
-                          className="resize-none"
+                      {phase.modules.length === 0 && (
+                        <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                          <FolderOpen className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                          <p className="text-lg font-medium text-gray-600 mb-2">No modules added yet for this phase</p>
+                          <p className="text-sm text-gray-500">Click "Add Module" to get started</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Billing Milestones Section */}
+            <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-200">
+              <h3 className="text-2xl font-bold text-gray-900 mb-8 flex items-center gap-3">
+                <div className="p-3 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl">
+                  <DollarSign className="h-7 w-7 text-white" />
+                </div>
+                Billing Milestones
+                <Badge variant="secondary" className="ml-3 bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 border-green-200 px-4 py-2 text-sm font-medium">
+                  {milestones.length} milestones
+                </Badge>
+              </h3>
+
+              <div className="space-y-6">
+                {milestones.map((milestone, index) => (
+                  <div key={`milestone-${milestone.id || index}`} className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-6 border border-green-200 hover:border-green-300 transition-all duration-200 shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg text-white font-semibold text-sm shadow-md">
+                          {index + 1}
+                        </div>
+                        <div>
+                          <h5 className="font-semibold text-gray-800 text-base">Milestone {index + 1}</h5>
+                          <p className="text-sm text-gray-600">Billing milestone</p>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeMilestone(index)}
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50 transition-all duration-200"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700">Milestone Name</label>
+                        <Input
+                          placeholder="Enter milestone name"
+                          value={milestone.name}
+                          onChange={(e) => updateMilestone(index, 'name', e.target.value)}
+                          className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
                         />
                       </div>
-
-                      {/* Timeline & Financial */}
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Start Date (Optional)</label>
-                          <div className="relative">
-                            <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                            <Input 
-                              type="date" 
-                              value={t.startDate || ''} 
-                              onChange={(e)=> setTasks((prev)=>{ 
-                                const c=[...prev]; 
-                                c[idx] = { ...c[idx], startDate: e.target.value, errors: { ...c[idx].errors, startDate: undefined } }; 
-                                return c; 
-                              })} 
-                              className="h-11 pl-10"
-                            />
-                          </div>
-                          {t.errors?.startDate && <p className="text-xs text-red-600 mt-1">{t.errors.startDate}</p>}
-                        </div>
-                        
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Deadline *</label>
-                          <div className="relative">
-                            <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                            <Input 
-                              type="date" 
-                              value={t.dueDate || ''} 
-                              onChange={(e)=> setTasks((prev)=>{ 
-                                const c=[...prev]; 
-                                c[idx] = { ...c[idx], dueDate: e.target.value, errors: { ...c[idx].errors, dueDate: undefined } }; 
-                                return c; 
-                              })} 
-                              className="h-11 pl-10"
-                            />
-                          </div>
-                          {t.errors?.dueDate && <p className="text-xs text-red-600 mt-1">{t.errors.dueDate}</p>}
-                        </div>
-                        
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Expected Invoice Date</label>
-                          <div className="relative">
-                            <CalendarDays className="absolute left-3 top-1/2 transform -translate-y-1/4 h-4 w-4 text-gray-400" />
-                            <Input 
-                              type="date" 
-                              value={t.expectedInvoiceDate || ''} 
-                              onChange={(e)=> setTasks((prev)=>{ 
-                                const c=[...prev]; 
-                                c[idx] = { ...c[idx], expectedInvoiceDate: e.target.value, errors: { ...c[idx].errors, expectedInvoiceDate: undefined } }; 
-                                return c; 
-                              })} 
-                              className="h-11 pl-10"
-                              // Set the min attribute to the deadline date to prevent setting invoice date before deadline
-                              min={t.dueDate || undefined}
-                              // Set the default month view to the deadline month when calendar opens
-                              onFocus={(e) => {
-                                if (t.dueDate && !t.expectedInvoiceDate) {
-                                  // If there's a deadline but no invoice date, suggest setting it to deadline + 1 day
-                                  const deadlineDate = new Date(t.dueDate);
-                                  const suggestedInvoiceDate = new Date(deadlineDate);
-                                  suggestedInvoiceDate.setDate(deadlineDate.getDate() + 1);
-                                  
-                                  // Update the task with the suggested invoice date
-                                  setTasks((prev) => {
-                                    const c = [...prev];
-                                    c[idx] = { 
-                                      ...c[idx], 
-                                      expectedInvoiceDate: suggestedInvoiceDate.toISOString().slice(0, 10),
-                                      errors: { ...c[idx].errors, expectedInvoiceDate: undefined }
-                                    };
-                                    return c;
-                                  });
-                                }
-                              }}
-                            />
-                          </div>
-                          {t.errors?.expectedInvoiceDate && <p className="text-xs text-red-600 mt-1">{t.errors.expectedInvoiceDate}</p>}
-                          {t.dueDate && !t.expectedInvoiceDate && (
-                            <p className="text-xs text-blue-600 mt-1">
-                              💡 Click to set invoice date (suggested: {new Date(t.dueDate).toLocaleDateString()})
-                            </p>
-                          )}
-                          {t.dueDate && t.expectedInvoiceDate && (
-                            <p className="text-xs text-green-600 mt-1">
-                              ✅ Invoice date set • Collection date: {new Date(t.expectedInvoiceDate).toLocaleDateString()} + 30 days
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Collection Date Note */}
-                      <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
-                        <p className="text-sm text-blue-800">
-                          <span className="font-medium">Note:</span> Collection date will be automatically calculated as 30 days after the invoice date.
-                        </p>
-                      </div>
-
-                      {/* Subtasks Section */}
-                      <div className="border-t border-gray-200 pt-4">
-                        <div className="flex items-center justify-between mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
-                          <div>
-                            <h5 className="text-lg font-semibold text-blue-900 mb-1">Subtasks</h5>
-                            <p className="text-sm text-blue-700">Break down this milestone into smaller, manageable tasks</p>
-                          </div>
-                          <Button 
-                            type="button" 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => {
-                              const newSubtasks = [...(t.subtasks || []), { 
-                                name: '', 
-                                description: '', 
-                                priority: 'medium' as const,
-                                estimatedDays: 0,
-                                startDate: '',
-                                dueDate: '',
-                                assignedUserId: undefined,
-                                progressPercent: 0
-                              }];
-                              setTasks((prev) => {
-                                const c = [...prev];
-                                c[idx] = { ...c[idx], subtasks: newSubtasks };
-                                return c;
-                              });
-                            }}
-                            className="text-blue-600 hover:text-blue-700 border-blue-200 hover:border-blue-300 hover:bg-blue-50 font-medium"
-                          >
-                            <Plus className="h-4 w-4 mr-2" /> Add Subtask
-                          </Button>
-                        </div>
-
-                        {t.subtasks && t.subtasks.length > 0 ? (
-                          <div className="space-y-3">
-                            {t.subtasks.map((subtask, subtaskIdx) => (
-                              <div key={subtaskIdx} className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6 shadow-sm">
-                                <div className="flex items-center justify-between mb-4">
-                                  <div className="flex items-center space-x-3">
-                                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center border-2 border-blue-200">
-                                      <span className="text-sm font-semibold text-blue-700">{subtaskIdx + 1}</span>
-                                    </div>
-                                    <div>
-                                      <span className="text-sm font-semibold text-blue-900">Subtask #{subtaskIdx + 1}</span>
-                                      <p className="text-xs text-blue-600">Break down this milestone</p>
-                                    </div>
-                                  </div>
-                                  <Button 
-                                    type="button" 
-                                    variant="ghost" 
-                                    size="sm"
-                                    onClick={() => {
-                                      const newSubtasks = t.subtasks?.filter((_, i) => i !== subtaskIdx) || [];
-                                      setTasks((prev) => {
-                                        const c = [...prev];
-                                        c[idx] = { ...c[idx], subtasks: newSubtasks };
-                                        return c;
-                                      });
-                                    }}
-                                    className="text-red-600 hover:text-red-700 hover:bg-red-50 rounded-full p-2"
-                                  >
-                                    <X className="h-4 w-4" />
-                                  </Button>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                                  <div className="md:col-span-2">
-                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Subtask Name *</label>
-                                    <Input 
-                                      placeholder="Enter subtask name" 
-                                      value={subtask.name} 
-                                      onChange={(e) => {
-                                        const newSubtasks = [...(t.subtasks || [])];
-                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], name: e.target.value };
-                                        setTasks((prev) => {
-                                          const c = [...prev];
-                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
-                                          return c;
-                                        });
-                                      }}
-                                      className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400"
-                                    />
-                                  </div>
-                                  
-                                  <div>
-                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Priority</label>
-                                    <Select 
-                                      value={subtask.priority} 
-                                      onValueChange={(v) => {
-                                        const newSubtasks = [...(t.subtasks || [])];
-                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], priority: v as 'low' | 'medium' | 'high' | 'critical' };
-                                        setTasks((prev) => {
-                                          const c = [...prev];
-                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
-                                          return c;
-                                        });
-                                      }}
-                                    >
-                                      <SelectTrigger className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400">
-                                        <SelectValue placeholder="Select priority" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="low">Low</SelectItem>
-                                        <SelectItem value="medium">Medium</SelectItem>
-                                        <SelectItem value="high">High</SelectItem>
-                                        <SelectItem value="critical">Critical</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-
-                                  <div>
-                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Start Date</label>
-                                    <Input 
-                                      type="date"
-                                      value={subtask.startDate ? new Date(subtask.startDate).toISOString().split('T')[0] : ''} 
-                                      onChange={(e) => {
-                                        const startDate = e.target.value;
-                                        const newSubtasks = [...(t.subtasks || [])];
-                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], startDate };
-                                        
-                                        // Auto-calculate estimated days if both dates are set
-                                        if (startDate && subtask.dueDate) {
-                                          const start = new Date(startDate);
-                                          const due = new Date(subtask.dueDate);
-                                          const days = Math.ceil((due.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-                                          if (days > 0) {
-                                            newSubtasks[subtaskIdx].estimatedDays = days;
-                                          }
-                                        }
-                                        
-                                        setTasks((prev) => {
-                                          const c = [...prev];
-                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
-                                          return c;
-                                        });
-                                      }}
-                                      className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400"
-                                    />
-                                  </div>
-
-                                  <div>
-                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Due Date</label>
-                                    <Input 
-                                      type="date"
-                                      value={subtask.dueDate ? new Date(subtask.dueDate).toISOString().split('T')[0] : ''} 
-                                      onChange={(e) => {
-                                        const dueDate = e.target.value;
-                                        const newSubtasks = [...(t.subtasks || [])];
-                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], dueDate };
-                                        
-                                        // Auto-calculate estimated days if both dates are set
-                                        if (subtask.startDate && dueDate) {
-                                          const start = new Date(subtask.startDate);
-                                          const due = new Date(dueDate);
-                                          const days = Math.ceil((due.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-                                          if (days > 0) {
-                                            newSubtasks[subtaskIdx].estimatedDays = days;
-                                          }
-                                        }
-                                        
-                                        setTasks((prev) => {
-                                          const c = [...prev];
-                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
-                                          return c;
-                                        });
-                                      }}
-                                      className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400"
-                                    />
-                                  </div>
-
-                                  <div>
-                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Estimated Days</label>
-                                    <Input 
-                                      type="number" 
-                                      min="1" 
-                                      placeholder="Auto-calculated" 
-                                      value={subtask.estimatedDays || ''} 
-                                      readOnly
-                                      className="h-10 text-sm bg-blue-50 text-blue-700 border-blue-200 font-medium"
-                                    />
-                                  </div>
-
-                                  <div>
-                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Assigned Employee</label>
-                                    {(isEditMode ? projectTeamMembers : teamMembers).length > 0 ? (
-                                      <Select 
-                                        value={subtask.assignedUserId || ''} 
-                                        onValueChange={(v) => {
-                                          const newSubtasks = [...(t.subtasks || [])];
-                                          newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], assignedUserId: v || undefined };
-                                          setTasks((prev) => {
-                                            const c = [...prev];
-                                            c[idx] = { ...c[idx], subtasks: newSubtasks };
-                                            return c;
-                                          });
-                                        }}
-                                      >
-                                        <SelectTrigger className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400">
-                                          <SelectValue placeholder="Select employee" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="">Unassigned</SelectItem>
-                                          {(isEditMode ? projectTeamMembers : teamMembers).map((member: any) => (
-                                            <SelectItem key={member.id} value={member.id}>
-                                              {member.name}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                    ) : (
-                                      <div className="h-10 px-3 py-2 text-sm text-gray-500 bg-gray-100 border border-gray-200 rounded-md flex items-center">
-                                        <span>{isEditMode ? 'Loading team members...' : 'No team assigned to project'}</span>
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  <div className="md:col-span-2">
-                                    <label className="block text-sm font-semibold text-blue-900 mb-2">Description</label>
-                                    <Input 
-                                      placeholder="Brief description" 
-                                      value={subtask.description || ''} 
-                                      onChange={(e) => {
-                                        const newSubtasks = [...(t.subtasks || [])];
-                                        newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], description: e.target.value };
-                                        setTasks((prev) => {
-                                          const c = [...prev];
-                                          c[idx] = { ...c[idx], subtasks: newSubtasks };
-                                          return c;
-                                        });
-                                      }}
-                                      className="h-10 text-sm border-blue-200 focus:border-blue-400 focus:ring-blue-400"
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-center py-8 border-2 border-dashed border-blue-200 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50">
-                            <div className="text-blue-400 mb-3">
-                              <Plus className="h-12 w-12 mx-auto" />
-                            </div>
-                            <p className="text-sm font-medium text-blue-900 mb-1">No subtasks added yet</p>
-                            <p className="text-xs text-blue-600">Break down this milestone into smaller, manageable tasks</p>
-                          </div>
-                        )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700">Fee Amount (KSH)</label>
+                        <Input
+                          type="text"
+                          placeholder="Enter amount in KSH"
+                          value={milestone.feeAmount || ''}
+                          onChange={(e) => {
+                            // Remove commas and non-numeric characters except decimal point
+                            const rawValue = e.target.value.replace(/[^\d.]/g, '');
+                            
+                            // Format with commas for thousands
+                            let formattedValue = rawValue;
+                            if (rawValue.includes('.')) {
+                              const [whole, decimal] = rawValue.split('.');
+                              formattedValue = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + decimal;
+                            } else if (rawValue.length > 3) {
+                              formattedValue = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                            }
+                            
+                            updateMilestone(index, 'feeAmount', formattedValue);
+                          }}
+                          className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
+                        />
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700">Expected Invoice Date</label>
+                        <Input
+                          type="date"
+                          placeholder="Select invoice date"
+                          value={milestone.expectedInvoiceDate || ''}
+                          onChange={(e) => updateMilestone(index, 'expectedInvoiceDate', e.target.value)}
+                          className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700">Expected Collection Date</label>
+                        <Input
+                          type="date"
+                          placeholder="Auto-calculated (30 days after invoice)"
+                          value={milestone.expectedCollectionDate || ''}
+                          readOnly
+                          className="border-green-300 bg-gray-50 text-gray-600 cursor-not-allowed"
+                        />
+                        <p className="text-xs text-gray-500 mt-2">
+                          Automatically calculated as 30 days after invoice date
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-gray-700">Description (Optional)</label>
+                      <Textarea
+                        placeholder="Enter milestone description"
+                        value={milestone.description || ''}
+                        onChange={(e) => updateMilestone(index, 'description', e.target.value)}
+                        className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
+                        rows={3}
+                      />
+                    </div>
+                  </div>
+                ))}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addMilestone}
+                  className="w-full border-2 border-dashed border-green-300 text-green-600 hover:bg-green-50 hover:border-green-400 transition-all duration-200 py-8 text-lg font-medium"
+                >
+                  <Plus className="h-6 w-6 mr-3" />
+                  Add Billing Milestone
+                </Button>
+              </div>
             </div>
 
             {/* Progress indicator for milestone processing */}
@@ -1568,7 +2601,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setIsOpen(false)}
+                onClick={handleCancel}
                 disabled={isProcessingMilestones}
                 data-testid="button-cancel-project"
               >
@@ -1578,6 +2611,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                 type="submit" 
                 disabled={createProjectMutation.isPending || isProcessingMilestones}
                 data-testid="button-submit-project"
+                onClick={() => console.log('Save button clicked')}
               >
                 {isProcessingMilestones 
                   ? "Processing Milestones..." 

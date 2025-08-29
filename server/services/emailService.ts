@@ -4,8 +4,8 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Use process.cwd() as fallback for CommonJS compatibility
+const __dirname = path.dirname(process.cwd());
 
 
 export interface EmailNotificationData {
@@ -271,6 +271,30 @@ TaskFlow Team
       return true;
     } catch (error) {
       console.error('Email service connection failed:', error);
+      return false;
+    }
+  }
+
+  // Generic email sending method for custom emails
+  async sendEmail(options: { to: string; subject: string; text?: string; html?: string }): Promise<boolean> {
+    if (!this.isConfigured) {
+      console.warn(`EmailService: Email service not configured. Cannot send email to ${options.to}`);
+      return false;
+    }
+
+    try {
+      const mailOptions = {
+        from: process.env.EMAIL_FROM || 'TaskFlow <noreply@taskflow.com>',
+        to: options.to,
+        subject: options.subject,
+        text: options.text,
+        html: options.html
+      };
+
+      await this.transporter!.sendMail(mailOptions);
+      return true;
+    } catch (error) {
+      console.error(`Failed to send email to ${options.to}:`, error);
       return false;
     }
   }

@@ -393,7 +393,7 @@ export default function Reports() {
                     </Badge>
                   </div>
                   <div className="text-sm text-gray-600">
-                    {workload.length} with assigned tasks
+                    {workload.length} with assigned subtasks
                   </div>
                 </CardContent>
               </Card>
@@ -519,9 +519,9 @@ export default function Reports() {
                         </div>
                         <div className="flex items-center space-x-4">
                           <div className="text-right">
-                            <p className="text-sm font-medium" data-testid={`text-member-tasks-${member.userId}`}>
-                              {member.completedTasks}/{member.totalTasks} tasks
-                            </p>
+                                                    <p className="text-sm font-medium" data-testid={`text-member-tasks-${member.userId}`}>
+                          {member.completedTasks}/{member.totalTasks} subtasks
+                        </p>
                             <p className="text-xs text-gray-600">
                               {member.workloadPercentage}% completion rate
                             </p>

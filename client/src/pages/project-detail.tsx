@@ -2,10 +2,14 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation, useParams } from "wouter";
+import { useLocation, useParams, useSearch } from "wouter";
 import Navigation from "@/components/layout/navigation";
 import CreateProjectModal from "@/components/projects/create-project-modal";
-import MilestoneTable from "@/components/projects/milestone-table";
+import ModuleTable from "@/components/projects/module-table";
+import MilestonesTable from "@/components/projects/milestones-table";
+import PhaseOverview from "@/components/projects/phase-overview";
+import GanttChart from "@/components/projects/gantt-chart";
+import ProjectCharter from "@/components/projects/project-charter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -24,8 +28,50 @@ import {
 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { formatCurrency, calculateWeightBasedProgress } from "@/lib/utils";
 
 export default function ProjectDetail() {
+  // Type definitions
+  interface Phase {
+    id: string;
+    phaseNumber: number;
+    phaseName: string;
+    description: string;
+    startDate: string | null;
+    endDate: string | null;
+    status: 'not_started' | 'in_progress' | 'completed' | 'on_hold';
+    progress: number;
+    deliverables: any[];
+    reports: any[];
+    modules: any[];
+  }
+
+  interface Module {
+    id: string;
+    name: string;
+    description?: string;
+    priority: 'low' | 'medium' | 'high' | 'critical';
+    status: 'not_started' | 'in_progress' | 'fc_review' | 'qa' | 'client_review' | 'completed' | 'overdue' | 'on_hold' | 'cancelled';
+    startDate?: string;
+    dueDate?: string;
+    estimatedHours?: number;
+    actualHours?: number;
+    weight: number;
+    assignedUserId?: string;
+    assignedUser?: {
+      firstName?: string;
+      lastName?: string;
+      email: string;
+    };
+    projectId: string;
+    phaseNumber?: number;
+    phaseName?: string;
+    progressPercent: number;
+    createdAt: string;
+    updatedAt: string;
+    subtasks?: any[];
+  }
+
   const auth = useAuth() as any;
   const { isAuthenticated, isLoading, user } = auth;
   const { toast } = useToast();
@@ -34,6 +80,13 @@ export default function ProjectDetail() {
   const projectId = params.id;
 
   const [editingProject, setEditingProject] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState('modules');
+  const [expandedMilestone, setExpandedMilestone] = useState<string | null>(null);
+  
+  // Get search parameters to check if a specific milestone was clicked
+  const search = useSearch();
+  const urlParams = new URLSearchParams(search);
+  const taskIdFromUrl = urlParams.get('task');
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -50,9 +103,12 @@ export default function ProjectDetail() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
+
+
   const { data: project, isLoading: projectLoading, error } = useQuery<any>({
     queryKey: ['/api/projects', projectId],
     queryFn: async () => {
+      if (!projectId) throw new Error('Project ID is required');
       const res = await fetch(`/api/projects/${projectId}`, { 
         credentials: 'include', 
         cache: 'no-store' 
@@ -63,14 +119,199 @@ export default function ProjectDetail() {
     enabled: !!isAuthenticated && !!projectId,
   });
 
-  const { data: milestones = [], isLoading: milestonesLoading } = useQuery<any[]>({
-    queryKey: ['/api/projects', projectId, 'tasks'],
+  const { data: modules = [], isLoading: modulesLoading } = useQuery<Module[]>({
+    queryKey: ['/api/projects', projectId, 'modules'],
     queryFn: async () => {
-      const res = await fetch(`/api/projects/${projectId}/tasks`, { 
+      if (!projectId) return [];
+      const res = await fetch(`/api/projects/${projectId}/modules`, { 
+        credentials: 'include', 
+        cache: 'no-store' 
+      });
+      if (!res.ok) throw new Error('Failed to fetch modules');
+      return res.json();
+    },
+    enabled: !!isAuthenticated && !!projectId,
+  });
+
+  const { data: milestones = [], isLoading: milestonesLoading } = useQuery<any[]>({
+    queryKey: ['/api/projects', projectId, 'milestones'],
+    queryFn: async () => {
+      if (!projectId) return [];
+      const res = await fetch(`/api/projects/${projectId}/milestones`, { 
         credentials: 'include', 
         cache: 'no-store' 
       });
       if (!res.ok) throw new Error('Failed to fetch milestones');
+      return res.json();
+    },
+    enabled: !!isAuthenticated && !!projectId,
+  });
+
+  // Auto-expand milestone if task parameter is present in URL
+  useEffect(() => {
+    if (taskIdFromUrl && milestones.length > 0) {
+      setExpandedMilestone(taskIdFromUrl);
+      // Ensure we're on the milestones tab
+      setActiveTab('milestones');
+    }
+  }, [taskIdFromUrl, milestones]);
+
+  // Generate phases from modules data since phases table doesn't exist yet
+  const { data: phases = [], isLoading: phasesLoading, error: phasesError } = useQuery<Phase[]>({
+    queryKey: ['/api/projects', projectId, 'phases'],
+    queryFn: async () => {
+      if (!projectId) return [];
+      
+      // Always generate the 6 hardcoded phases, even if no modules exist
+      
+      // Generate phases from modules data
+      const phaseMap = new Map<number, Phase>();
+      
+      // Initialize with hardcoded phases (matching PhaseOverview component interface)
+      const hardcodedPhases: Omit<Phase, 'modules'>[] = [
+        { 
+          id: '1', 
+          phaseNumber: 1, 
+          phaseName: 'Initiation & Contracting', 
+          description: 'Project setup and contract finalization',
+          startDate: null,
+          endDate: null,
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: []
+        },
+        { 
+          id: '2', 
+          phaseNumber: 2, 
+          phaseName: 'Requirements Gathering & Design', 
+          description: 'Requirements analysis and system design',
+          startDate: null,
+          endDate: null,
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: []
+        },
+        { 
+          id: '3', 
+          phaseNumber: 3, 
+          phaseName: 'System Customization & Development', 
+          description: 'System development and customization',
+          startDate: null,
+          endDate: null,
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: []
+        },
+        { 
+          id: '4', 
+          phaseNumber: 4, 
+          phaseName: 'Testing & Validation', 
+          description: 'System testing and validation',
+          startDate: null,
+          endDate: null,
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: []
+        },
+        { 
+          id: '5', 
+          phaseNumber: 5, 
+          phaseName: 'Deployment & Go-Live', 
+          description: 'System deployment and go-live',
+          startDate: null,
+          endDate: null,
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: []
+        },
+        { 
+          id: '6', 
+          phaseNumber: 6, 
+          phaseName: 'Transition & Closure', 
+          description: 'Project transition and closure',
+          startDate: null,
+          endDate: null,
+          status: 'not_started' as const,
+          progress: 0,
+          deliverables: [],
+          reports: []
+        }
+      ];
+      
+      // Group modules by phase
+      modules.forEach((module: any) => {
+        const phaseNumber = module.phaseNumber || 1;
+        if (!phaseMap.has(phaseNumber)) {
+          const basePhase = hardcodedPhases.find(p => p.phaseNumber === phaseNumber);
+          if (basePhase) {
+            phaseMap.set(phaseNumber, {
+              ...basePhase,
+              modules: []
+            });
+          }
+        }
+        if (phaseMap.has(phaseNumber)) {
+          phaseMap.get(phaseNumber)!.modules.push(module);
+        }
+      });
+      
+      // Fill in phases with no modules
+      hardcodedPhases.forEach(phase => {
+        if (!phaseMap.has(phase.phaseNumber)) {
+          phaseMap.set(phase.phaseNumber, {
+            ...phase,
+            modules: []
+          });
+        }
+      });
+      
+      // Convert to array and sort by phase number
+      const sortedPhases: Phase[] = Array.from(phaseMap.values()).sort((a, b) => a.phaseNumber - b.phaseNumber);
+      
+      return sortedPhases;
+    },
+    enabled: !!isAuthenticated && !!projectId && !!modules,
+  });
+
+
+
+
+
+  // Fetch project charter
+  const { data: projectCharter, isLoading: charterLoading } = useQuery<any>({
+    queryKey: ['/api/projects', projectId, 'charter'],
+    queryFn: async () => {
+      if (!projectId) return null;
+      const res = await fetch(`/api/projects/${projectId}/charter`, { 
+        credentials: 'include', 
+        cache: 'no-store' 
+      });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!isAuthenticated && !!projectId,
+  });
+
+  // Generate Gantt chart data from backend API
+  const { data: ganttData, isLoading: ganttLoading, error: ganttError } = useQuery<any>({
+    queryKey: ['/api/projects', projectId, 'gantt'],
+    queryFn: async () => {
+      if (!projectId) return null;
+      
+      const res = await fetch(`/api/projects/${projectId}/gantt`, {
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      
+      if (!res.ok) {
+        throw new Error('Failed to fetch Gantt chart data');
+      }
+      
       return res.json();
     },
     enabled: !!isAuthenticated && !!projectId,
@@ -90,6 +331,41 @@ export default function ProjectDetail() {
     enabled: !!isAuthenticated && !!project?.segment,
   });
 
+  // Helper functions
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active':
+        return 'bg-green-100 text-green-800';
+      case 'planning':
+        return 'bg-blue-100 text-blue-800';
+      case 'on_hold':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'completed':
+        return 'bg-gray-100 text-gray-800';
+      case 'on_support':
+        return 'bg-purple-100 text-purple-800';
+      case 'inactive':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const formatStatus = (status: string) => {
+    return status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ');
+  };
+
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(word => word.charAt(0))
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+
+
   const handleDeactivateProject = async () => {
     if (!project) return;
     
@@ -99,18 +375,124 @@ export default function ProjectDetail() {
     try {
       await apiRequest('PUT', `/api/projects/${project.id}/terminate`);
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      
-      toast({ title: 'Project deactivated', description: `${project.name} has been deactivated.` });
+      toast({
+        title: "Success",
+        description: "Project deactivated successfully",
+      });
     } catch (error: any) {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 500);
+        return;
+      }
       console.error('Error deactivating project:', error);
-      toast({ title: 'Failed to deactivate', description: error?.message || 'Unknown error', variant: 'destructive' });
+      toast({
+        title: "Error",
+        description: "Failed to deactivate project",
+        variant: "destructive",
+      });
     }
   };
 
-  const handleEditMilestone = (milestone: any) => {
-    // For now, we'll use the existing CreateProjectModal to edit milestones
-    // This can be enhanced later with a dedicated milestone edit modal
-    setEditingProject({ ...project, milestoneToEdit: milestone });
+  // Phase management handlers
+  const handlePhaseUpdate = async (phaseId: string, updates: any) => {
+    if (!projectId) return;
+    try {
+      await apiRequest('PUT', `/api/phases/${phaseId}`, updates);
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+      toast({
+        title: "Success",
+        description: "Phase updated successfully",
+      });
+    } catch (error: any) {
+      console.error('Error updating phase:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update phase",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handlePhaseComplete = async (phaseId: string, completionReport: string) => {
+    if (!projectId) return;
+    try {
+      await apiRequest('PUT', `/api/phases/${phaseId}/complete`, { completionReport });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+      toast({
+        title: "Success",
+        description: "Phase completed successfully",
+      });
+    } catch (error: any) {
+      console.error('Error completing phase:', error);
+      toast({
+        title: "Error",
+        description: "Failed to complete phase",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Charter management handler
+  const handleCharterSave = async (charterData: any) => {
+    if (!projectId) return;
+    try {
+      if (projectCharter) {
+        await apiRequest('PUT', `/api/projects/${projectId}/charter`, charterData);
+      } else {
+        await apiRequest('POST', `/api/projects/${projectId}/charter`, charterData);
+      }
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'charter'] });
+      toast({
+        title: "Success",
+        description: "Project charter saved successfully",
+      });
+    } catch (error: any) {
+      console.error('Error saving charter:', error);
+      toast({
+        title: "Error",
+        description: "Failed to save project charter",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Milestone management handler
+  const handleEditMilestone = async (milestone: any) => {
+    try {
+      // Update milestone using the API
+      const response = await apiRequest('PUT', `/api/milestones/${milestone.id}`, {
+        billingStatus: milestone.billingStatus,
+        name: milestone.name,
+        description: milestone.description,
+        feeAmount: milestone.feeAmount,
+        expectedInvoiceDate: milestone.expectedInvoiceDate,
+        expectedCollectionDate: milestone.expectedCollectionDate
+      });
+      
+      // Refresh the milestones data
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'milestones'] });
+      
+      toast({
+        title: "Success",
+        description: `Milestone updated successfully`,
+      });
+    } catch (error: any) {
+      console.error('Error updating milestone:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update milestone",
+        variant: "destructive",
+      });
+    }
   };
 
   useEffect(() => {
@@ -166,82 +548,6 @@ export default function ProjectDetail() {
     );
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'bg-success text-success-foreground';
-      case 'planning': return 'bg-warning text-warning-foreground';
-      case 'completed': return 'bg-primary text-primary-foreground';
-      case 'on_hold': return 'bg-error text-error-foreground';
-      case 'cancelled': return 'bg-gray-500 text-white';
-      default: return 'bg-gray-500 text-white';
-    }
-  };
-
-  const formatStatus = (status: string) => {
-    return status.split('_').map(word => 
-      word.charAt(0).toUpperCase() + word.slice(1)
-    ).join(' ');
-  };
-
-  const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase();
-  };
-
-  // Calculate financial metrics
-  // NOTE: paidAmount only counts milestones with billingStatus === 'paid' (actual payments received)
-  // milestones with billingStatus === 'sent' are counted as "invoice sent" but not as "collected revenue"
-  const totalProjectValue = parseFloat(project.budget || '0');
-  const paidAmount = milestones
-    .filter((m: any) => m.billingStatus === 'paid')
-    .reduce((sum: number, m: any) => sum + parseFloat(m.feeAmount || '0'), 0);
-
-  // Calculate weight-based progress for milestones
-  const calculateWeightBasedProgress = () => {
-    if (milestones.length === 0) return 0;
-    
-    let totalWeight = 0;
-    let completedWeight = 0;
-    
-    milestones.forEach((milestone: any) => {
-      // Calculate weight based on priority
-      let weight = 2; // default medium weight
-      switch (milestone.priority) {
-        case 'low':
-          weight = 1;
-          break;
-        case 'medium':
-          weight = 2;
-          break;
-        case 'high':
-          weight = 3;
-          break;
-        case 'critical':
-          weight = 4;
-          break;
-      }
-      
-      totalWeight += weight;
-      
-      // If milestone is completed, add its weight to completed total
-      if (milestone.status === 'done') {
-        completedWeight += weight;
-      }
-    });
-    
-    return totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 0;
-  };
-
-  const weightBasedProgress = calculateWeightBasedProgress();
-
-  // Milestone status counts for summary cards
-  const milestoneStats = {
-    total: milestones.length,
-    todo: milestones.filter((m: any) => m.status === 'todo').length,
-    inProgress: milestones.filter((m: any) => m.status === 'in_progress').length,
-    client_review: milestones.filter((m: any) => m.status === 'client_review').length,
-    done: milestones.filter((m: any) => m.status === 'done').length,
-  };
-
   return (
     <div className="min-h-screen bg-background-page">
       <Navigation />
@@ -268,7 +574,9 @@ export default function ProjectDetail() {
             <div className="flex space-x-2">
               <Button 
                 variant="outline" 
-                onClick={() => setEditingProject(project)}
+                onClick={() => {
+                  setEditingProject(project);
+                }}
               >
                 <Edit className="h-4 w-4 mr-2" />
                 Edit Project
@@ -302,7 +610,7 @@ export default function ProjectDetail() {
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+                    <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               
               {/* Project Details */}
@@ -341,7 +649,17 @@ export default function ProjectDetail() {
 
                 <div className="flex items-center justify-between text-sm">
                   <span>Contract Value:</span>
-                  <span className="font-medium">KSh {totalProjectValue.toLocaleString()}</span>
+                  <span className="font-medium">
+                    KSh {(() => {
+                      const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
+                        ? milestones.reduce((total: number, milestone: any) => {
+                            return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
+                          }, 0)
+                        : (project.budget ? Number(project.budget) : 0);
+                      return totalProjectValue > 0 ? totalProjectValue.toLocaleString() : 
+                             (project.budget ? Number(project.budget).toLocaleString() : '0');
+                    })()}
+                  </span>
                 </div>
               </div>
 
@@ -351,23 +669,80 @@ export default function ProjectDetail() {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span>Contract Value:</span>
-                    <span className="font-medium">KSh {totalProjectValue.toLocaleString()}</span>
+                    <span className="font-medium">
+                      KSh {(() => {
+                        const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
+                          ? milestones.reduce((total: number, milestone: any) => {
+                              return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
+                            }, 0)
+                          : (project.budget ? Number(project.budget) : 0);
+                        return totalProjectValue > 0 ? totalProjectValue.toLocaleString() : 
+                               (project.budget ? Number(project.budget).toLocaleString() : '0');
+                      })()}
+                    </span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span>Paid Amount:</span>
-                    <span className="font-medium text-green-600">KSh {paidAmount.toLocaleString()}</span>
+                    <span className="font-medium text-green-600">KSh {(() => {
+                      const paidAmount = milestones.reduce((total: number, milestone: any) => {
+                        if (milestone.billingStatus === 'paid' && milestone.feeAmount) {
+                          return total + Number(milestone.feeAmount);
+                        }
+                        return total;
+                      }, 0);
+                      return paidAmount.toLocaleString();
+                    })()}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span>Outstanding:</span>
-                    <span className="font-medium">KSh {(totalProjectValue - paidAmount).toLocaleString()}</span>
+                    <span className="font-medium">KSh {(() => {
+                      const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
+                        ? milestones.reduce((total: number, milestone: any) => {
+                            return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
+                          }, 0)
+                        : (project.budget ? Number(project.budget) : 0);
+                      const paidAmount = milestones.reduce((total: number, milestone: any) => {
+                        if (milestone.billingStatus === 'paid' && milestone.feeAmount) {
+                          return total + Number(milestone.feeAmount);
+                        }
+                        return total;
+                      }, 0);
+                      return (totalProjectValue - paidAmount).toLocaleString();
+                    })()}</span>
                   </div>
                 </div>
                 <Progress 
-                  value={totalProjectValue > 0 ? (paidAmount / totalProjectValue) * 100 : 0} 
+                  value={(() => {
+                    const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
+                      ? milestones.reduce((total: number, milestone: any) => {
+                          return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
+                        }, 0)
+                      : (project.budget ? Number(project.budget) : 0);
+                    const paidAmount = milestones.reduce((total: number, milestone: any) => {
+                      if (milestone.billingStatus === 'paid' && milestone.feeAmount) {
+                        return total + Number(milestone.feeAmount);
+                      }
+                      return total;
+                    }, 0);
+                    return totalProjectValue > 0 ? (paidAmount / totalProjectValue) * 100 : 0;
+                  })()} 
                   className="h-2" 
                 />
                 <p className="text-xs text-gray-500">
-                  {totalProjectValue > 0 ? Math.round((paidAmount / totalProjectValue) * 100) : 0}% paid
+                  {(() => {
+                    const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
+                      ? milestones.reduce((total: number, milestone: any) => {
+                          return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
+                        }, 0)
+                      : (project.budget ? Number(project.budget) : 0);
+                    const paidAmount = milestones.reduce((total: number, milestone: any) => {
+                      if (milestone.billingStatus === 'paid' && milestone.feeAmount) {
+                        return total + Number(milestone.feeAmount);
+                      }
+                      return total;
+                    }, 0);
+                    return totalProjectValue > 0 ? Math.round((paidAmount / totalProjectValue) * 100) : 0;
+                  })()}% paid
                 </p>
               </div>
 
@@ -377,10 +752,14 @@ export default function ProjectDetail() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span>Weight-Based Progress:</span>
-                    <span className="font-medium text-blue-600">{weightBasedProgress}%</span>
+                    <span className="font-medium text-blue-600">{(() => {
+                      return calculateWeightBasedProgress(milestones);
+                    })()}%</span>
                   </div>
                   <Progress 
-                    value={weightBasedProgress} 
+                    value={(() => {
+                      return calculateWeightBasedProgress(milestones);
+                    })()} 
                     className="h-2" 
                   />
                   <div className="text-xs text-gray-500 mb-3">
@@ -388,26 +767,34 @@ export default function ProjectDetail() {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Total:</span>
-                    <span className="font-medium">{milestoneStats.total}</span>
+                    <span className="font-medium">{milestones.length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Completed:</span>
-                    <span className="font-medium text-green-600">{milestoneStats.done}</span>
+                    <span className="font-medium text-green-600">{milestones.filter((m: any) => m.status === 'done').length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>In Progress:</span>
-                    <span className="font-medium text-blue-600">{milestoneStats.inProgress}</span>
+                    <span className="font-medium text-blue-600">{milestones.filter((m: any) => m.status === 'in_progress').length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Pending:</span>
-                    <span className="font-medium">{milestoneStats.todo}</span>
+                    <span className="font-medium">{milestones.filter((m: any) => m.status === 'todo').length}</span>
                   </div>
                 </div>
                 <Progress 
-                  value={milestoneStats.total > 0 ? (milestoneStats.done / milestoneStats.total) * 100 : 0} 
+                  value={(() => {
+                    const total = milestones.length;
+                    const done = milestones.filter((m: any) => m.status === 'done').length;
+                    return total > 0 ? (done / total) * 100 : 0;
+                  })()} 
                   className="h-2" 
                 />
-                <p className="text-xs text-gray-500">Count-based progress: {milestoneStats.total > 0 ? Math.round((milestoneStats.done / milestoneStats.total) * 100) : 0}%</p>
+                <p className="text-xs text-gray-500">Count-based progress: {(() => {
+                  const total = milestones.length;
+                  const done = milestones.filter((m: any) => m.status === 'done').length;
+                  return total > 0 ? Math.round((done / total) * 100) : 0;
+                })()}%</p>
               </div>
 
               {/* Team Information */}
@@ -441,36 +828,209 @@ export default function ProjectDetail() {
           </CardContent>
         </Card>
 
-        {/* Milestones Table */}
-        {milestonesLoading ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>Milestones</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="animate-pulse space-y-4">
-                <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-                <div className="space-y-2">
-                  {[...Array(3)].map((_, i) => (
-                    <div key={i} className="h-16 bg-gray-200 rounded"></div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <MilestoneTable 
-            milestones={milestones}
-            projectSegment={project.segment || 'private'}
-            onEdit={handleEditMilestone}
-          />
+        {/* Project Tabs */}
+        <div className="mb-8">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <nav className="flex" aria-label="Tabs">
+              {[
+                { id: 'modules', name: 'Modules', description: 'Track project modules and tasks' },
+                { id: 'phases', name: 'Phases', description: 'Manage project phases and workflow' },
+                { id: 'gantt', name: 'Gantt Chart', description: 'Visualize project timeline' },
+                { id: 'milestones', name: 'Milestones', description: 'Manage billing milestones' }
+              ].map((tab, index) => (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                  }}
+                  className={`flex-1 px-6 py-4 text-left transition-all duration-200 ${
+                    activeTab === tab.id
+                      ? 'bg-blue-50 border-b-2 border-blue-500 text-blue-700'
+                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-800'
+                  } ${index === 0 ? 'rounded-l-lg' : ''} ${index === 3 ? 'rounded-r-lg' : ''}`}
+                >
+                  <div className="font-semibold text-sm mb-1">{tab.name}</div>
+                  <div className={`text-xs ${activeTab === tab.id ? 'text-blue-600' : 'text-gray-500'}`}>
+                    {tab.description}
+                  </div>
+                </button>
+              ))}
+            </nav>
+          </div>
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === 'phases' && projectId && (
+          <div className="space-y-6">
+            {phasesLoading ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Phases</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="animate-pulse space-y-4">
+                    <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+                    <div className="space-y-2">
+                      {[...Array(3)].map((_, i) => (
+                        <div key={i} className="h-16 bg-gray-200 rounded"></div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : phasesError ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Phases</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-8">
+                    <p className="text-red-600">Error loading phases: {phasesError?.message || 'Unknown error'}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : phases.length === 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Phases</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-8">
+                    <p className="text-gray-600">No phases found for this project.</p>
+                    <p className="text-sm text-gray-500 mt-2">Phases will be created automatically based on milestones.</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <PhaseOverview 
+                projectId={projectId!}
+                phases={phases}
+                modules={modules}
+                onPhaseUpdate={handlePhaseUpdate}
+                onPhaseComplete={handlePhaseComplete}
+              />
+            )}
+          </div>
+        )}
+
+        {activeTab === 'gantt' && (
+          <div className="space-y-6">
+            {ganttLoading ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Gantt Chart</CardTitle>
+                  <CardDescription>Project timeline and phase visualization</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Loading Gantt chart data...</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : ganttError ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Gantt Chart</CardTitle>
+                  <CardDescription>Project timeline and phase visualization</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-8">
+                    <p className="text-red-600">Error loading Gantt chart: {ganttError?.message || 'Unknown error'}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : !ganttData ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Gantt Chart</CardTitle>
+                  <CardDescription>Project timeline and phase visualization</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-8">
+                    <p className="text-gray-600">No Gantt chart data available.</p>
+                    <p className="text-sm text-gray-500 mt-2">Gantt chart will be generated based on project phases and milestones.</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <GanttChart 
+                data={ganttData}
+                onPhaseClick={(phaseId) => setActiveTab('phases')}
+                onTaskClick={(taskId) => setActiveTab('modules')}
+              />
+            )}
+          </div>
+        )}
+
+
+
+        {activeTab === 'modules' && (
+          <div className="space-y-6">
+            {/* Modules Table */}
+            {modulesLoading ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Modules</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="animate-pulse space-y-4">
+                    <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+                    <div className="space-y-2">
+                      {[...Array(3)].map((_, i) => (
+                        <div key={i} className="h-16 bg-gray-200 rounded"></div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <ModuleTable 
+                modules={modules}
+                projectSegment={project.segment || 'private'}
+                onEdit={handleEditMilestone}
+                initiallyExpandedModule={expandedMilestone}
+              />
+            )}
+          </div>
+        )}
+
+        {activeTab === 'milestones' && (
+          <div className="space-y-6">
+            {milestonesLoading ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Billing Milestones</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="animate-pulse space-y-4">
+                    <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+                    <div className="space-y-2">
+                      {[...Array(3)].map((_, i) => (
+                        <div key={i} className="h-16 bg-gray-200 rounded"></div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <MilestonesTable 
+                milestones={milestones}
+                projectSegment={project.segment || 'private'}
+                onEdit={handleEditMilestone}
+                onDelete={(milestoneId) => {
+                  // TODO: Implement milestone deletion
+                  console.log('Delete milestone:', milestoneId);
+                }}
+              />
+            )}
+          </div>
         )}
 
         {/* Edit Project Modal */}
         {editingProject && (
           <CreateProjectModal 
             project={editingProject} 
-            key={`edit-${editingProject.id}`}
             onClose={() => setEditingProject(null)}
           />
         )}

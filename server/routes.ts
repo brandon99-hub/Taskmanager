@@ -4,19 +4,46 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./auth";
 import {
   insertProjectSchema,
-  insertTaskSchema,
+  insertModuleSchema,
   insertTeamSchema,
   insertTeamMemberSchema,
   insertNotificationSchema,
-} from "@shared/schema";
+} from "../shared/schema";
 import { z } from "zod";
 import { generateExcelBuffer } from "./utils/excelExport";
 import { notificationService } from "./services/notificationService";
 import { calendarService, GoogleCalendarService } from "./services/calendarService";
 
+// Utility function for date validation and conversion
+function validateAndConvertDates(data: any, dateFields: string[]): { cleanedData: any; errors: string[] } {
+  const cleanedData = { ...data };
+  const errors: string[] = [];
+  
+  for (const field of dateFields) {
+    if (data[field] !== undefined) {
+      if (data[field]) {
+        const date = new Date(data[field]);
+        if (isNaN(date.getTime())) {
+          errors.push(`Invalid ${field} format`);
+        } else {
+          cleanedData[field] = date;
+        }
+      } else {
+        cleanedData[field] = null;
+      }
+    }
+  }
+  
+  return { cleanedData, errors };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Auth middleware
-  await setupAuth(app);
+  try {
+    // Auth middleware
+    await setupAuth(app);
+  } catch (error) {
+    throw error;
+  }
 
   // Auth routes are now handled in setupAuth
 
@@ -240,6 +267,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           break;
         case 'complete':
           exportData = await getCompleteExportData(storage, filters);
+          break;
+        case 'gantt':
+          exportData = await getGanttExportData(storage, filters);
           break;
         default:
           return res.status(400).json({ message: 'Invalid report type' });
@@ -611,6 +641,536 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Phase management routes
+  app.get('/api/projects/:id/phases', isAuthenticated, async (req: any, res) => {
+    try {
+      const phases = await storage.getProjectPhases(req.params.id);
+      res.json(phases);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch project phases" });
+    }
+  });
+
+  app.post('/api/projects/:id/phases', isAuthenticated, async (req: any, res) => {
+    try {
+      // Allow all authenticated users to create phases (they're just metadata)
+      const phases = await storage.createProjectPhases(req.params.id);
+      res.status(201).json(phases);
+    } catch (error) {
+      console.error("Error creating project phases:", error);
+      res.status(500).json({ message: "Failed to create project phases" });
+    }
+  });
+
+  app.get('/api/phases/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const phase = await storage.getProjectPhase(req.params.id);
+      if (!phase) {
+        return res.status(404).json({ message: "Phase not found" });
+      }
+      res.json(phase);
+    } catch (error) {
+      console.error("Error fetching phase:", error);
+      res.status(500).json({ message: "Failed to fetch phase" });
+    }
+  });
+
+  app.put('/api/phases/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const phase = await storage.updateProjectPhase(req.params.id, req.body);
+      res.json(phase);
+    } catch (error) {
+      console.error("Error updating phase:", error);
+      res.status(500).json({ message: "Failed to update phase" });
+    }
+  });
+
+  app.put('/api/phases/:id/complete', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const { completionReport } = req.body;
+      if (!completionReport) {
+        return res.status(400).json({ message: "Completion report is required" });
+      }
+      const phase = await storage.completeProjectPhase(req.params.id, completionReport);
+      res.json(phase);
+    } catch (error) {
+      console.error("Error completing phase:", error);
+      res.status(500).json({ message: "Failed to complete phase" });
+    }
+  });
+
+  // Phase deliverables routes
+  app.get('/api/phases/:id/deliverables', isAuthenticated, async (req: any, res) => {
+    try {
+      const deliverables = await storage.getPhaseDeliverables(req.params.id);
+      res.json(deliverables);
+    } catch (error) {
+      console.error("Error fetching phase deliverables:", error);
+      res.status(500).json({ message: "Failed to fetch phase deliverables" });
+    }
+  });
+
+  app.post('/api/phases/:id/deliverables', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const deliverable = await storage.addPhaseDeliverable(req.params.id, req.body);
+      res.status(201).json(deliverable);
+    } catch (error) {
+      console.error("Error adding phase deliverable:", error);
+      res.status(500).json({ message: "Failed to add phase deliverable" });
+    }
+  });
+
+  app.put('/api/deliverables/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const deliverable = await storage.updatePhaseDeliverable(req.params.id, req.body);
+      res.json(deliverable);
+    } catch (error) {
+      console.error("Error updating phase deliverable:", error);
+      res.status(500).json({ message: "Failed to update phase deliverable" });
+    }
+  });
+
+  // Project milestones routes
+  app.get('/api/projects/:id/milestones', isAuthenticated, async (req: any, res) => {
+    try {
+      const milestones = await storage.getMilestonesByProject(req.params.id);
+      res.json(milestones);
+    } catch (error) {
+      console.error("Error fetching project milestones:", error);
+      res.status(500).json({ message: "Failed to fetch project milestones" });
+    }
+  });
+
+  app.post('/api/projects/:id/milestones', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      // Clean and validate date fields
+      const cleanedData = {
+        ...req.body,
+        projectId: req.params.id,
+        createdById: req.user.id,
+        expectedInvoiceDate: req.body.expectedInvoiceDate ? new Date(req.body.expectedInvoiceDate) : null,
+        expectedCollectionDate: req.body.expectedCollectionDate ? new Date(req.body.expectedCollectionDate) : null,
+      };
+      
+      // Validate dates
+      if (cleanedData.expectedInvoiceDate && isNaN(cleanedData.expectedInvoiceDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid expected invoice date format' });
+      }
+      if (cleanedData.expectedCollectionDate && isNaN(cleanedData.expectedCollectionDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid expected collection date format' });
+      }
+      
+      const milestone = await storage.createMilestone(cleanedData);
+      res.status(201).json(milestone);
+    } catch (error) {
+      console.error("Error creating milestone:", error);
+      res.status(500).json({ message: "Failed to create milestone" });
+    }
+  });
+
+  // Project modules routes
+  app.get('/api/modules', isAuthenticated, async (req: any, res) => {
+    try {
+      const projectId = req.query.projectId as string;
+      if (!projectId) {
+        return res.status(400).json({ message: 'Project ID is required' });
+      }
+      const modules = await storage.getModulesByProject(projectId);
+      
+      // Populate assignedUser for each module
+      const populatedModules = await Promise.all(modules.map(async (module: any) => {
+        if (module.assignedUserId) {
+          try {
+            const assignedUser = await storage.getUser(module.assignedUserId);
+            if (assignedUser) {
+              module.assignedUser = {
+                id: assignedUser.id,
+                firstName: assignedUser.firstName,
+                lastName: assignedUser.lastName,
+                email: assignedUser.email
+              };
+            }
+          } catch (error) {
+            console.error(`Error fetching assigned user for module ${module.id}:`, error);
+          }
+        }
+        
+        // Populate assignedDev and assignedConsultant for subtasks
+        if (module.subtasks && module.subtasks.length > 0) {
+          module.subtasks = await Promise.all(module.subtasks.map(async (subtask: any) => {
+            if (subtask.assignedDevId) {
+              try {
+                const assignedDev = await storage.getUser(subtask.assignedDevId);
+                if (assignedDev) {
+                  subtask.assignedDev = {
+                    id: assignedDev.id,
+                    firstName: assignedDev.firstName,
+                    lastName: assignedDev.lastName,
+                    email: assignedDev.email
+                  };
+                }
+              } catch (error) {
+                console.error(`Error fetching assigned dev for subtask ${subtask.id}:`, error);
+              }
+            }
+            
+            if (subtask.assignedConsultantId) {
+              try {
+                const assignedConsultant = await storage.getUser(subtask.assignedConsultantId);
+                if (assignedConsultant) {
+                  subtask.assignedConsultant = {
+                    id: assignedConsultant.id,
+                    firstName: assignedConsultant.firstName,
+                    lastName: assignedConsultant.lastName,
+                    email: assignedConsultant.email
+                  };
+                }
+              } catch (error) {
+                console.error(`Error fetching assigned consultant for subtask ${subtask.id}:`, error);
+              }
+            }
+            
+            return subtask;
+          }));
+        }
+        
+        return module;
+      }));
+      
+      res.json(populatedModules);
+    } catch (error) {
+      console.error("Error fetching project modules:", error);
+      res.status(500).json({ message: "Failed to fetch project modules" });
+    }
+  });
+
+  // Project-specific modules endpoint
+  app.get('/api/projects/:id/modules', isAuthenticated, async (req: any, res) => {
+    try {
+      const modules = await storage.getModulesByProject(req.params.id);
+      
+      // Populate assignedUser for each module
+      const populatedModules = await Promise.all(modules.map(async (module: any) => {
+        if (module.assignedUserId) {
+          try {
+            const assignedUser = await storage.getUser(module.assignedUserId);
+            if (assignedUser) {
+              module.assignedUser = {
+                id: assignedUser.id,
+                firstName: assignedUser.firstName,
+                lastName: assignedUser.lastName,
+                email: assignedUser.email
+              };
+            }
+          } catch (error) {
+            console.error(`Error fetching assigned user for module ${module.id}:`, error);
+          }
+        }
+        
+        // Populate assignedDev and assignedConsultant for subtasks
+        if (module.subtasks && module.subtasks.length > 0) {
+          module.subtasks = await Promise.all(module.subtasks.map(async (subtask: any) => {
+            if (subtask.assignedDevId) {
+              try {
+                const assignedDev = await storage.getUser(subtask.assignedDevId);
+                if (assignedDev) {
+                  subtask.assignedDev = {
+                    id: assignedDev.id,
+                    firstName: assignedDev.firstName,
+                    lastName: assignedDev.lastName,
+                    email: assignedDev.email
+                  };
+                }
+              } catch (error) {
+                console.error(`Error fetching assigned dev for subtask ${subtask.id}:`, error);
+              }
+            }
+            
+            if (subtask.assignedConsultantId) {
+              try {
+                const assignedConsultant = await storage.getUser(subtask.assignedConsultantId);
+                if (assignedConsultant) {
+                  subtask.assignedConsultant = {
+                    id: assignedConsultant.id,
+                    firstName: assignedConsultant.firstName,
+                    lastName: assignedConsultant.lastName,
+                    email: assignedConsultant.email
+                  };
+                }
+              } catch (error) {
+                console.error(`Error fetching assigned consultant for subtask ${subtask.id}:`, error);
+              }
+            }
+            
+            return subtask;
+          }));
+        }
+        
+        return module;
+      }));
+      
+      res.json(populatedModules);
+    } catch (error) {
+      console.error("Error fetching project modules:", error);
+      res.status(500).json({ message: "Failed to fetch project modules" });
+    }
+  });
+
+  app.post('/api/modules', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      // Clean and validate date fields
+      const cleanedData = {
+        ...req.body,
+        startDate: req.body.startDate ? new Date(req.body.startDate) : null,
+        dueDate: req.body.dueDate ? new Date(req.body.dueDate) : null,
+      };
+      
+      // Validate dates
+      if (cleanedData.startDate && isNaN(cleanedData.startDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid start date format' });
+      }
+      if (cleanedData.dueDate && isNaN(cleanedData.dueDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid due date format' });
+      }
+      
+      const module = await storage.createModule(cleanedData);
+      res.status(201).json(module);
+    } catch (error) {
+      console.error("Error creating module:", error);
+      res.status(500).json({ message: "Failed to create module" });
+    }
+  });
+
+  app.put('/api/modules/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      // Clean and validate date fields
+      const cleanedData: any = { ...req.body };
+      
+      if (req.body.startDate !== undefined) {
+        cleanedData.startDate = req.body.startDate ? new Date(req.body.startDate) : null;
+        if (cleanedData.startDate && isNaN(cleanedData.startDate.getTime())) {
+          return res.status(400).json({ message: 'Invalid start date format' });
+        }
+      }
+      
+      if (req.body.dueDate !== undefined) {
+        cleanedData.dueDate = req.body.dueDate ? new Date(req.body.dueDate) : null;
+        if (cleanedData.dueDate && isNaN(cleanedData.dueDate.getTime())) {
+          return res.status(400).json({ message: 'Invalid due date format' });
+        }
+      }
+      
+      const module = await storage.updateModule(req.params.id, cleanedData);
+      res.json(module);
+    } catch (error) {
+      console.error("Error updating module:", error);
+      res.status(500).json({ message: "Failed to update module" });
+    }
+  });
+
+  // Individual milestone routes
+  app.put('/api/milestones/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      // Clean and validate date fields
+      const cleanedData: any = { ...req.body };
+      
+      if (req.body.expectedInvoiceDate !== undefined) {
+        cleanedData.expectedInvoiceDate = req.body.expectedInvoiceDate ? new Date(req.body.expectedInvoiceDate) : null;
+        if (cleanedData.expectedInvoiceDate && isNaN(cleanedData.expectedInvoiceDate.getTime())) {
+          return res.status(400).json({ message: 'Invalid expected invoice date format' });
+        }
+      }
+      
+      if (req.body.expectedCollectionDate !== undefined) {
+        cleanedData.expectedCollectionDate = req.body.expectedCollectionDate ? new Date(req.body.expectedCollectionDate) : null;
+        if (cleanedData.expectedCollectionDate && isNaN(cleanedData.expectedCollectionDate.getTime())) {
+          return res.status(400).json({ message: 'Invalid expected collection date format' });
+        }
+      }
+      
+      const milestone = await storage.updateMilestone(req.params.id, cleanedData);
+      res.json(milestone);
+    } catch (error) {
+      console.error("Error updating milestone:", error);
+      res.status(500).json({ message: "Failed to update milestone" });
+    }
+  });
+
+
+
+  app.put('/api/deliverables/:id/complete', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const deliverable = await storage.completePhaseDeliverable(req.params.id);
+      res.json(deliverable);
+    } catch (error) {
+      console.error("Error completing phase deliverable:", error);
+      res.status(500).json({ message: "Failed to complete phase deliverable" });
+    }
+  });
+
+  // Phase reports routes
+  app.get('/api/phases/:id/reports', isAuthenticated, async (req: any, res) => {
+    try {
+      const reports = await storage.getPhaseReports(req.params.id);
+      res.json(reports);
+    } catch (error) {
+      console.error("Error fetching phase reports:", error);
+      res.status(500).json({ message: "Failed to fetch phase reports" });
+    }
+  });
+
+  app.post('/api/phases/:id/reports', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const report = await storage.createPhaseReport(req.params.id, {
+        ...req.body,
+        createdBy: req.user.id,
+      });
+      res.status(201).json(report);
+    } catch (error) {
+      console.error("Error creating phase report:", error);
+      res.status(500).json({ message: "Failed to create phase report" });
+    }
+  });
+
+  // Project charter routes
+  app.get('/api/projects/:id/charter', isAuthenticated, async (req: any, res) => {
+    try {
+      const charter = await storage.getProjectCharter(req.params.id);
+      res.json(charter || {});
+    } catch (error) {
+      console.error("Error fetching project charter:", error);
+      res.status(500).json({ message: "Failed to fetch project charter" });
+    }
+  });
+
+  app.post('/api/projects/:id/charter', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const charter = await storage.createProjectCharter(req.params.id, req.body);
+      res.status(201).json(charter);
+    } catch (error) {
+      console.error("Error creating project charter:", error);
+      res.status(500).json({ message: "Failed to create project charter" });
+    }
+  });
+
+  app.put('/api/projects/:id/charter', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const charter = await storage.updateProjectCharter(req.params.id, req.body);
+      res.json(charter);
+    } catch (error) {
+      console.error("Error updating project charter:", error);
+      res.status(500).json({ message: "Failed to update project charter" });
+    }
+  });
+
+  // Gantt chart data endpoint
+  app.get('/api/projects/:id/gantt', isAuthenticated, async (req: any, res) => {
+    try {
+      const project = await storage.getProject(req.params.id);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      const phases = await storage.getProjectPhases(req.params.id);
+      let tasks = await storage.getTasksByProject(req.params.id);
+
+      // Auto-assign phases to modules if they don't have phases
+      if (phases.length > 0 && tasks.length > 0) {
+        tasks = tasks.map((task, index) => {
+          if (!task.phaseNumber) {
+            // Assign to phases in order (1 module per phase, then cycle)
+            const phaseIndex = index % phases.length;
+            const phase = phases[phaseIndex];
+            return {
+              ...task,
+              phaseNumber: phase.phaseNumber,
+              phaseName: phase.phaseName
+            };
+          }
+          return task;
+        });
+      }
+
+      // Structure data for Gantt chart
+      const ganttData = {
+        project: {
+          id: project.id,
+          name: project.name,
+          startDate: project.startDate,
+          endDate: project.endDate,
+        },
+        phases: phases.map(phase => ({
+          id: phase.id,
+          name: phase.phaseName,
+          phaseNumber: phase.phaseNumber,
+          startDate: phase.startDate,
+          endDate: phase.endDate,
+          status: phase.status,
+          progress: phase.progress,
+          deliverables: phase.deliverables,
+        })),
+        tasks: tasks.map(task => ({
+          id: task.id,
+          name: task.name,
+          startDate: task.startDate,
+          dueDate: task.dueDate,
+          status: task.status,
+          progress: task.progressPercent,
+          assignedUser: task.assignedUser,
+          priority: task.priority,
+          phaseNumber: task.phaseNumber,
+          phaseName: task.phaseName,
+          subtasks: task.subtasks || [],
+        })),
+      };
+
+      res.json(ganttData);
+    } catch (error) {
+      console.error("Error fetching Gantt chart data:", error);
+      res.status(500).json({ message: "Failed to fetch Gantt chart data" });
+    }
+  });
+
   // Task routes
   app.get('/api/tasks', isAuthenticated, async (req: any, res) => {
     try {
@@ -657,6 +1217,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+
+
   app.post('/api/tasks', isAuthenticated, async (req: any, res) => {
     try {
       const cleaned = {
@@ -666,37 +1228,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdById: req.user.id,
       };
 
-      // Fee is required for milestones
-      if (cleaned.feeAmount == null) {
-        if (req.body.fee != null) cleaned.feeAmount = String(req.body.fee);
-      }
-      if (cleaned.feeAmount == null || String(cleaned.feeAmount).trim() === '' || isNaN(Number(cleaned.feeAmount))) {
-        return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['feeAmount'], message: 'Milestone fee is required' }] });
-      }
 
-      // Handle invoice and collection dates
-      if (req.body.expectedInvoiceDate) {
-        const invoiceDate = new Date(req.body.expectedInvoiceDate);
-        if (Number.isNaN(invoiceDate.getTime())) {
-          return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['expectedInvoiceDate'], message: 'Invalid expected invoice date' }] });
-        }
-        cleaned.expectedInvoiceDate = invoiceDate;
-        
-        // Auto-calculate collection date (30 days after invoice)
-        const collectionDate = new Date(invoiceDate);
-        collectionDate.setDate(collectionDate.getDate() + 30);
-        cleaned.expectedCollectionDate = collectionDate;
-      }
 
       // Default progress for status if not provided
       if (cleaned.status && cleaned.progressPercent == null) {
         const statusMap: Record<string, number> = { todo: 0, in_progress: 50, review: 75, done: 100 };
         cleaned.progressPercent = statusMap[cleaned.status] ?? 0;
       }
-      // Manager/Admin can create as done -> mark to_send
-      if (cleaned.status === 'done' && (req as any).user.role !== 'employee') {
-        cleaned.billingStatus = 'to_send';
-      }
+
 
       if (!cleaned.dueDate) {
         return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['dueDate'], message: 'Task deadline (dueDate) is required' }] });
@@ -713,7 +1252,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['dueDate'], message: 'Task due cannot be after project end' }] });
       }
 
-      const taskData = insertTaskSchema.parse(cleaned);
+      const taskData = insertModuleSchema.parse(cleaned);
 
       if (taskData.assignedUserId) {
         const project = await storage.getProject(taskData.projectId);
@@ -762,12 +1301,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.body.assignedUserId !== undefined) payload.assignedUserId = req.body.assignedUserId;
       if (req.body.assignedTeamId !== undefined) payload.assignedTeamId = req.body.assignedTeamId;
       if (req.body.progressPercent !== undefined) payload.progressPercent = Number(req.body.progressPercent);
-      if (req.body.billingStatus !== undefined) payload.billingStatus = req.body.billingStatus;
-      
-      // Handle feeAmount - convert to string if it's a number
-      if (req.body.feeAmount !== undefined) {
-        payload.feeAmount = String(req.body.feeAmount);
-      }
+
       
       // Handle dates
       if (req.body.startDate !== undefined) {
@@ -785,24 +1319,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Handle invoice and collection dates
-      if (req.body.expectedInvoiceDate !== undefined) {
-        if (req.body.expectedInvoiceDate) {
-          const invoiceDate = new Date(req.body.expectedInvoiceDate);
-          if (Number.isNaN(invoiceDate.getTime())) {
-            return res.status(400).json({ message: 'Invalid task data', errors: [{ path: ['expectedInvoiceDate'], message: 'Invalid expected invoice date' }] });
-          }
-          payload.expectedInvoiceDate = invoiceDate;
-          
-          // Auto-calculate collection date (30 days after invoice)
-          const collectionDate = new Date(invoiceDate);
-          collectionDate.setDate(collectionDate.getDate() + 30);
-          payload.expectedCollectionDate = collectionDate;
-        } else {
-          payload.expectedInvoiceDate = null;
-          payload.expectedCollectionDate = null;
-        }
-      }
+
 
       // Employees cannot set done
       try {
@@ -934,22 +1451,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Managers/Admins: set billingStatus (none|to_send|sent|paid)
+  // Billing status is now handled by milestones, not individual tasks
+  // This endpoint is deprecated and will be removed
   app.put('/api/tasks/:id/billing-status', isAuthenticated, async (req: any, res) => {
-    try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
-        return res.status(403).json({ message: 'Forbidden' });
-      }
-      const allowed = new Set(['none', 'to_send', 'sent', 'paid']);
-      const { billingStatus } = req.body || {};
-      if (!allowed.has(billingStatus)) {
-        return res.status(400).json({ message: 'Invalid billing status' });
-      }
-      const task = await storage.updateTask(req.params.id, { billingStatus });
-      res.json(task);
-    } catch (error) {
-      console.error('Error updating billing status:', error);
-      res.status(500).json({ message: 'Failed to update billing status' });
-    }
+    res.status(410).json({ 
+      message: 'Billing status is now handled by milestones. Use /api/milestones/:id/billing-status instead.' 
+    });
   });
 
   // Google Calendar reminder endpoint for milestones
@@ -1013,26 +1520,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const cleaned = {
         ...req.body,
-        startDate: req.body.startDate ? new Date(req.body.startDate) : undefined,
-        dueDate: req.body.dueDate ? new Date(req.body.dueDate) : undefined,
+        startDate: req.body.startDate ? new Date(req.body.startDate) : null,
+        dueDate: req.body.dueDate ? new Date(req.body.dueDate) : null,
         createdById: req.user.id,
       };
 
-      // Validate milestone exists
-      const milestone = await storage.getTask(cleaned.milestoneId);
-      if (!milestone) {
-        return res.status(400).json({ message: 'Milestone not found' });
+      // Validate dates
+      if (cleaned.startDate && isNaN(cleaned.startDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid start date format' });
+      }
+      if (cleaned.dueDate && isNaN(cleaned.dueDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid due date format' });
       }
 
-      // Validate dates against milestone timeline
-      if (cleaned.startDate && milestone.startDate && cleaned.startDate < milestone.startDate) {
-        return res.status(400).json({ message: 'Subtask start cannot be before milestone start' });
+      // Validate module exists (subtasks belong to modules, not milestones)
+      const module = await storage.getModule(cleaned.moduleId);
+      if (!module) {
+        return res.status(400).json({ message: 'Module not found' });
       }
-      if (cleaned.dueDate && milestone.dueDate && cleaned.dueDate > milestone.dueDate) {
-        return res.status(400).json({ message: 'Subtask due date cannot be after milestone due date' });
+
+      // Validate dates against module timeline
+      if (cleaned.startDate && module.startDate && cleaned.startDate < module.startDate) {
+        return res.status(400).json({ message: 'Subtask start cannot be before module start' });
       }
+      if (cleaned.dueDate && module.dueDate && cleaned.dueDate > module.dueDate) {
+        return res.status(400).json({ message: 'Subtask due date cannot be after module due date' });
+      }
+
+      // Validate FC consultant assignment (optional for now to debug the issue)
+      // if (!cleaned.assignedConsultantId) {
+      //   return res.status(400).json({ message: 'FC consultant assignment is required' });
+      // }
 
       const subtask = await storage.createSubtask(cleaned);
+      
+      // Send notification if subtask is assigned to someone
+      if (subtask.assignedUserId) {
+        try {
+          // Get the assigned user details
+          const assignedUser = await storage.getUser(subtask.assignedUserId);
+          if (assignedUser) {
+            // Get the module/project details
+            const module = await storage.getModule(cleaned.moduleId);
+            const project = module ? await storage.getProject(module.projectId) : null;
+            
+            if (module && project) {
+              // Send notification
+              await notificationService.sendTaskAssignedNotification({
+                task: { ...subtask, name: subtask.name, id: subtask.id },
+                project: project,
+                user: assignedUser,
+                assignedBy: req.user
+              });
+            }
+          }
+        } catch (notificationError) {
+          // Don't fail the subtask creation if notification fails
+          console.error("Error sending subtask assignment notification:", notificationError);
+        }
+      }
+      
       res.status(201).json(subtask);
     } catch (error) {
       console.error("Error creating subtask:", error);
@@ -1044,12 +1591,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const payload: any = {};
       
+      // Get current subtask to check for assignment changes
+      // First, get the subtask by ID directly
+      const currentSubtask = await storage.getSubtask(req.params.id);
+      if (!currentSubtask) {
+        return res.status(404).json({ message: "Subtask not found" });
+      }
+      
       // Handle basic fields
       if (req.body.name !== undefined) payload.name = String(req.body.name).trim();
       if (req.body.description !== undefined) payload.description = req.body.description ? String(req.body.description).trim() : null;
       if (req.body.status !== undefined) payload.status = req.body.status;
       if (req.body.priority !== undefined) payload.priority = req.body.priority;
       if (req.body.assignedUserId !== undefined) payload.assignedUserId = req.body.assignedUserId;
+      if (req.body.assignedDevId !== undefined) payload.assignedDevId = req.body.assignedDevId;
+      if (req.body.assignedConsultantId !== undefined) payload.assignedConsultantId = req.body.assignedConsultantId;
       if (req.body.progressPercent !== undefined) payload.progressPercent = Number(req.body.progressPercent);
       if (req.body.estimatedHours !== undefined) payload.estimatedHours = Number(req.body.estimatedHours);
       if (req.body.estimatedDays !== undefined) payload.estimatedDays = Number(req.body.estimatedDays);
@@ -1059,18 +1615,118 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Handle dates
       if (req.body.startDate !== undefined) {
         payload.startDate = req.body.startDate ? new Date(req.body.startDate) : null;
+        if (payload.startDate && isNaN(payload.startDate.getTime())) {
+          return res.status(400).json({ message: 'Invalid start date format' });
+        }
       }
       if (req.body.dueDate !== undefined) {
         payload.dueDate = req.body.dueDate ? new Date(req.body.dueDate) : null;
+        if (payload.dueDate && isNaN(payload.dueDate.getTime())) {
+          return res.status(400).json({ message: 'Invalid due date format' });
+        }
       }
 
-      // Auto-complete subtask when status is finished
-      if (payload.status === 'finished' && !payload.completedAt) {
-        payload.completedAt = new Date();
-        payload.progressPercent = 100;
+      // Enhanced workflow enforcement
+      if (payload.status !== undefined) {
+        const currentStatus = currentSubtask.status;
+        const newStatus = payload.status;
+        
+        // Enforce workflow: in_progress → fc_review → qa → client_review → completed
+        const allowedTransitions: Record<string, string[]> = {
+          'not_started': ['in_progress'],
+          'in_progress': ['fc_review', 'on_hold', 'cancelled'],
+          'fc_review': ['in_progress', 'qa', 'on_hold', 'cancelled'], // FC can send back or move to QA
+          'qa': ['client_review', 'in_progress', 'on_hold', 'cancelled'], // Can go back to dev or to client
+          'client_review': ['completed', 'in_progress', 'on_hold', 'cancelled'], // Can be completed or sent back
+          'completed': ['client_review'], // Can be reopened for review
+          'on_hold': ['in_progress', 'cancelled'],
+          'cancelled': ['in_progress'], // Can be reactivated
+          'todo': ['in_progress'], // Legacy support
+          'ongoing': ['fc_review', 'on_hold', 'cancelled'], // Legacy support
+        };
+        
+        if (!allowedTransitions[currentStatus]?.includes(newStatus)) {
+          return res.status(400).json({ 
+            message: `Invalid status transition from ${currentStatus} to ${newStatus}`,
+            allowedTransitions: allowedTransitions[currentStatus] || []
+          });
+        }
+        
+        // Role-based status change restrictions
+        if (req.user.role === 'employee') {
+          // Employees can only set status to fc_review, not to qa, client_review, or finished
+          if (['qa', 'client_review', 'finished'].includes(newStatus)) {
+            return res.status(403).json({ 
+              message: 'Employees cannot set status to QA, Client Review, or Completed. Submit for FC review instead.' 
+            });
+          }
+        }
+        
+        // Auto-complete subtask when status is completed
+        if (newStatus === 'completed' && !payload.completedAt) {
+          payload.completedAt = new Date();
+          payload.progressPercent = 100;
+        }
+        
+        // Reset completion data if status changes from completed
+        if (currentStatus === 'completed' && newStatus !== 'completed') {
+          payload.completedAt = null;
+          payload.progressPercent = 0;
+        }
       }
 
       const subtask = await storage.updateSubtask(req.params.id, payload);
+      
+      // Check if assignment changed and send notification
+      if (payload.assignedUserId !== undefined && 
+          payload.assignedUserId !== currentSubtask.assignedUserId && 
+          payload.assignedUserId) {
+        
+        // Get the assigned user details
+        const assignedUser = await storage.getUser(payload.assignedUserId);
+        if (assignedUser) {
+          // Get the module/project details
+          const module = await storage.getModule(currentSubtask.moduleId);
+          const project = module ? await storage.getProject(module.projectId) : null;
+          
+          if (module && project) {
+            // Send notification
+            await notificationService.sendTaskAssignedNotification({
+              task: { ...subtask, name: subtask.name, id: subtask.id },
+              project: project,
+              user: assignedUser,
+              assignedBy: req.user
+            });
+          }
+        }
+      }
+      
+      // Send FC review notification when status changes to fc_review
+      if (payload.status === 'fc_review' && currentSubtask.status !== 'fc_review') {
+        try {
+          // Get the FC consultant details
+          const fcConsultant = await storage.getUser(currentSubtask.assignedConsultantId);
+          if (fcConsultant) {
+            // Get the module/project details
+            const module = await storage.getModule(currentSubtask.moduleId);
+            const project = module ? await storage.getProject(module.projectId) : null;
+            
+            if (module && project) {
+              // Send FC review notification
+              await notificationService.sendTaskAssignedNotification({
+                task: { ...subtask, name: subtask.name, id: subtask.id },
+                project: project,
+              user: fcConsultant,
+              assignedBy: req.user
+              });
+            }
+          }
+        } catch (notificationError) {
+          // Don't fail the subtask update if notification fails
+          console.error("Error sending FC review notification:", notificationError);
+        }
+      }
+      
       res.json(subtask);
     } catch (error) {
       console.error("Error updating subtask:", error);
@@ -1449,30 +2105,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Automated invoice status update middleware
+  // TODO: Update this function to work with milestones instead of tasks
+  // Billing automation is now handled by milestones, not individual tasks
   const updateInvoiceStatusesAutomatically = async () => {
     try {
-      const tasks = await storage.getTasks();
-      const now = new Date();
-      let updatedCount = 0;
-
-      for (const task of tasks) {
-        if (task.billingStatus === 'sent' && task.invoiceSentAt) {
-          const invoiceDate = new Date(task.invoiceSentAt);
-          const daysSinceInvoice = Math.floor((now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
-          
-          // If 3 days have passed since invoice was sent, automatically update to processing
-          if (daysSinceInvoice >= 3) {
-            await storage.updateTask(task.id, { 
-              billingStatus: 'processing'
-            });
-            updatedCount++;
-          }
-        }
-      }
-
-      if (updatedCount > 0) {
-        console.log(`🔄 Automatically updated ${updatedCount} invoice statuses from 'sent' to 'processing'`);
-      }
+      // This function needs to be updated to work with milestones
+      // For now, it's disabled until milestone billing is implemented
+      console.log('Billing automation temporarily disabled - needs milestone implementation');
     } catch (error) {
       console.error("Error in automatic invoice status update:", error);
     }
@@ -1495,6 +2134,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Run automation before processing dashboard requests
     await updateInvoiceStatusesAutomatically();
     next();
+  });
+  
+  // Run risk management automation daily (check module deadlines)
+  app.use('/api/subtasks', async (req, res, next) => {
+    // Run risk management check before processing subtask requests
+    try {
+      await storage.checkModuleDeadlines();
+    } catch (error) {
+      console.error('Error in risk management automation:', error);
+    }
+    next();
+  });
+
+  // Manual automation trigger endpoints
+  app.post('/api/automation/trigger-milestone-update/:milestoneId', async (req, res) => {
+    try {
+      const { milestoneId } = req.params;
+              await storage.updateModuleStatusFromSubtasks(milestoneId);
+      res.json({ message: 'Milestone automation triggered successfully' });
+    } catch (error) {
+      console.error('Error triggering milestone automation:', error);
+      res.status(500).json({ message: 'Failed to trigger milestone automation' });
+    }
+  });
+  
+  // Risk management automation endpoint
+  app.post('/api/automation/check-module-deadlines', async (req, res) => {
+    try {
+      if (!['admin', 'manager'].includes((req as any).user?.role)) {
+        return res.status(403).json({ message: 'Only managers and admins can trigger deadline checks' });
+      }
+      
+      await storage.checkModuleDeadlines();
+      res.json({ message: 'Module deadline check completed successfully' });
+    } catch (error) {
+      console.error('Error checking module deadlines:', error);
+      res.status(500).json({ message: 'Failed to check module deadlines' });
+    }
+  });
+
+  app.post('/api/automation/trigger-phase-update/:phaseId', async (req, res) => {
+    try {
+      const { phaseId } = req.params;
+      await storage.updatePhaseStatusFromMilestones(phaseId);
+      res.json({ message: 'Phase automation triggered successfully' });
+    } catch (error) {
+      console.error('Error triggering phase automation:', error);
+      res.status(500).json({ message: 'Failed to trigger phase automation' });
+    }
+  });
+
+  app.post('/api/automation/trigger-project-update/:projectId', async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      await storage.updateProjectStatusBasedOnMilestones(projectId);
+      res.json({ message: 'Project automation triggered successfully' });
+    } catch (error) {
+      console.error('Error triggering project automation:', error);
+      res.status(500).json({ message: 'Failed to trigger project automation' });
+    }
   });
 
 
@@ -1634,4 +2333,109 @@ async function getCompleteExportData(storage: any, filters: any) {
     workload: await getWorkloadExportData(storage, filters),
     financial: await getFinancialExportData(storage, filters)
   };
+}
+
+async function getGanttExportData(storage: any, filters: any) {
+  // Filter projects by projectId if provided in filters
+  let projects;
+  if (filters.projectId) {
+    const project = await storage.getProject(filters.projectId);
+    projects = project ? [project] : [];
+  } else {
+    projects = await storage.getProjects();
+  }
+  
+  const ganttData: any[] = [];
+  
+  for (const project of projects) {
+    // Get project phases and milestones
+    const phases = await storage.getProjectPhases(project.id);
+    const milestones = await storage.getTasksByProject(project.id);
+    
+    // Add project header row
+    ganttData.push({
+      'Type': 'PROJECT',
+      'Name': project.name,
+      'Start Date': project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A',
+      'End Date': project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A',
+      'Duration (Days)': project.startDate && project.endDate ? 
+        Math.ceil((new Date(project.endDate).getTime() - new Date(project.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+      'Status': project.status,
+      'Progress (%)': project.progress || 0,
+      'Manager': project.manager?.firstName || project.manager?.email || 'N/A',
+      'Client': project.client || 'N/A',
+      'Budget (KSh)': parseFloat(project.budget || 0).toLocaleString()
+    });
+    
+    // Group milestones by phase if phases exist
+    if (phases.length > 0) {
+      phases.forEach((phase: any) => {
+        // Add phase header
+        ganttData.push({
+          'Type': 'PHASE',
+          'Name': `  │─ Phase ${phase.phaseNumber}: ${phase.phaseName}`,
+          'Start Date': phase.startDate ? new Date(phase.startDate).toLocaleDateString() : 'N/A',
+          'End Date': phase.endDate ? new Date(phase.endDate).toLocaleDateString() : 'N/A',
+          'Duration (Days)': phase.startDate && phase.endDate ? 
+            Math.ceil((new Date(phase.endDate).getTime() - new Date(phase.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+          'Status': phase.status || 'pending',
+          'Progress (%)': phase.progress || 0,
+          'Manager': '',
+          'Client': '',
+          'Budget (KSh)': ''
+        });
+        
+        // Add milestones for this phase
+        const phaseMilestones = milestones.filter((m: any) => m.phaseNumber === phase.phaseNumber);
+        phaseMilestones.forEach((milestone: any) => {
+          ganttData.push({
+            'Type': 'MILESTONE',
+            'Name': `    └─ ${milestone.name}`,
+            'Start Date': milestone.startDate ? new Date(milestone.startDate).toLocaleDateString() : 'N/A',
+            'End Date': milestone.dueDate ? new Date(milestone.dueDate).toLocaleDateString() : 'N/A',
+            'Duration (Days)': milestone.startDate && milestone.dueDate ? 
+              Math.ceil((new Date(milestone.dueDate).getTime() - new Date(milestone.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+            'Status': milestone.status,
+            'Progress (%)': milestone.progressPercent || 0,
+            'Manager': milestone.assignedUser?.firstName || milestone.assignedUser?.email || 'Unassigned',
+            'Client': '',
+            'Budget (KSh)': milestone.feeAmount ? parseFloat(milestone.feeAmount).toLocaleString() : '0'
+          });
+        });
+      });
+    } else {
+      // Add milestones directly under project if no phases
+      milestones.forEach((milestone: any) => {
+        ganttData.push({
+          'Type': 'MILESTONE',
+          'Name': `  └─ ${milestone.name}`,
+          'Start Date': milestone.startDate ? new Date(milestone.startDate).toLocaleDateString() : 'N/A',
+          'End Date': milestone.dueDate ? new Date(milestone.dueDate).toLocaleDateString() : 'N/A',
+          'Duration (Days)': milestone.startDate && milestone.dueDate ? 
+            Math.ceil((new Date(milestone.dueDate).getTime() - new Date(milestone.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+          'Status': milestone.status,
+          'Progress (%)': milestone.progressPercent || 0,
+          'Manager': milestone.assignedUser?.firstName || milestone.assignedUser?.email || 'Unassigned',
+          'Client': '',
+          'Budget (KSh)': milestone.feeAmount ? parseFloat(milestone.feeAmount).toLocaleString() : '0'
+        });
+      });
+    }
+    
+    // Add spacing row between projects
+    ganttData.push({
+      'Type': '',
+      'Name': '',
+      'Start Date': '',
+      'End Date': '',
+      'Duration (Days)': '',
+      'Status': '',
+      'Progress (%)': '',
+      'Manager': '',
+      'Client': '',
+      'Budget (KSh)': ''
+    });
+  }
+  
+  return ganttData;
 }
