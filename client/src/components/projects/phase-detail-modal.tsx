@@ -39,6 +39,10 @@ interface Phase {
 interface PhaseDetailModalProps {
   phase: Phase | null;
   modules: any[];
+  projectTeam?: {
+    id: string;
+    name: string;
+  };
   isOpen: boolean;
   onClose: () => void;
   onPhaseUpdate: (phaseId: string, updates: Partial<Phase>) => void;
@@ -101,6 +105,7 @@ const getPriorityColor = (priority: string) => {
 export default function PhaseDetailModal({ 
   phase, 
   modules, 
+  projectTeam,
   isOpen, 
   onClose, 
   onPhaseUpdate 
@@ -169,16 +174,6 @@ export default function PhaseDetailModal({
                   </div>
                 </div>
                 <div className="flex space-x-2">
-                  {phase.status === 'not_started' && (
-                    <Button 
-                      size="sm" 
-                      onClick={() => handleStatusChange('in_progress')}
-                      className="bg-blue-600 hover:bg-blue-700"
-                    >
-                      <Play className="h-4 w-4 mr-2" />
-                      Start Phase
-                    </Button>
-                  )}
                   {phase.status === 'in_progress' && (
                     <>
                       <Button 
@@ -298,18 +293,14 @@ export default function PhaseDetailModal({
                       </div>
                       
                       {/* Module Details */}
-                       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-gray-600">
+                       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm text-gray-600">
                         <div className="flex items-center space-x-2">
                           <CalendarDays className="h-4 w-4" />
                           <span>Due: {module.dueDate ? new Date(module.dueDate).toLocaleDateString() : 'Not set'}</span>
                         </div>
                         <div className="flex items-center space-x-2">
                           <User className="h-4 w-4" />
-                          <span>Assigned: {module.assignedUser?.name || 'Unassigned'}</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <DollarSign className="h-4 w-4" />
-                          <span>Fee: {module.feeAmount ? `KSh ${module.feeAmount}` : 'Not set'}</span>
+                          <span>Assigned: {projectTeam?.name || 'Unassigned'}</span>
                         </div>
                         <div className="flex items-center space-x-2">
                           <Target className="h-4 w-4" />

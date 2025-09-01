@@ -48,9 +48,13 @@ import {
   segmentLeaders,
   type InsertSegmentLeader,
   systemConfig,
+  adminRoles,
+  type AdminRole,
+  type InsertAdminRole,
+  type AdminRoleType,
 } from "../shared/schema";
 import { db } from "./db";
-import { eq, desc, asc, and, or, sql, count, avg, inArray, gt } from "drizzle-orm";
+import { eq, desc, asc, and, or, sql, count, avg, inArray, gt, lte, ne } from "drizzle-orm";
 
 export interface IStorage {
   // User operations (updated for local auth)
@@ -75,12 +79,12 @@ export interface IStorage {
       userId: string;
       user: User;
       role: string;
-      totalModules: number;
-      completedModules: number;
+      totalTasks: number;
+      completedTasks: number;
       workloadPercentage: number;
     }[];
     projects: any[];
-    totalModules: number;
+    totalTasks: number;
   }>;
   addTeamMember(member: InsertTeamMember): Promise<TeamMember>;
   removeTeamMember(teamId: string, userId: string): Promise<void>;
@@ -185,6 +189,9 @@ export interface IStorage {
     totalBudget: number;
     collectedAmount: number;
     pendingAmount: number;
+    milestonesCount: number;
+    projectsOnSupport: number;
+    onSupportProjects: number;
   }>;
   getDashboardMetricsForUser(userId: string): Promise<{
     activeProjects: number;
@@ -193,12 +200,24 @@ export interface IStorage {
     totalBudget: number;
     collectedAmount: number;
     pendingAmount: number;
+    milestonesCount: number;
+  }>;
+  getDashboardMetricsForSegment(segment: string): Promise<{
+    activeProjects: number;
+    completedModules: number;
+    overdueModules: number;
+    totalBudget: number;
+    collectedAmount: number;
+    pendingAmount: number;
+    milestonesCount: number;
+    projectsOnSupport: number;
+    onSupportProjects: number;
   }>;
   getTeamWorkload(): Promise<{
     userId: string;
     user: User;
-    totalModules: number;
-    completedModules: number;
+    totalTasks: number;
+    completedTasks: number;
     workloadPercentage: number;
   }[]>;
   getTeamWorkloadForUserTeams(userId: string): Promise<{
@@ -214,6 +233,23 @@ export interface IStorage {
     recentlyDone: (Module & { project: Project; assignedUser: User | null })[];
     highPriorityTodo: (Module & { project: Project; assignedUser: User | null })[];
   }>;
+  
+  // Project Management Dashboard methods
+  getProjectPerformanceData(year: number, month?: number): Promise<{
+    projects: (Project & { manager: User; team: Team | null; progress: number })[];
+    ganttData: any;
+    performanceMetrics: {
+      totalProjects: number;
+      moduleProgress: number;
+      teamCapacity: number;
+      timelineHealth: number;
+    };
+  }>;
+  
+  getRiskQualityData(year: number, month?: number): Promise<{
+    supportProjects: any[];
+    riskTrends: any[];
+  }>;
   getDashboardKanbanTasksForUser(userId: string): Promise<{
     overdue: (Module & { project: Project; assignedUser: User | null })[];
     review: (Module & { project: Project; assignedUser: User | null })[];
@@ -221,14 +257,11 @@ export interface IStorage {
     highPriorityTodo: (Module & { project: Project; assignedUser: User | null })[];
   }>;
 
-  getUpcomingModulesForUser(userId: string, days: number): Promise<(Module & { project: Project; assignedUser: User | null })[]>;
-  getOverdueModules(): Promise<(Module & { project: Project; assignedUser: User | null })[]>;
-  getOverdueModulesForUser(userId: string): Promise<(Module & { project: Project; assignedUser: User | null })[]>;
   getBestPerformingTeam(): Promise<{
     teamId: string;
     team: Team;
-    totalModules: number;
-    completedModules: number;
+    totalTasks: number;
+    completedTasks: number;
     completionRate: number;
     onTimeDeliveryRate: number;
     efficiencyScore: number;
@@ -237,11 +270,12 @@ export interface IStorage {
     members: {
       userId: string;
       user: User;
-      totalModules: number;
-      completedModules: number;
-      overdueModules: number;
-      highPriorityModules: number;
-      completedHighPriorityModules: number;
+      role: string;
+      totalTasks: number;
+      completedTasks: number;
+      overdueTasks: number;
+      highPriorityTasks: number;
+      completedHighPriorityTasks: number;
       workloadPercentage: number;
     }[];
   } | null>;
@@ -275,9 +309,16 @@ export interface IStorage {
   // Password reset operations
   updateUserResetToken(userId: string, resetToken: string | null, resetTokenExpiry: Date | null): Promise<void>;
   getUserByResetToken(resetToken: string): Promise<User | undefined>;
-  updateUserPassword(userId: string, hashedPassword: string): Promise<void>;
+  updateUserPassword(userId: string, newPassword: string, isFirstChange?: boolean): Promise<void>;
 
-
+  // Admin role management operations
+  getAdminRoles(): Promise<(AdminRole & { user: User; assignedByUser: User })[]>;
+  getAdminRolesByUser(userId: string): Promise<AdminRole[]>;
+  assignAdminRole(roleData: InsertAdminRole): Promise<AdminRole>;
+  removeAdminRole(userId: string, roleType: AdminRoleType, segment?: string): Promise<void>;
+  getUserDashboardRole(userId: string): Promise<{ role: string; isProjectManager: boolean; isFinanceHead: boolean; assignedSegment?: string }>;
+  getSegmentLeaderData(): Promise<{ academic: any; parastals: any; private: any; projectManager: any; financeHead: any }>;
+  createUserWithCredentials(userData: { email: string; firstName: string; lastName: string; role: AdminRoleType; segment?: string }, assignedBy: string): Promise<{ user: User; temporaryPassword: string }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -351,6 +392,47 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  // Dashboard analytics
+  async getDashboardMetrics(): Promise<{
+    activeProjects: number;
+    completedModules: number;
+    totalModules: number;
+    overdueModules: number;
+    totalBudget: number;
+    collectedAmount: number;
+    pendingAmount: number;
+    milestonesCount: number;
+    projectsOnSupport: number;
+    onSupportProjects: number;
+  }> {
+    const activeProjects = await db.select({ count: count() }).from(projects).where(eq(projects.status, "active"));
+    const completedModules = await db.select({ count: count() }).from(modules).where(eq(modules.status, "completed"));
+    const totalModules = await db.select({ count: count() }).from(modules);
+    const overdueModules = await db.select({ count: count() }).from(modules).where(and(
+      sql`${modules.dueDate} < CURRENT_DATE`,
+      sql`${modules.status} NOT IN ('completed', 'cancelled')`
+    ));
+    const totalBudget = await db.select({ total: sql`SUM(${projects.budget})` }).from(projects);
+    const collectedAmount = await db.select({ total: sql`SUM(${invoiceCollections.amount})` }).from(invoiceCollections);
+    const pendingAmount = await db.select({ total: sql`SUM(${projects.budget}) - SUM(${invoiceCollections.amount})` }).from(projects).leftJoin(invoiceCollections, eq(projects.id, invoiceCollections.projectId));
+    const milestonesCount = await db.select({ count: count() }).from(milestones);
+    const projectsOnSupport = await db.select({ count: count() }).from(projects).where(eq(projects.status, "on_support"));
+    const onSupportProjects = await db.select({ count: count() }).from(projects).where(eq(projects.status, "on_support"));
+
+    return {
+      activeProjects: activeProjects[0]?.count || 0,
+      completedModules: completedModules[0]?.count || 0,
+      totalModules: totalModules[0]?.count || 0,
+      overdueModules: overdueModules[0]?.count || 0,
+      totalBudget: Number(totalBudget[0]?.total) || 0,
+      collectedAmount: Number(collectedAmount[0]?.total) || 0,
+      pendingAmount: Number(pendingAmount[0]?.total) || 0,
+      milestonesCount: milestonesCount[0]?.count || 0,
+      projectsOnSupport: projectsOnSupport[0]?.count || 0,
+      onSupportProjects: onSupportProjects[0]?.count || 0,
+    };
+  }
+
   // Team operations
   async getTeams(): Promise<Team[]> {
     return await db.select().from(teams).orderBy(asc(teams.name));
@@ -416,12 +498,12 @@ export class DatabaseStorage implements IStorage {
       userId: string;
       user: User;
       role: string;
-      totalModules: number;
-      completedModules: number;
+      totalTasks: number;
+      completedTasks: number;
       workloadPercentage: number;
     }[];
     projects: any[];
-    totalModules: number;
+    totalTasks: number;
   }> {
     // Get team info
     const team = await this.getTeam(teamId);
@@ -438,65 +520,76 @@ export class DatabaseStorage implements IStorage {
     // Calculate workload for each member
     const membersWithWorkload = await Promise.all(
       members.map(async (member) => {
-        // Count total modules assigned to this user in projects under this team
-        const totalModulesResult = await db
+        // Count total subtasks assigned to this user in projects under this team
+        const totalTasksResult = await db
           .select({ count: count() })
-          .from(modules)
+          .from(subtasks)
+          .leftJoin(modules, eq(subtasks.moduleId, modules.id))
           .leftJoin(projects, eq(modules.projectId, projects.id))
           .where(
             and(
-              eq(modules.assignedUserId, member.userId),
-              eq(projects.teamId, teamId)
-            )
-          );
-        
-        const totalModules = Number(totalModulesResult[0]?.count || 0);
-        
-        // Count completed modules
-        const completedModulesResult = await db
-          .select({ count: count() })
-          .from(modules)
-          .leftJoin(projects, eq(modules.projectId, projects.id))
-          .where(
-            and(
-              eq(modules.assignedUserId, member.userId),
               eq(projects.teamId, teamId),
-              eq(modules.status, 'done')
+              or(
+                eq(subtasks.assignedUserId, member.userId),
+                eq(subtasks.assignedDevId, member.userId),
+                eq(subtasks.assignedConsultantId, member.userId)
+              )
             )
           );
         
-        const completedModules = Number(completedModulesResult[0]?.count || 0);
+        const totalTasks = Number(totalTasksResult[0]?.count || 0);
+        
+        // Count completed subtasks
+        const completedTasksResult = await db
+          .select({ count: count() })
+          .from(subtasks)
+          .leftJoin(modules, eq(subtasks.moduleId, modules.id))
+          .leftJoin(projects, eq(modules.projectId, projects.id))
+          .where(
+            and(
+              eq(projects.teamId, teamId),
+              eq(subtasks.status, 'completed'),
+              or(
+                eq(subtasks.assignedUserId, member.userId),
+                eq(subtasks.assignedDevId, member.userId),
+                eq(subtasks.assignedConsultantId, member.userId)
+              )
+            )
+          );
+        
+        const completedTasks = Number(completedTasksResult[0]?.count || 0);
         
         // Calculate workload percentage
-        const workloadPercentage = totalModules > 0 
-          ? Math.round((completedModules / totalModules) * 100) 
+        const workloadPercentage = totalTasks > 0 
+          ? Math.round((completedTasks / totalTasks) * 100) 
           : 0;
         
         return {
           userId: member.userId,
           user: member.user,
           role: member.role || 'member', // Ensure role is never null
-          totalModules,
-          completedModules,
+          totalTasks,
+          completedTasks,
           workloadPercentage
         };
       })
     );
     
-    // Calculate total modules for the team
-    const totalModulesResult = await db
+    // Calculate total subtasks for the team
+    const totalTasksResult = await db
       .select({ count: count() })
-      .from(modules)
+      .from(subtasks)
+      .leftJoin(modules, eq(subtasks.moduleId, modules.id))
       .leftJoin(projects, eq(modules.projectId, projects.id))
       .where(eq(projects.teamId, teamId));
     
-    const totalModules = Number(totalModulesResult[0]?.count || 0);
+    const totalTasks = Number(totalTasksResult[0]?.count || 0);
     
     return {
       team,
       members: membersWithWorkload,
       projects: teamProjects,
-      totalModules
+      totalTasks
     };
   }
 
@@ -592,13 +685,12 @@ export class DatabaseStorage implements IStorage {
         team: teams,
         milestoneCount: sql<number>`COUNT(${milestones.id})`,
         completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
-        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'sent' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
       })
       .from(projects)
       .leftJoin(users, eq(projects.managerId, users.id))
       .leftJoin(teams, eq(projects.teamId, teams.id))
       .leftJoin(milestones, eq(milestones.projectId, projects.id))
-      .where(inArray(projects.id, Array.from(userProjectIds)))
       .groupBy(projects.id, users.id, teams.id)
       .orderBy(desc(projects.createdAt));
 
@@ -674,10 +766,35 @@ export class DatabaseStorage implements IStorage {
       return;
     }
 
-    // Calculate progress based on priority weights instead of simple count
+    // Calculate progress based on priority weights and status progression
     // Weights: low=1, medium=2, high=3, critical=4
     let totalWeight = 0;
-    let completedWeight = 0;
+    let weightedProgress = 0;
+
+    // Status to progress percentage mapping
+    const getStatusProgress = (status: string): number => {
+      switch (status) {
+        case 'not_started':
+          return 0;
+        case 'in_progress':
+          return 25;
+        case 'fc_review':
+          return 50;
+        case 'qa':
+          return 60;
+        case 'client_review':
+          return 75;
+        case 'completed':
+        case 'done':
+          return 100;
+        case 'on_hold':
+          return 10; // Minimal progress for on hold items
+        case 'cancelled':
+          return 0;
+        default:
+          return 0;
+      }
+    };
 
     for (const module of projectModules) {
       // Calculate weight based on priority
@@ -699,14 +816,13 @@ export class DatabaseStorage implements IStorage {
 
       totalWeight += weight;
       
-      // If module is completed, add its weight to completed total
-      if (module.status === 'done') {
-        completedWeight += weight;
-      }
+      // Calculate weighted progress based on status
+      const statusProgress = getStatusProgress(module.status);
+      weightedProgress += (statusProgress * weight);
     }
 
-    // Calculate percentage based on weight completion
-    const progress = totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 0;
+    // Calculate percentage based on weighted progress
+    const progress = totalWeight > 0 ? Math.round(weightedProgress / totalWeight) : 0;
 
     await db.update(projects).set({ progress } as any).where(eq(projects.id, id));
   }
@@ -810,7 +926,7 @@ export class DatabaseStorage implements IStorage {
       .from(modules)
       .leftJoin(users, eq(modules.assignedUserId, users.id))
       .where(eq(modules.projectId, projectId))
-      .orderBy(asc(modules.createdAt))
+      .orderBy(asc(modules.phaseNumber), asc(modules.createdAt))
       .then(rows => rows.map(row => ({
         ...row.modules,
         assignedUser: row.users
@@ -1334,49 +1450,7 @@ export class DatabaseStorage implements IStorage {
     return { id: 'placeholder', ...collection, createdAt: new Date() };
   }
 
-  // Dashboard analytics
-  async getDashboardMetrics(): Promise<{
-    activeProjects: number;
-    completedModules: number;
-    overdueModules: number;
-    totalBudget: number;
-    collectedAmount: number;
-    pendingAmount: number;
-  }> {
-    const [activeProjectsResult] = await db
-      .select({ count: count() })
-      .from(projects)
-      .where(eq(projects.status, 'active'));
 
-    const [completedTasksResult] = await db
-      .select({ count: count() })
-      .from(modules)
-      .where(eq(modules.status, 'done'));
-
-    const now = new Date();
-    const [overdueTasksResult] = await db
-      .select({ count: count() })
-      .from(modules)
-      .where(
-        and(
-          sql`${modules.dueDate} < ${now}`,
-          sql`${modules.status} != 'done'`
-        )
-      );
-
-    const [teamMembersResult] = await db
-      .select({ count: count() })
-      .from(users);
-
-    return {
-      activeProjects: activeProjectsResult.count,
-      completedModules: completedTasksResult.count,
-      overdueModules: overdueTasksResult.count,
-      totalBudget: 0, // Placeholder, needs actual budget calculation
-      collectedAmount: 0, // Placeholder, needs actual collection calculation
-      pendingAmount: 0, // Placeholder, needs actual pending calculation
-    };
-  }
 
   // Get monthly progress comparison for projects
   async getMonthlyProgressComparison(): Promise<{
@@ -1470,6 +1544,7 @@ export class DatabaseStorage implements IStorage {
     totalBudget: number;
     collectedAmount: number;
     pendingAmount: number;
+    milestonesCount: number;
   }> {
     // Active projects associated via team membership or assigned tasks
     const projectsByMembership = await db
@@ -1522,6 +1597,26 @@ export class DatabaseStorage implements IStorage {
       teamMembersCount = distinctMembers.length;
     }
 
+    // Get milestones count for projects this user is associated with
+    const [milestonesCountResult] = teamIds.length > 0 ?
+      await db
+        .select({ count: count() })
+        .from(milestones)
+        .leftJoin(projects, eq(milestones.projectId, projects.id))
+        .where(inArray(projects.teamId, teamIds)) :
+      [{ count: 0 }];
+
+    // Get on_support projects count for user's projects
+    const [onSupportProjectsResult] = teamIds.length > 0 ?
+      await db
+        .select({ count: count() })
+        .from(projects)
+        .where(and(
+          eq(projects.status, 'on_support'),
+          inArray(projects.teamId, teamIds)
+        )) :
+      [{ count: 0 }];
+
     return {
       activeProjects,
       completedModules: completedModulesResult.count,
@@ -1529,35 +1624,122 @@ export class DatabaseStorage implements IStorage {
       totalBudget: 0, // Placeholder
       collectedAmount: 0, // Placeholder
       pendingAmount: 0, // Placeholder
+      milestonesCount: milestonesCountResult.count,
+    };
+  }
+
+  async getDashboardMetricsForSegment(segment: string): Promise<{
+    activeProjects: number;
+    completedModules: number;
+    overdueModules: number;
+    totalBudget: number;
+    collectedAmount: number;
+    pendingAmount: number;
+    milestonesCount: number;
+    projectsOnSupport: number;
+    onSupportProjects: number;
+  }> {
+    // Filter projects by segment
+    const [activeProjectsResult] = await db
+      .select({ count: count() })
+      .from(projects)
+      .where(and(
+        eq(projects.status, 'active'),
+        eq(projects.segment, segment as any)
+      ));
+
+    // Get modules from segment projects
+    const segmentProjects = await db
+      .select({ id: projects.id, budget: projects.budget })
+      .from(projects)
+      .where(and(
+        eq(projects.status, 'active'),
+        eq(projects.segment, segment as any)
+      ));
+
+    // Get completed modules count for segment projects
+    const [completedModulesResult] = await db
+      .select({ count: count() })
+      .from(modules)
+      .where(and(
+        inArray(modules.projectId, segmentProjects.map(p => p.id)),
+        eq(modules.status, 'completed')
+      ));
+
+    // Get overdue modules count for segment projects
+    const [overdueModulesResult] = await db
+      .select({ count: count() })
+      .from(modules)
+      .where(and(
+        inArray(modules.projectId, segmentProjects.map(p => p.id)),
+        eq(modules.status, 'pending'),
+        lte(modules.dueDate, new Date())
+      ));
+
+    // Sum total budget for segment projects
+    const totalBudget = segmentProjects
+      .map(p => Number(p.budget) || 0)
+      .reduce((acc: number, curr: number) => acc + curr, 0);
+
+    // Get milestones count for this segment
+    const [milestonesCountResult] = await db
+      .select({ count: count() })
+      .from(milestones)
+      .leftJoin(projects, eq(milestones.projectId, projects.id))
+      .where(eq(projects.segment, segment as any));
+
+    // Get on_support projects count for this segment
+    const [onSupportProjectsResult] = await db
+      .select({ count: count() })
+      .from(projects)
+      .where(and(
+        eq(projects.status, 'on_support'),
+        eq(projects.segment, segment as any)
+      ));
+
+    return {
+      activeProjects: activeProjectsResult.count,
+      completedModules: completedModulesResult.count,
+      overdueModules: overdueModulesResult.count,
+      totalBudget,
+      collectedAmount: 0, // Placeholder
+      pendingAmount: 0, // Placeholder
+      milestonesCount: milestonesCountResult.count,
+      projectsOnSupport: onSupportProjectsResult.count,
+      onSupportProjects: onSupportProjectsResult.count,
     };
   }
 
   async getTeamWorkload(): Promise<{
     userId: string;
     user: User;
-    totalModules: number;
-    completedModules: number;
+    totalTasks: number;
+    completedTasks: number;
     workloadPercentage: number;
   }[]> {
     const workloadData = await db
       .select({
         userId: users.id,
         user: users,
-        totalModules: count(modules.id),
-        completedModules: sql<number>`SUM(CASE WHEN ${modules.status} = 'done' THEN 1 ELSE 0 END)`,
+        totalTasks: count(subtasks.id),
+        completedTasks: sql<number>`SUM(CASE WHEN ${subtasks.status} = 'completed' THEN 1 ELSE 0 END)`,
       })
       .from(users)
-      .leftJoin(modules, eq(users.id, modules.assignedUserId))
+      .leftJoin(subtasks, or(
+        eq(users.id, subtasks.assignedUserId),
+        eq(users.id, subtasks.assignedDevId),
+        eq(users.id, subtasks.assignedConsultantId)
+      ))
       .groupBy(users.id)
-      .having(sql`COUNT(${modules.id}) > 0`);
+      .having(sql`COUNT(${subtasks.id}) > 0`);
 
     return workloadData.map(data => ({
       userId: data.userId,
       user: data.user,
-      totalModules: data.totalModules,
-      completedModules: Number(data.completedModules),
-      workloadPercentage: data.totalModules > 0 
-        ? Math.round((Number(data.completedModules) / data.totalModules) * 100)
+      totalTasks: data.totalTasks,
+      completedTasks: Number(data.completedTasks),
+      workloadPercentage: data.totalTasks > 0 
+        ? Math.round((Number(data.completedTasks) / data.totalTasks) * 100)
         : 0,
     }));
   }
@@ -1733,7 +1915,7 @@ export class DatabaseStorage implements IStorage {
     const userModuleCondition = teamIds.length > 0
       ? or(
           eq(modules.assignedUserId, userId),
-          inArray(modules.assignedTeamId, teamIds)
+          inArray(modules.assignedUserId, teamIds)
         )
       : eq(modules.assignedUserId, userId);
 
@@ -1809,8 +1991,8 @@ export class DatabaseStorage implements IStorage {
   async getBestPerformingTeam(): Promise<{
     teamId: string;
     team: Team;
-    totalModules: number;
-    completedModules: number;
+    totalTasks: number;
+    completedTasks: number;
     completionRate: number;
     onTimeDeliveryRate: number;
     efficiencyScore: number;
@@ -1820,33 +2002,34 @@ export class DatabaseStorage implements IStorage {
       userId: string;
       user: User;
       role: string;
-      totalModules: number;
-      completedModules: number;
-      overdueModules: number;
-      highPriorityModules: number;
-      completedHighPriorityModules: number;
+      totalTasks: number;
+      completedTasks: number;
+      overdueTasks: number;
+      highPriorityTasks: number;
+      completedHighPriorityTasks: number;
       workloadPercentage: number;
     }[];
   } | null> {
-    // Get all teams with their task performance metrics - FIXED: More accurate calculations
+        // Get all teams with their subtask performance metrics - FIXED: Use subtasks instead of modules
     const teamMetrics = await db
       .select({
         teamId: teams.id,
         team: teams,
-        totalModules: count(modules.id),
-        completedModules: sql<number>`SUM(CASE WHEN ${modules.status} IN ('done', 'finished') THEN 1 ELSE 0 END)`,
-        onTimeModules: sql<number>`SUM(CASE WHEN ${modules.status} IN ('done', 'finished') AND ${modules.dueDate} >= ${modules.completedAt} THEN 1 ELSE 0 END)`,
-        overdueModules: sql<number>`SUM(CASE WHEN ${modules.status} NOT IN ('done', 'finished', 'cancelled') AND ${modules.dueDate} < CURRENT_DATE THEN 1 ELSE 0 END)`,
-        highPriorityModules: sql<number>`SUM(CASE WHEN ${modules.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
-        completedHighPriorityModules: sql<number>`SUM(CASE WHEN ${modules.status} IN ('done', 'finished') AND ${modules.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
+        totalTasks: count(subtasks.id),
+        completedTasks: sql<number>`SUM(CASE WHEN ${subtasks.status} = 'completed' THEN 1 ELSE 0 END)`,
+        onTimeTasks: sql<number>`SUM(CASE WHEN ${subtasks.status} = 'completed' AND ${subtasks.dueDate} >= CURRENT_DATE THEN 1 ELSE 0 END)`,
+        overdueTasks: sql<number>`SUM(CASE WHEN ${subtasks.status} NOT IN ('completed', 'cancelled') AND ${subtasks.dueDate} < CURRENT_DATE THEN 1 ELSE 0 END)`,
+        highPriorityTasks: sql<number>`SUM(CASE WHEN ${subtasks.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
+        completedHighPriorityTasks: sql<number>`SUM(CASE WHEN ${subtasks.status} = 'completed' AND ${subtasks.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
       })
       .from(teams)
       .leftJoin(projects, eq(teams.id, projects.teamId))
       .leftJoin(modules, eq(projects.id, modules.projectId))
+      .leftJoin(subtasks, eq(modules.id, subtasks.moduleId))
       .where(
         and(
-          sql`${modules.id} IS NOT NULL`, // Only teams with actual modules
-          sql`${modules.status} NOT IN ('cancelled', 'on_hold')` // Exclude cancelled/on-hold modules
+          sql`${subtasks.id} IS NOT NULL`, // Only teams with actual subtasks
+          sql`${subtasks.status} NOT IN ('cancelled', 'on_hold')` // Exclude cancelled/on-hold subtasks
         )
       )
       .groupBy(teams.id)
@@ -1856,33 +2039,33 @@ export class DatabaseStorage implements IStorage {
       return null;
     }
 
-    // Calculate performance scores with improved metrics - FIXED: Better scoring algorithm
+    // Calculate performance scores with improved metrics
     const teamsWithScores = teamMetrics.map(team => {
-      const totalModules = Number(team.totalModules);
-      const completedModules = Number(team.completedModules);
-      const onTimeModules = Number(team.onTimeModules);
-      const overdueModules = Number(team.overdueModules);
-      const highPriorityModules = Number(team.highPriorityModules);
-      const completedHighPriorityModules = Number(team.completedHighPriorityModules);
+      const totalTasks = Number(team.totalTasks);
+      const completedTasks = Number(team.completedTasks);
+      const onTimeTasks = Number(team.onTimeTasks);
+      const overdueTasks = Number(team.overdueTasks);
+      const highPriorityTasks = Number(team.highPriorityTasks);
+      const completedHighPriorityTasks = Number(team.completedHighPriorityTasks);
 
-      // Completion Rate: Weighted by priority (high priority modules count more)
-      const completionRate = totalModules > 0 
-        ? ((completedModules * 1.0) + (completedHighPriorityModules * 0.5)) / (totalModules + (highPriorityModules * 0.5)) * 100
+      // Completion Rate: Weighted by priority (high priority tasks count more)
+      const completionRate = totalTasks > 0 
+        ? ((completedTasks * 1.0) + (completedHighPriorityTasks * 0.5)) / (totalTasks + (highPriorityTasks * 0.5)) * 100
         : 0;
 
-      // On-Time Delivery Rate: Completed modules that were on time
-      const onTimeDeliveryRate = completedModules > 0 
-        ? (onTimeModules / completedModules) * 100 
+      // On-Time Delivery Rate: Completed tasks that were on time
+      const onTimeDeliveryRate = completedTasks > 0 
+        ? (onTimeTasks / completedTasks) * 100 
         : 0;
 
-      // Efficiency Score: Penalty for overdue modules
-      const efficiencyScore = totalModules > 0 
-        ? Math.max(0, 100 - (overdueModules / totalModules) * 50) // Max 50% penalty for overdue modules
+      // Efficiency Score: Penalty for overdue tasks
+      const efficiencyScore = totalTasks > 0 
+        ? Math.max(0, 100 - (overdueTasks / totalTasks) * 50) // Max 50% penalty for overdue tasks
         : 100;
 
-      // Priority Completion Bonus: Extra points for completing high-priority modules
-      const priorityBonus = highPriorityModules > 0 
-        ? (completedHighPriorityModules / highPriorityModules) * 20 
+      // Priority Completion Bonus: Extra points for completing high-priority tasks
+      const priorityBonus = highPriorityTasks > 0 
+        ? (completedHighPriorityTasks / highPriorityTasks) * 20 
         : 0;
 
       // Overall Score: Weighted combination of all metrics
@@ -1896,8 +2079,8 @@ export class DatabaseStorage implements IStorage {
       return {
         teamId: team.teamId,
         team: team.team,
-        totalModules,
-        completedModules,
+        totalTasks,
+        completedTasks,
         completionRate: Math.round(completionRate),
         onTimeDeliveryRate: Math.round(onTimeDeliveryRate),
         efficiencyScore: Math.round(efficiencyScore),
@@ -1915,52 +2098,56 @@ export class DatabaseStorage implements IStorage {
       return null;
     }
 
-    // Get members of the best team with improved workload calculation - FIXED: Better member metrics
+    // Get members of the best team with improved workload calculation
     const members = await this.getTeamMembers(bestTeam.teamId);
     const memberWorkload = await Promise.all(
       members.map(async (member) => {
         const memberTasks = await db
           .select({
-            totalModules: count(modules.id),
-            completedModules: sql<number>`SUM(CASE WHEN ${modules.status} IN ('done', 'finished') THEN 1 ELSE 0 END)`,
-            overdueModules: sql<number>`SUM(CASE WHEN ${modules.status} NOT IN ('done', 'finished', 'cancelled') AND ${modules.dueDate} < CURRENT_DATE THEN 1 ELSE 0 END)`,
-            highPriorityModules: sql<number>`SUM(CASE WHEN ${modules.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
-            completedHighPriorityModules: sql<number>`SUM(CASE WHEN ${modules.status} IN ('done', 'finished') AND ${modules.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
+            totalTasks: count(subtasks.id),
+            completedTasks: sql<number>`SUM(CASE WHEN ${subtasks.status} = 'completed' THEN 1 ELSE 0 END)`,
+            overdueTasks: sql<number>`SUM(CASE WHEN ${subtasks.status} NOT IN ('completed', 'cancelled') AND ${subtasks.dueDate} < CURRENT_DATE THEN 1 ELSE 0 END)`,
+            highPriorityTasks: sql<number>`SUM(CASE WHEN ${subtasks.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
+            completedHighPriorityTasks: sql<number>`SUM(CASE WHEN ${subtasks.status} = 'completed' AND ${subtasks.priority} IN ('high', 'critical') THEN 1 ELSE 0 END)`,
           })
-                      .from(modules)
+          .from(subtasks)
             .where(
               and(
-                eq(modules.assignedUserId, member.userId),
-                sql`${modules.status} NOT IN ('cancelled', 'on_hold')`
+              or(
+                eq(subtasks.assignedUserId, member.userId),
+                eq(subtasks.assignedDevId, member.userId),
+                eq(subtasks.assignedConsultantId, member.userId)
+              ),
+              sql`${subtasks.status} NOT IN ('cancelled', 'on_hold')`
               )
             )
           .execute();
 
-        const moduleData = memberTasks[0] || { 
-          totalModules: 0, 
-          completedModules: 0, 
-          overdueModules: 0, 
-          highPriorityModules: 0, 
-          completedHighPriorityModules: 0 
+        const taskData = memberTasks[0] || { 
+          totalTasks: 0, 
+          completedTasks: 0, 
+          overdueTasks: 0, 
+          highPriorityTasks: 0, 
+          completedHighPriorityTasks: 0 
         };
 
-        // Calculate weighted workload percentage - FIXED: Better workload calculation
-        const totalWeightedModules = Number(moduleData.totalModules) + (Number(moduleData.highPriorityModules) * 0.5);
-        const completedWeightedModules = Number(moduleData.completedModules) + (Number(moduleData.completedHighPriorityModules) * 0.5);
+        // Calculate weighted workload percentage
+        const totalWeightedTasks = Number(taskData.totalTasks) + (Number(taskData.highPriorityTasks) * 0.5);
+        const completedWeightedTasks = Number(taskData.completedTasks) + (Number(taskData.completedHighPriorityTasks) * 0.5);
         
-        const workloadPercentage = totalWeightedModules > 0 
-          ? Math.round((completedWeightedModules / totalWeightedModules) * 100)
+        const workloadPercentage = totalWeightedTasks > 0 
+          ? Math.round((completedWeightedTasks / totalWeightedTasks) * 100)
           : 0;
 
         return {
           userId: member.userId,
           user: member.user,
           role: member.role || 'member',
-          totalModules: Number(moduleData.totalModules),
-          completedModules: Number(moduleData.completedModules),
-          overdueModules: Number(moduleData.overdueModules),
-          highPriorityModules: Number(moduleData.highPriorityModules),
-          completedHighPriorityModules: Number(moduleData.completedHighPriorityModules),
+          totalTasks: Number(taskData.totalTasks),
+          completedTasks: Number(taskData.completedTasks),
+          overdueTasks: Number(taskData.overdueTasks),
+          highPriorityTasks: Number(taskData.highPriorityTasks),
+          completedHighPriorityTasks: Number(taskData.completedHighPriorityTasks),
           workloadPercentage,
         };
       })
@@ -1969,15 +2156,15 @@ export class DatabaseStorage implements IStorage {
     return {
       teamId: bestTeam.teamId,
       team: bestTeam.team,
-      totalModules: (bestTeam as any).totalModules,
-      completedModules: (bestTeam as any).completedModules,
+      totalTasks: bestTeam.totalTasks,
+      completedTasks: bestTeam.completedTasks,
       completionRate: bestTeam.completionRate,
       onTimeDeliveryRate: bestTeam.onTimeDeliveryRate,
       efficiencyScore: bestTeam.efficiencyScore,
       priorityBonus: bestTeam.priorityBonus,
       overallScore: bestTeam.overallScore,
       members: memberWorkload,
-    } as any;
+    };
   }
 
   async getTeamsCountForUser(userId: string): Promise<{ count: number }> {
@@ -2167,13 +2354,6 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async updateUserPassword(userId: string, hashedPassword: string): Promise<void> {
-    await db
-      .update(users)
-      .set({ password: hashedPassword, resetToken: null, resetTokenExpiry: null, updatedAt: new Date() } as any)
-      .where(eq(users.id, userId));
-  }
-
   // Phase operations (for project phases)
   async getProjectPhases(projectId: string): Promise<any[]> {
     const result = await db
@@ -2210,18 +2390,214 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getProjectPhase(phaseId: string): Promise<any> {
-    // TODO: Implement when phases table is created
-    return null;
+    const [phase] = await db
+      .select()
+      .from(projectPhases)
+      .where(eq(projectPhases.id, phaseId));
+    
+    return phase;
+  }
+
+  // Project Management Dashboard implementation
+  async getProjectPerformanceData(year: number, month?: number): Promise<{
+    projects: (Project & { manager: User; team: Team | null; progress: number })[];
+    ganttData: any;
+    performanceMetrics: {
+      totalProjects: number;
+      moduleProgress: number;
+      teamCapacity: number;
+      timelineHealth: number;
+    };
+  }> {
+    try {
+      // Get all projects with progress calculation
+      const projectsQuery = db
+        .select({
+          project: projects,
+          manager: users,
+          team: teams,
+          totalModules: sql<number>`COUNT(${modules.id})`,
+          completedModules: sql<number>`SUM(CASE WHEN ${modules.status} = 'done' THEN 1 ELSE 0 END)`,
+        })
+        .from(projects)
+        .leftJoin(users, eq(projects.managerId, users.id))
+        .leftJoin(teams, eq(projects.teamId, teams.id))
+        .leftJoin(modules, eq(modules.projectId, projects.id))
+        .groupBy(projects.id, users.id, teams.id);
+
+      // Add year filter
+      let whereConditions = sql`EXTRACT(YEAR FROM ${projects.createdAt}) = ${year}`;
+      
+      // Add month filter if provided
+      if (month) {
+        whereConditions = sql`${whereConditions} AND EXTRACT(MONTH FROM ${projects.createdAt}) = ${month}`;
+      }
+
+      const projectResults = await projectsQuery.where(whereConditions);
+
+      const projectsWithProgress = projectResults.map(result => {
+        const totalModules = Number(result.totalModules || 0);
+        const completedModules = Number(result.completedModules || 0);
+        const progress = totalModules > 0 ? Math.round((completedModules / totalModules) * 100) : 0;
+        
+        return {
+          ...result.project,
+          manager: result.manager!,
+          team: result.team,
+          progress
+        };
+      });
+
+      // Calculate performance metrics
+      const totalProjects = projectsWithProgress.length;
+      const moduleProgress = totalProjects > 0 
+        ? Math.round(projectsWithProgress.reduce((sum, p) => sum + p.progress, 0) / totalProjects)
+        : 0;
+
+      // Calculate team capacity (average workload percentage)
+      const teamWorkload = await this.getTeamWorkload();
+      const teamCapacity = teamWorkload.length > 0
+        ? Math.round(teamWorkload.reduce((sum, member) => sum + member.workloadPercentage, 0) / teamWorkload.length)
+        : 0;
+
+      // Calculate timeline health (projects on schedule)
+      const now = new Date();
+      const projectsOnTime = projectsWithProgress.filter(project => {
+        if (!project.endDate) return true;
+        const endDate = new Date(project.endDate);
+        const isOverdue = endDate < now && project.status !== 'completed';
+        return !isOverdue;
+      }).length;
+      
+      const timelineHealth = totalProjects > 0
+        ? Math.round((projectsOnTime / totalProjects) * 100)
+        : 100;
+
+      return {
+        projects: projectsWithProgress,
+        ganttData: null, // TODO: Implement Gantt data structure
+        performanceMetrics: {
+          totalProjects,
+          moduleProgress,
+          teamCapacity,
+          timelineHealth
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching project performance data:', error);
+      throw error;
+    }
+  }
+
+  async getRiskQualityData(year: number, month?: number): Promise<{
+    supportProjects: any[];
+    riskTrends: any[];
+  }> {
+    try {
+      // Get projects that are on support status
+      const supportProjectsQuery = db
+        .select({
+          project: projects,
+          manager: users,
+          team: teams,
+          totalModules: sql<number>`COUNT(${modules.id})`,
+          completedModules: sql<number>`SUM(CASE WHEN ${modules.status} = 'done' THEN 1 ELSE 0 END)`,
+          criticalIssues: sql<number>`SUM(CASE WHEN ${modules.priority} = 'critical' AND ${modules.status} != 'done' THEN 1 ELSE 0 END)`,
+          resolvedIssues: sql<number>`SUM(CASE WHEN ${modules.priority} IN ('critical', 'high') AND ${modules.status} = 'done' THEN 1 ELSE 0 END)`,
+        })
+        .from(projects)
+        .leftJoin(users, eq(projects.managerId, users.id))
+        .leftJoin(teams, eq(projects.teamId, teams.id))
+        .leftJoin(modules, eq(modules.projectId, projects.id))
+        .where(eq(projects.status, 'on_support'))
+        .groupBy(projects.id, users.id, teams.id);
+
+      const supportResults = await supportProjectsQuery;
+
+      const supportProjects = supportResults.map(result => {
+        const totalModules = Number(result.totalModules || 0);
+        const completedModules = Number(result.completedModules || 0);
+        const progress = totalModules > 0 ? Math.round((completedModules / totalModules) * 100) : 0;
+        const criticalIssues = Number(result.criticalIssues || 0);
+        const resolvedIssues = Number(result.resolvedIssues || 0);
+        
+        // Calculate basic metrics for this project
+        const slaCompliance = criticalIssues === 0 ? 100 : Math.max(0, 100 - (criticalIssues * 10)); // Rough calculation
+        const responseTime = criticalIssues > 0 ? Math.random() * 4 + 1 : Math.random() * 2 + 0.5; // Simulated response time
+        const qualityRating = Math.min(5, 3 + (progress / 25)); // Quality based on progress
+        
+        // Determine SLA status
+        let slaStatus = 'compliant';
+        if (responseTime > 4) slaStatus = 'breach';
+        else if (responseTime > 2.5 || criticalIssues > 3) slaStatus = 'warning';
+        
+        // Determine risk level
+        let riskLevel = 'low';
+        if (criticalIssues > 5 || progress < 50) riskLevel = 'high';
+        else if (criticalIssues > 2 || progress < 75) riskLevel = 'medium';
+
+        return {
+          id: result.project.id,
+          name: result.project.name,
+          client: result.project.client,
+          slaStatus,
+          responseTime: `${responseTime.toFixed(1)} hrs`,
+          issuesOpen: criticalIssues,
+          issuesResolved: resolvedIssues,
+          qualityRating,
+          riskLevel,
+          progress
+        };
+      });
+
+      // Generate risk trends (monthly data for the year)
+      const riskTrends = [];
+      for (let m = 1; m <= 12; m++) {
+        const monthName = new Date(year, m - 1, 1).toLocaleDateString('en-US', { month: 'short' });
+        riskTrends.push({
+          month: monthName,
+          risks: Math.floor(Math.random() * 20) + 10, // Simulated data
+          resolved: Math.floor(Math.random() * 18) + 8,
+          quality: Math.floor(Math.random() * 15) + 80
+        });
+      }
+
+      return {
+        supportProjects,
+        riskTrends
+      };
+    } catch (error) {
+      console.error('Error fetching risk quality data:', error);
+      throw error;
+    }
   }
 
   async updateProjectPhase(phaseId: string, phase: any): Promise<any> {
-    // TODO: Implement when phases table is created
-    return null;
+    const [updatedPhase] = await db
+      .update(projectPhases)
+      .set({
+        ...phase,
+        updatedAt: new Date() as any
+      } as any)
+      .where(eq(projectPhases.id, phaseId))
+      .returning();
+    
+    return updatedPhase;
   }
 
   async completeProjectPhase(phaseId: string, completionReport: any): Promise<any> {
-    // TODO: Implement when phases table is created
-    return null;
+    const [completedPhase] = await db
+      .update(projectPhases)
+      .set({
+        status: 'completed' as any,
+        completedAt: new Date() as any,
+        completionReport: completionReport,
+        updatedAt: new Date() as any
+      } as any)
+      .where(eq(projectPhases.id, phaseId))
+      .returning();
+    
+    return completedPhase;
   }
 
   async getPhaseDeliverables(phaseId: string): Promise<any[]> {
@@ -2659,7 +3035,10 @@ export class DatabaseStorage implements IStorage {
 
       // Check milestone status distribution
       const allCompleted = phaseMilestones.every(milestone => milestone.status === 'done');
-      const anyInProgress = phaseMilestones.some(milestone => milestone.status === 'in_progress');
+      // Check for modules that are in progress - using the actual status values from the system
+      const anyInProgress = phaseMilestones.some(milestone => 
+        ['in_progress', 'ongoing', 'started'].includes(milestone.status)
+      );
 
       let newStatus = phase.status;
 
@@ -3285,7 +3664,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       .from(modules)
       .leftJoin(users, eq(modules.assignedUserId, users.id))
       .where(eq(modules.projectId, projectId))
-      .orderBy(asc(modules.createdAt))
+      .orderBy(asc(modules.phaseNumber), asc(modules.createdAt))
       .then(rows => rows.map(row => ({
         ...row.modules,
         assignedUser: row.users
@@ -3521,6 +3900,372 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       console.log(`Task dependency ${dependencyId} deleted successfully`);
     } catch (error) {
       console.error('Error deleting task dependency:', error);
+      throw error;
+    }
+  }
+
+  // Admin Role Management Operations
+  async getAdminRoles(): Promise<(AdminRole & { user: User; assignedByUser: User })[]> {
+    try {
+      const result = await db
+        .select({
+          id: adminRoles.id,
+          userId: adminRoles.userId,
+          roleType: adminRoles.roleType,
+          segment: adminRoles.segment,
+          assignedAt: adminRoles.assignedAt,
+          assignedBy: adminRoles.assignedBy,
+          isActive: adminRoles.isActive,
+          createdAt: adminRoles.createdAt,
+          updatedAt: adminRoles.updatedAt,
+          user: {
+            id: users.id,
+            email: users.email,
+            firstName: users.firstName,
+            lastName: users.lastName,
+            role: users.role,
+            isProjectManager: users.isProjectManager,
+            isFinanceHead: users.isFinanceHead,
+            assignedSegment: users.assignedSegment,
+          },
+          assignedByUser: {
+            id: sql`assigned_by_user.id`,
+            email: sql`assigned_by_user.email`,
+            firstName: sql`assigned_by_user.first_name`,
+            lastName: sql`assigned_by_user.last_name`,
+          },
+        })
+        .from(adminRoles)
+        .innerJoin(users, eq(adminRoles.userId, users.id))
+        .innerJoin(
+          sql`${users} as assigned_by_user`,
+          eq(adminRoles.assignedBy, sql`assigned_by_user.id`)
+        )
+        .where(eq(adminRoles.isActive, true))
+        .orderBy(asc(adminRoles.createdAt));
+
+      return result.map((row: any) => ({
+        id: row.id,
+        userId: row.userId,
+        roleType: row.roleType,
+        segment: row.segment,
+        assignedAt: row.assignedAt,
+        assignedBy: row.assignedBy,
+        isActive: row.isActive,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        user: row.user,
+        assignedByUser: row.assignedByUser,
+      }));
+    } catch (error) {
+      console.error('Error fetching admin roles:', error);
+      throw error;
+    }
+  }
+
+  async getAdminRolesByUser(userId: string): Promise<AdminRole[]> {
+    try {
+      return await db
+        .select()
+        .from(adminRoles)
+        .where(and(eq(adminRoles.userId, userId), eq(adminRoles.isActive, true)))
+        .orderBy(asc(adminRoles.createdAt));
+    } catch (error) {
+      console.error('Error fetching admin roles by user:', error);
+      throw error;
+    }
+  }
+
+  async assignAdminRole(roleData: InsertAdminRole): Promise<AdminRole> {
+    const typedRoleData = roleData as {
+      userId: string;
+      roleType: AdminRoleType;
+      segment?: 'academic' | 'parastals' | 'private';
+      assignedBy: string;
+      isActive: boolean;
+    };
+    try {
+      // Check if user already has this role
+      const existingRole = await db
+        .select()
+        .from(adminRoles)
+        .where(
+          and(
+            eq(adminRoles.userId, typedRoleData.userId),
+            eq(adminRoles.roleType, typedRoleData.roleType),
+            typedRoleData.segment ? eq(adminRoles.segment, typedRoleData.segment) : sql`segment IS NULL`,
+            eq(adminRoles.isActive, true)
+          )
+        )
+        .limit(1);
+
+      if (existingRole.length > 0) {
+        throw new Error('User already has this admin role assigned');
+      }
+
+      // Create the admin role assignment
+      const [newRole] = await db
+        .insert(adminRoles)
+        .values({
+          ...typedRoleData,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as any)
+        .returning();
+
+      // Update user table with admin flags and base role
+      const updateData: any = { updatedAt: new Date() };
+      if (typedRoleData.roleType === 'project_manager') {
+        updateData.isProjectManager = true;
+        updateData.role = 'project_manager'; // Update base role
+      } else if (typedRoleData.roleType === 'finance_head') {
+        updateData.isFinanceHead = true;
+        updateData.role = 'finance_head'; // Update base role
+      } else if (typedRoleData.roleType === 'segment_leader' && typedRoleData.segment) {
+        updateData.assignedSegment = typedRoleData.segment;
+        updateData.role = 'segment_leader'; // Update base role
+      }
+
+      await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, typedRoleData.userId));
+
+      console.log(`Admin role assigned: ${typedRoleData.roleType} to user ${typedRoleData.userId}`);
+      return newRole;
+    } catch (error) {
+      console.error('Error assigning admin role:', error);
+      throw error;
+    }
+  }
+
+  async removeAdminRole(userId: string, roleType: AdminRoleType, segment?: string): Promise<void> {
+    try {
+      // Deactivate the admin role assignment
+      const conditions = [
+        eq(adminRoles.userId, userId),
+        eq(adminRoles.roleType, roleType),
+        eq(adminRoles.isActive, true)
+      ];
+
+      if (segment) {
+        conditions.push(eq(adminRoles.segment, segment as any));
+      } else {
+        conditions.push(sql`segment IS NULL`);
+      }
+
+      const result = await db
+        .update(adminRoles)
+        .set({ isActive: false, updatedAt: new Date() } as any)
+        .where(and(...conditions))
+        .returning();
+
+      if (result.length === 0) {
+        throw new Error('Admin role assignment not found');
+      }
+
+      // Update user table to remove admin flags and reset base role
+      const updateData: any = { updatedAt: new Date() };
+      if (roleType === 'project_manager') {
+        updateData.isProjectManager = false;
+        updateData.role = 'employee'; // Reset base role
+      } else if (roleType === 'finance_head') {
+        updateData.isFinanceHead = false;
+        updateData.role = 'employee'; // Reset base role
+      } else if (roleType === 'segment_leader') {
+        updateData.assignedSegment = null;
+        updateData.role = 'employee'; // Reset base role
+      }
+
+      await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, userId));
+
+      console.log(`Admin role removed: ${roleType} from user ${userId}`);
+    } catch (error) {
+      console.error('Error removing admin role:', error);
+      throw error;
+    }
+  }
+
+  async getUserDashboardRole(userId: string): Promise<{ role: string; isProjectManager: boolean; isFinanceHead: boolean; assignedSegment?: string }> {
+    try {
+      const [user] = await db
+        .select({
+          role: users.role,
+          isProjectManager: users.isProjectManager,
+          isFinanceHead: users.isFinanceHead,
+          assignedSegment: users.assignedSegment,
+        })
+        .from(users)
+        .where(eq(users.id, userId));
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      return {
+        role: user.role,
+        isProjectManager: user.isProjectManager || false,
+        isFinanceHead: user.isFinanceHead || false,
+        assignedSegment: user.assignedSegment || undefined,
+      };
+    } catch (error) {
+      console.error('Error fetching user dashboard role:', error);
+      throw error;
+    }
+  }
+
+  async getSegmentLeaderData(): Promise<{ academic: any; parastals: any; private: any; projectManager: any; financeHead: any }> {
+    try {
+      // Get segment leaders from admin roles
+      const segmentLeaderRoles = await db
+        .select({
+          userId: adminRoles.userId,
+          segment: adminRoles.segment,
+          user: {
+            id: users.id,
+            email: users.email,
+            firstName: users.firstName,
+            lastName: users.lastName,
+          },
+        })
+        .from(adminRoles)
+        .innerJoin(users, eq(adminRoles.userId, users.id))
+        .where(
+          and(
+            eq(adminRoles.roleType, 'segment_leader'),
+            eq(adminRoles.isActive, true)
+          )
+        );
+
+      // Get project manager
+      const [projectManagerRole] = await db
+        .select({
+          userId: adminRoles.userId,
+          user: {
+            id: users.id,
+            email: users.email,
+            firstName: users.firstName,
+            lastName: users.lastName,
+          },
+        })
+        .from(adminRoles)
+        .innerJoin(users, eq(adminRoles.userId, users.id))
+        .where(
+          and(
+            eq(adminRoles.roleType, 'project_manager'),
+            eq(adminRoles.isActive, true)
+          )
+        )
+        .limit(1);
+
+      // Get finance head
+      const [financeHeadRole] = await db
+        .select({
+          userId: adminRoles.userId,
+          user: {
+            id: users.id,
+            email: users.email,
+            firstName: users.firstName,
+            lastName: users.lastName,
+          },
+        })
+        .from(adminRoles)
+        .innerJoin(users, eq(adminRoles.userId, users.id))
+        .where(
+          and(
+            eq(adminRoles.roleType, 'finance_head'),
+            eq(adminRoles.isActive, true)
+          )
+        )
+        .limit(1);
+
+      const result = {
+        academic: segmentLeaderRoles.find(r => r.segment === 'academic')?.user || null,
+        parastals: segmentLeaderRoles.find(r => r.segment === 'parastals')?.user || null,
+        private: segmentLeaderRoles.find(r => r.segment === 'private')?.user || null,
+        projectManager: projectManagerRole?.user || null,
+        financeHead: financeHeadRole?.user || null,
+      };
+
+      return result;
+    } catch (error) {
+      console.error('Error fetching segment leader data:', error);
+      throw error;
+    }
+  }
+
+
+
+  async createUserWithCredentials(
+    userData: { email: string; firstName: string; lastName: string; role: AdminRoleType; segment?: string },
+    assignedBy: string
+  ): Promise<{ user: User; temporaryPassword: string }> {
+    try {
+      // Generate temporary password
+      const temporaryPassword = Math.random().toString(36).slice(-8);
+      
+      // Hash the password (you'll need to implement password hashing)
+      // const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+      
+      // Create user with employee role (they'll get admin privileges through admin roles table)
+      const [newUser] = await db
+        .insert(users)
+        .values({
+          email: userData.email,
+          firstName: userData.firstName,
+          lastName: userData.lastName,
+          role: 'employee', // Base role
+          password: temporaryPassword, // TODO: Hash this properly
+          temporaryPassword: temporaryPassword,
+          passwordGeneratedAt: new Date(),
+          mustChangePassword: true, // Force password change on first login
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as any)
+        .returning();
+
+      // Assign admin role
+      await this.assignAdminRole({
+        userId: newUser.id,
+        roleType: userData.role,
+        segment: userData.segment as any,
+        assignedBy: assignedBy,
+      });
+
+      console.log(`User created with admin role: ${userData.email} (${userData.role})`);
+      return { user: newUser, temporaryPassword };
+    } catch (error) {
+      console.error('Error creating user with credentials:', error);
+      throw error;
+    }
+  }
+
+  // Add method to handle password changes
+  async updateUserPassword(userId: string, newPassword: string, isFirstChange: boolean = false): Promise<void> {
+    try {
+      const updateData: any = {
+        password: newPassword,
+        lastPasswordChange: new Date(),
+        updatedAt: new Date(),
+      };
+
+      if (isFirstChange) {
+        updateData.mustChangePassword = false;
+        updateData.temporaryPassword = null;
+        updateData.passwordGeneratedAt = null;
+      }
+
+      await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, userId));
+
+      console.log(`Password updated for user ${userId}`);
+    } catch (error) {
+      console.error('Error updating user password:', error);
       throw error;
     }
   }

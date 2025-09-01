@@ -131,22 +131,46 @@ export const calendarEvents = pgTable(
 );
 
 // Insert schemas for validation
-export const insertUserNotificationPreferencesSchema = createInsertSchema(userNotificationPreferences).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
+export const insertUserNotificationPreferencesSchema = z.object({
+  userId: z.string().min(1, "User ID is required"),
+  emailTaskAssigned: z.boolean().default(true),
+  emailTaskDueSoon: z.boolean().default(true),
+  emailTaskOverdue: z.boolean().default(true),
+  emailProjectDeadline: z.boolean().default(true),
+  emailTeamUpdates: z.boolean().default(false),
+  inAppTaskAssigned: z.boolean().default(true),
+  inAppTaskDueSoon: z.boolean().default(true),
+  inAppTaskOverdue: z.boolean().default(true),
+  inAppProjectDeadline: z.boolean().default(true),
+  inAppTeamUpdates: z.boolean().default(true),
+  dueSoonDays: z.number().default(2),
+  reminderTime: z.string().default('09:00'),
 });
 
-export const insertEmailQueueSchema = createInsertSchema(emailQueue).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
+export const insertEmailQueueSchema = z.object({
+  userId: z.string().min(1, "User ID is required"),
+  emailType: z.string().min(1, "Email type is required"),
+  recipientEmail: z.string().email("Invalid email address"),
+  subject: z.string().min(1, "Subject is required"),
+  htmlContent: z.string().min(1, "HTML content is required"),
+  status: z.enum(["pending", "sent", "failed", "retry"]).default("pending"),
+  retryCount: z.number().default(0),
+  nextRetryAt: z.date().optional(),
+  sentAt: z.date().optional(),
+  errorMessage: z.string().optional(),
 });
 
-export const insertCalendarEventSchema = createInsertSchema(calendarEvents).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
+export const insertCalendarEventSchema = z.object({
+  userId: z.string().min(1, "User ID is required"),
+  taskId: z.string().min(1, "Task ID is required"),
+  googleEventId: z.string().min(1, "Google event ID is required"),
+  googleCalendarId: z.string().min(1, "Google calendar ID is required"),
+  title: z.string().min(1, "Title is required"),
+  description: z.string().optional(),
+  startDateTime: z.date(),
+  endDateTime: z.date(),
+  syncStatus: z.enum(["synced", "pending", "failed"]).default("synced"),
+  lastSyncAt: z.date().optional(),
 });
 
 // Validation schemas for API endpoints

@@ -1,6 +1,6 @@
-import winston from 'winston';
+import * as winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
-import path from 'path';
+import * as path from 'path';
 
 // Define log levels
 const levels = {

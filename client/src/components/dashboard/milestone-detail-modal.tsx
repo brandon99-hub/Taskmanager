@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Calendar, DollarSign, User, AlertTriangle, CheckCircle, Clock, TrendingUp, FileText, ExternalLink } from "lucide-react";
+import { Calendar, DollarSign, User, AlertTriangle, CheckCircle, Clock, TrendingUp, FileText, ExternalLink, Building } from "lucide-react";
 import { useState } from "react";
 
 interface MilestoneDetailModalProps {
@@ -17,12 +17,33 @@ interface MilestoneDetailModalProps {
 
 export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailModalProps) {
   const auth = useAuth() as any;
-  const { user } = auth;
+  const { user, getDashboardType } = auth;
   const { isMobile, isTablet } = useScreenSize();
   const [isOpen, setIsOpen] = useState(false);
+  const dashboardType = getDashboardType();
 
-  const { data: milestones = [], isLoading } = useQuery<any[]>({
-    queryKey: type === "completed" ? ['/api/dashboard/completed-milestones'] : ['/api/dashboard/overdue-tasks'],
+  // Determine API endpoint and terminology based on dashboard type
+  const getApiEndpoint = () => {
+    if (dashboardType === 'project_manager') {
+      return type === "completed" ? '/api/dashboard/completed-modules' : '/api/dashboard/overdue-modules';
+    } else {
+      return type === "completed" ? '/api/dashboard/completed-milestones' : '/api/dashboard/overdue-tasks';
+    }
+  };
+
+  const getTerminology = () => {
+    if (dashboardType === 'project_manager') {
+      return { singular: 'module', plural: 'modules', title: 'Modules' };
+    } else {
+      return { singular: 'milestone', plural: 'milestones', title: 'Milestones' };
+    }
+  };
+
+  const terms = getTerminology();
+  const isProjectManager = dashboardType === 'project_manager';
+
+  const { data: items = [], isLoading } = useQuery<any[]>({
+    queryKey: [getApiEndpoint()],
     enabled: isOpen && !!user,
   });
 
@@ -73,23 +94,23 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
     }
   };
 
-  // Group milestones by project
-  const milestonesByProject = milestones.reduce((acc: any, milestone: any) => {
-    const projectId = milestone.project?.id || 'unknown';
+  // Group items by project
+  const itemsByProject = items.reduce((acc: any, item: any) => {
+    const projectId = item.project?.id || 'unknown';
     if (!acc[projectId]) {
       acc[projectId] = {
-        project: milestone.project,
-        milestones: []
+        project: item.project,
+        items: []
       };
     }
-    acc[projectId].milestones.push(milestone);
+    acc[projectId].items.push(item);
     return acc;
   }, {});
 
-  const totalMilestones = milestones.length;
-  const totalValue = milestones.reduce((sum: number, m: any) => sum + (parseFloat(m.feeAmount || '0')), 0);
-  const paidValue = milestones.reduce((sum: number, m: any) => 
-    sum + (m.billingStatus === 'paid' ? parseFloat(m.feeAmount || '0') : 0), 0 // FIXED: Only count as paid when actually paid
+  const totalItems = items.length;
+  const totalValue = isProjectManager ? 0 : items.reduce((sum: number, m: any) => sum + (parseFloat(m.feeAmount || '0')), 0);
+  const paidValue = isProjectManager ? 0 : items.reduce((sum: number, m: any) => 
+    sum + (m.billingStatus === 'paid' ? parseFloat(m.feeAmount || '0') : 0), 0
   );
   const pendingValue = totalValue - paidValue;
 
@@ -104,19 +125,19 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
             {type === "completed" ? (
               <>
                 <CheckCircle className="h-5 w-5 text-green-600" />
-                Completed Milestones
+                Completed {terms.title}
               </>
             ) : (
               <>
                 <AlertTriangle className="h-5 w-5 text-red-600" />
-                Overdue Milestones
+                Overdue {terms.title}
               </>
             )}
           </DialogTitle>
           <DialogDescription>
             {type === "completed" 
-              ? "Detailed view of all completed milestones across projects"
-              : "Milestones that are past their due date and require attention"
+              ? `Detailed view of all completed ${terms.plural} across projects`
+              : `${terms.title} that are past their due date and require attention`
             }
           </DialogDescription>
         </DialogHeader>
@@ -134,66 +155,82 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
           ) : (
             <div className="space-y-6">
               {/* Summary Cards */}
-              <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : isTablet ? 'grid-cols-2' : 'grid-cols-4'}`}>
+              <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : isTablet ? 'grid-cols-2' : isProjectManager ? 'grid-cols-2' : 'grid-cols-4'}`}>
                 <Card className="bg-gradient-to-r from-blue-50 to-blue-100">
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-medium text-blue-600">Total Milestones</p>
-                        <p className="text-2xl font-bold text-blue-900">{totalMilestones}</p>
+                        <p className="text-sm font-medium text-blue-600">Total {terms.title}</p>
+                        <p className="text-2xl font-bold text-blue-900">{totalItems}</p>
                       </div>
                       <FileText className="h-8 w-8 text-blue-600" />
                     </div>
                   </CardContent>
                 </Card>
                 
-                <Card className="bg-gradient-to-r from-green-50 to-green-100">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-green-600">Total Value</p>
-                        <p className="text-2xl font-bold text-green-900">{formatCurrency(totalValue)}</p>
+                {isProjectManager ? (
+                  <Card className="bg-gradient-to-r from-green-50 to-green-100">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-green-600">Projects</p>
+                          <p className="text-2xl font-bold text-green-900">{Object.keys(itemsByProject).length}</p>
+                        </div>
+                        <Building className="h-8 w-8 text-green-600" />
                       </div>
-                      <DollarSign className="h-8 w-8 text-green-600" />
-                    </div>
-                  </CardContent>
-                </Card>
-                
-                <Card className="bg-gradient-to-r from-purple-50 to-purple-100">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-purple-600">Paid Amount</p>
-                        <p className="text-2xl font-bold text-purple-900">{formatCurrency(paidValue)}</p>
-                      </div>
-                      <TrendingUp className="h-8 w-8 text-purple-600" />
-                    </div>
-                  </CardContent>
-                </Card>
-                
-                <Card className="bg-gradient-to-r from-orange-50 to-orange-100">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-orange-600">Pending Payment</p>
-                        <p className="text-2xl font-bold text-orange-900">{formatCurrency(pendingValue)}</p>
-                      </div>
-                      <Clock className="h-8 w-8 text-orange-600" />
-                    </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <>
+                    <Card className="bg-gradient-to-r from-green-50 to-green-100">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-green-600">Total Value</p>
+                            <p className="text-2xl font-bold text-green-900">{formatCurrency(totalValue)}</p>
+                          </div>
+                          <DollarSign className="h-8 w-8 text-green-600" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    <Card className="bg-gradient-to-r from-purple-50 to-purple-100">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-purple-600">Paid Amount</p>
+                            <p className="text-2xl font-bold text-purple-900">{formatCurrency(paidValue)}</p>
+                          </div>
+                          <TrendingUp className="h-8 w-8 text-purple-600" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    <Card className="bg-gradient-to-r from-orange-50 to-orange-100">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-orange-600">Pending Payment</p>
+                            <p className="text-2xl font-bold text-orange-900">{formatCurrency(pendingValue)}</p>
+                          </div>
+                          <Clock className="h-8 w-8 text-orange-600" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </>
+                )}
               </div>
 
-              {/* Projects and Milestones */}
+              {/* Projects and Items */}
               <Tabs defaultValue="all" className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="all">All Projects ({Object.keys(milestonesByProject).length})</TabsTrigger>
+                  <TabsTrigger value="all">All Projects ({Object.keys(itemsByProject).length})</TabsTrigger>
                   <TabsTrigger value="by-project">By Project</TabsTrigger>
                   <TabsTrigger value="summary">Summary</TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="all" className="space-y-4">
-                  {Object.values(milestonesByProject).map((projectGroup: any) => (
+                  {Object.values(itemsByProject).map((projectGroup: any) => (
                     <Card key={projectGroup.project?.id} className="overflow-hidden">
                       <CardHeader className="bg-gray-50">
                         <CardTitle className="flex items-center justify-between">
@@ -207,52 +244,56 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                             </Badge>
                           </div>
                           <span className="text-sm text-gray-600">
-                            {projectGroup.milestones.length} milestone{projectGroup.milestones.length !== 1 ? 's' : ''}
+                            {projectGroup.items.length} {terms.singular}{projectGroup.items.length !== 1 ? 's' : ''}
                           </span>
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="p-0">
                         <div className="divide-y divide-gray-200">
-                          {projectGroup.milestones.map((milestone: any) => (
-                            <div key={milestone.id} className="p-4 hover:bg-gray-50">
+                          {projectGroup.items.map((item: any) => (
+                            <div key={item.id} className="p-4 hover:bg-gray-50">
                               <div className="flex items-start justify-between">
                                 <div className="flex-1 space-y-2">
                                   <div className="flex items-center gap-2">
-                                    <h4 className="font-medium text-gray-900">{milestone.name}</h4>
-                                    <Badge className={getPriorityColor(milestone.priority)}>
-                                      {milestone.priority}
+                                    <h4 className="font-medium text-gray-900">{item.name}</h4>
+                                    <Badge className={getPriorityColor(item.priority)}>
+                                      {item.priority}
                                     </Badge>
-                                    <Badge className={getBillingStatusColor(milestone.billingStatus)}>
-                                      {milestone.billingStatus}
-                                    </Badge>
+                                    {!isProjectManager && (
+                                      <Badge className={getBillingStatusColor(item.billingStatus)}>
+                                        {item.billingStatus}
+                                      </Badge>
+                                    )}
                                   </div>
                                   
-                                  {milestone.description && (
-                                    <p className="text-sm text-gray-600">{milestone.description}</p>
+                                  {item.description && (
+                                    <p className="text-sm text-gray-600">{item.description}</p>
                                   )}
                                   
                                   <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
                                     <div className="flex items-center gap-1">
                                       <Calendar className="h-4 w-4" />
-                                      <span>Due: {formatDate(milestone.dueDate)}</span>
+                                      <span>Due: {formatDate(item.dueDate)}</span>
                                     </div>
                                     
-                                    {milestone.completedAt && (
+                                    {item.completedAt && (
                                       <div className="flex items-center gap-1">
                                         <CheckCircle className="h-4 w-4 text-green-600" />
-                                        <span>Completed: {formatDate(milestone.completedAt)}</span>
+                                        <span>Completed: {formatDate(item.completedAt)}</span>
                                       </div>
                                     )}
                                     
-                                    <div className="flex items-center gap-1">
-                                      <DollarSign className="h-4 w-4" />
-                                      <span>{formatCurrency(milestone.feeAmount)}</span>
-                                    </div>
+                                    {!isProjectManager && (
+                                      <div className="flex items-center gap-1">
+                                        <DollarSign className="h-4 w-4" />
+                                        <span>{formatCurrency(item.feeAmount)}</span>
+                                      </div>
+                                    )}
                                     
-                                    {milestone.assignedUser && (
+                                    {item.assignedUser && (
                                       <div className="flex items-center gap-1">
                                         <User className="h-4 w-4" />
-                                        <span>{milestone.assignedUser.firstName || milestone.assignedUser.email}</span>
+                                        <span>{item.assignedUser.firstName || item.assignedUser.email}</span>
                                       </div>
                                     )}
                                   </div>
@@ -262,7 +303,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => window.open(`/projects/${milestone.projectId}`, '_blank')}
+                                    onClick={() => window.open(`/projects/${item.projectId}`, '_blank')}
                                   >
                                     <ExternalLink className="h-4 w-4 mr-1" />
                                     View Project
@@ -279,7 +320,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                 
                 <TabsContent value="by-project" className="space-y-4">
                   <div className="grid gap-4">
-                    {Object.values(milestonesByProject).map((projectGroup: any) => (
+                    {Object.values(itemsByProject).map((projectGroup: any) => (
                       <Card key={projectGroup.project?.id}>
                         <CardHeader>
                           <CardTitle className="text-lg">{projectGroup.project?.name}</CardTitle>
@@ -287,25 +328,29 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                         <CardContent>
                           <div className="space-y-3">
                             <div className="flex items-center justify-between text-sm">
-                              <span>Total Milestones:</span>
-                              <span className="font-medium">{projectGroup.milestones.length}</span>
+                              <span>Total {terms.title}:</span>
+                              <span className="font-medium">{projectGroup.items.length}</span>
                             </div>
-                            <div className="flex items-center justify-between text-sm">
-                              <span>Total Value:</span>
-                              <span className="font-medium">
-                                {formatCurrency(projectGroup.milestones.reduce((sum: number, m: any) => 
-                                  sum + parseFloat(m.feeAmount || '0'), 0
-                                ))}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-sm">
-                              <span>Paid Amount:</span>
-                              <span className="font-medium text-green-600">
-                                {formatCurrency(projectGroup.milestones.reduce((sum: number, m: any) => 
-                                  sum + (m.billingStatus === 'sent' ? parseFloat(m.feeAmount || '0') : 0), 0
-                                ))}
-                              </span>
-                            </div>
+                            {!isProjectManager && (
+                              <>
+                                <div className="flex items-center justify-between text-sm">
+                                  <span>Total Value:</span>
+                                  <span className="font-medium">
+                                    {formatCurrency(projectGroup.items.reduce((sum: number, m: any) => 
+                                      sum + parseFloat(m.feeAmount || '0'), 0
+                                    ))}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm">
+                                  <span>Paid Amount:</span>
+                                  <span className="font-medium text-green-600">
+                                    {formatCurrency(projectGroup.items.reduce((sum: number, m: any) => 
+                                      sum + (m.billingStatus === 'sent' ? parseFloat(m.feeAmount || '0') : 0), 0
+                                    ))}
+                                  </span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         </CardContent>
                       </Card>
@@ -315,33 +360,35 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                 
                 <TabsContent value="summary" className="space-y-4">
                   <div className="grid gap-4">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Billing Status Summary</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          {['paid', 'sent', 'to_send', 'none'].map((status) => {
-                            const count = milestones.filter((m: any) => m.billingStatus === status).length;
-                            const value = milestones
-                              .filter((m: any) => m.billingStatus === status)
-                              .reduce((sum: number, m: any) => sum + parseFloat(m.feeAmount || '0'), 0);
-                            
-                            return (
-                              <div key={status} className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <Badge className={getBillingStatusColor(status)}>
-                                    {status.replace('_', ' ')}
-                                  </Badge>
-                                  <span className="text-sm text-gray-600">{count} milestones</span>
+                    {!isProjectManager && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>Billing Status Summary</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-3">
+                            {['paid', 'sent', 'to_send', 'none'].map((status) => {
+                              const count = items.filter((m: any) => m.billingStatus === status).length;
+                              const value = items
+                                .filter((m: any) => m.billingStatus === status)
+                                .reduce((sum: number, m: any) => sum + parseFloat(m.feeAmount || '0'), 0);
+                              
+                              return (
+                                <div key={status} className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <Badge className={getBillingStatusColor(status)}>
+                                      {status.replace('_', ' ')}
+                                    </Badge>
+                                    <span className="text-sm text-gray-600">{count} {terms.plural}</span>
+                                  </div>
+                                  <span className="font-medium">{formatCurrency(value)}</span>
                                 </div>
-                                <span className="font-medium">{formatCurrency(value)}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </CardContent>
-                    </Card>
+                              );
+                            })}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
                     
                     <Card>
                       <CardHeader>
@@ -350,8 +397,8 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                       <CardContent>
                         <div className="space-y-3">
                           {['critical', 'high', 'medium', 'low'].map((priority) => {
-                            const count = milestones.filter((m: any) => m.priority === priority).length;
-                            const percentage = totalMilestones > 0 ? Math.round((count / totalMilestones) * 100) : 0;
+                            const count = items.filter((m: any) => m.priority === priority).length;
+                            const percentage = totalItems > 0 ? Math.round((count / totalItems) * 100) : 0;
                             
                             return (
                               <div key={priority} className="flex items-center justify-between">
@@ -359,7 +406,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                                   <Badge className={getPriorityColor(priority)}>
                                     {priority}
                                   </Badge>
-                                  <span className="text-sm text-gray-600">{count} milestones</span>
+                                  <span className="text-sm text-gray-600">{count} {terms.plural}</span>
                                 </div>
                                 <span className="font-medium">{percentage}%</span>
                               </div>

@@ -11,6 +11,7 @@ import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { isUnauthorizedError } from '@/lib/authUtils';
 import { formatCurrency, calculateSubtaskWeightBasedProgress } from '@/lib/utils';
+import { useAuth } from '@/hooks/useAuth';
 
 interface Module {
   id: string;
@@ -28,6 +29,10 @@ interface Module {
     firstName?: string;
     lastName?: string;
     email: string;
+  };
+  team?: {
+    id: string;
+    name: string;
   };
   projectId: string;
   phaseNumber?: number;
@@ -71,20 +76,66 @@ interface Subtask {
 interface ModuleTableProps {
   modules: Module[];
   projectSegment: string;
+  projectTeam?: {
+    id: string;
+    name: string;
+  };
   onEdit: (module: Module) => void;
   initiallyExpandedModule?: string | null;
 }
 
-export default function ModuleTable({ modules, projectSegment, onEdit, initiallyExpandedModule }: ModuleTableProps) {
+export default function ModuleTable({ modules, projectSegment, projectTeam, onEdit, initiallyExpandedModule }: ModuleTableProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
-  const [sortField, setSortField] = useState<keyof Module>('name');
+  const [sortField, setSortField] = useState<keyof Module>('phaseNumber');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
+
+  // Get available subtask status options based on user role and assignment
+  const getAvailableSubtaskStatuses = (currentStatus: string, subtask?: Subtask) => {
+    const allStatuses = [
+      { value: 'not_started', label: 'Not Started' },
+      { value: 'in_progress', label: 'In Progress' },
+      { value: 'fc_review', label: 'FC Review' },
+      { value: 'completed', label: 'Completed' },
+      { value: 'overdue', label: 'Overdue' },
+      { value: 'on_hold', label: 'On Hold' },
+      { value: 'cancelled', label: 'Cancelled' }
+    ];
+
+    // Remove QA and Client Review options as requested
+    const filteredStatuses = allStatuses.filter(status => 
+      !['qa', 'client_review'].includes(status.value)
+    );
+
+    // If user is an employee, check assignment and role restrictions
+    if (user && (user as any)?.role === 'employee' && subtask) {
+      const isAssigned = subtask.assignedDevId === (user as any)?.id || 
+                        subtask.assignedConsultantId === (user as any)?.id;
+      
+      if (!isAssigned) {
+        // If not assigned, only show current status
+        return [{ value: currentStatus, label: currentStatus.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) }];
+      }
+      
+      // If assigned, filter based on role
+      return filteredStatuses.filter(status => {
+        // Only FCs can mark as completed
+        if (status.value === 'completed') {
+          return subtask.assignedConsultantId === (user as any)?.id;
+        }
+        return true;
+      });
+    }
+
+    // Admins and managers can access all statuses (except QA and Client Review)
+    return filteredStatuses;
+  };
 
   // Auto-expand module if initiallyExpandedModule is provided
   useEffect(() => {
@@ -455,9 +506,9 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
-                                        <SelectItem value="todo">Not Started</SelectItem>
+                <SelectItem value="todo">Not Started</SelectItem>
                 <SelectItem value="in_progress">In Progress</SelectItem>
-                                        <SelectItem value="client_review">Client Review</SelectItem>
+                <SelectItem value="client_review">Client Review</SelectItem>
                 <SelectItem value="done">Done</SelectItem>
               </SelectContent>
             </Select>
@@ -556,10 +607,10 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
               </div>
             </div>
           )}
-          <table className="w-full border-collapse">
+          <table className="w-full border-collapse table-fixed">
             <thead>
               <tr className="border-b border-gray-200">
-                <th className="text-left p-3">
+                <th className="text-left p-3 w-12">
                   <Checkbox
                     checked={selectedModules.length === filteredModules.length && filteredModules.length > 0}
                     disabled={bulkStatusUpdateMutation.isPending}
@@ -567,7 +618,7 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
                   />
                 </th>
                 <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
+                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-72"
                   onClick={() => handleSort('name')}
                 >
                   <div className="flex items-center space-x-1">
@@ -578,7 +629,7 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
                   </div>
                 </th>
                 <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
+                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-32"
                   onClick={() => handleSort('priority')}
                 >
                   <div className="flex items-center space-x-1">
@@ -589,7 +640,7 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
                   </div>
                 </th>
                 <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
+                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-36"
                   onClick={() => handleSort('startDate')}
                 >
                   <div className="flex items-center space-x-1">
@@ -601,7 +652,7 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
                   </div>
                 </th>
                 <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
+                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-36"
                   onClick={() => handleSort('dueDate')}
                 >
                   <div className="flex items-center space-x-1">
@@ -613,12 +664,23 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
                   </div>
                 </th>
 
-                                 <th className="text-left p-3">Required Days</th>
-                 <th className="text-left p-3">Duration</th>
-                 <th className="text-left p-3">Segment</th>
+                <th 
+                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-28"
+                  onClick={() => handleSort('phaseNumber')}
+                >
+                  <div className="flex items-center space-x-1">
+                    <span>Phase</span>
+                    {sortField === 'phaseNumber' && (
+                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </div>
+                </th>
+                <th className="text-left p-3 w-40">Assigned To</th>
+                <th className="text-left p-3 w-28">Duration</th>
+                <th className="text-left p-3 w-32">Segment</th>
 
                 <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
+                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-36"
                   onClick={() => handleSort('status')}
                 >
                   <div className="flex items-center space-x-1">
@@ -629,7 +691,7 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
                   </div>
                 </th>
 
-                <th className="text-left p-3">Actions</th>
+                <th className="text-left p-3 w-28">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -677,313 +739,306 @@ export default function ModuleTable({ modules, projectSegment, onEdit, initially
                         </div>
                       </div>
                     </td>
-                  <td className="p-3">
-                    <Badge className={getPriorityColor(module.priority)}>
-                      {module.priority.charAt(0).toUpperCase() + module.priority.slice(1)}
-                    </Badge>
-                  </td>
-                  <td className="p-3 text-sm text-gray-600">
-                    {formatDate(module.startDate)}
-                  </td>
-                  <td className="p-3 text-sm text-gray-600">
-                    {formatDate(module.dueDate)}
-                  </td>
-                  <td className="p-3 text-sm text-gray-600">
-                    {module.assignedUser ? `${module.assignedUser.firstName || ''} ${module.assignedUser.lastName || ''}`.trim() || module.assignedUser.email : 'Unassigned'}
-                  </td>
-                  <td className="p-3 text-sm text-gray-600">
-                    {module.startDate && module.dueDate ? 
-                      Math.ceil((new Date(module.dueDate).getTime() - new Date(module.startDate).getTime()) / (1000 * 60 * 60 * 24)) + ' days' : 
-                      'Not set'
-                    }
-                  </td>
-                  <td className="p-3 text-sm text-gray-600">
-                    {projectSegment ? projectSegment.charAt(0).toUpperCase() + projectSegment.slice(1) : 'Private'}
-                  </td>
-                                     <td className="p-3">
-                     <Select
-                       value={module.status}
-                       disabled={updateModuleStatusMutation.isPending}
-                       onValueChange={(value) => updateModuleStatusMutation.mutate({
-                         moduleId: module.id,
-                         status: value
-                       })}
-                     >
-                       <SelectTrigger className={`w-32 relative ${
-                         updateModuleStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
-                       } ${module.status === 'completed' ? 'bg-green-50 border-green-200' : module.status === 'client_review' ? 'bg-yellow-50 border-yellow-200' : module.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
-                         {updateModuleStatusMutation.isPending ? (
-                           <div className="flex items-center">
-                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                             <span className="text-sm text-gray-500">Processing...</span>
-                           </div>
-                         ) : (
-                           <SelectValue />
-                         )}
-                       </SelectTrigger>
-                       <SelectContent>
-                         <SelectItem value="not_started">Not Started</SelectItem>
-                         <SelectItem value="in_progress">In Progress</SelectItem>
-                         <SelectItem value="fc_review">FC Review</SelectItem>
-                         <SelectItem value="qa">QA</SelectItem>
-                         <SelectItem value="client_review">Client Review</SelectItem>
-                         <SelectItem value="completed">Completed</SelectItem>
-                         <SelectItem value="overdue">Overdue</SelectItem>
-                         <SelectItem value="on_hold">On Hold</SelectItem>
-                         <SelectItem value="cancelled">Cancelled</SelectItem>
-                       </SelectContent>
-                     </Select>
-                   </td>
+                    <td className="p-3">
+                      <Badge className={getPriorityColor(module.priority)}>
+                        {module.priority.charAt(0).toUpperCase() + module.priority.slice(1)}
+                      </Badge>
+                    </td>
+                    <td className="p-3 text-sm text-gray-600">
+                      {formatDate(module.startDate)}
+                    </td>
+                    <td className="p-3 text-sm text-gray-600">
+                      {formatDate(module.dueDate)}
+                    </td>
+                    <td className="p-3 text-sm text-gray-600">
+                      {module.phaseNumber ? `Phase ${module.phaseNumber}` : 'Not assigned'}
+                    </td>
+                    <td className="p-3 text-sm text-gray-600">
+                      {projectTeam?.name || 'Unassigned'}
+                    </td>
+                    <td className="p-3 text-sm text-gray-600">
+                      {module.startDate && module.dueDate ? 
+                        Math.ceil((new Date(module.dueDate).getTime() - new Date(module.startDate).getTime()) / (1000 * 60 * 60 * 24)) + ' days' : 
+                        'Not set'
+                      }
+                    </td>
+                    <td className="p-3 text-sm text-gray-600">
+                      {projectSegment ? projectSegment.charAt(0).toUpperCase() + projectSegment.slice(1) : 'Private'}
+                    </td>
+                    <td className="p-3">
+                      <Select
+                        value={module.status}
+                        disabled={updateModuleStatusMutation.isPending}
+                        onValueChange={(value) => updateModuleStatusMutation.mutate({
+                          moduleId: module.id,
+                          status: value
+                        })}
+                      >
+                        <SelectTrigger className={`w-32 relative ${
+                          updateModuleStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                        } ${module.status === 'completed' ? 'bg-green-50 border-green-200' : module.status === 'client_review' ? 'bg-yellow-50 border-yellow-200' : module.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
+                          {updateModuleStatusMutation.isPending ? (
+                            <div className="flex items-center">
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                              <span className="text-sm text-gray-500">Processing...</span>
+                            </div>
+                          ) : (
+                            <SelectValue />
+                          )}
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="not_started">Not Started</SelectItem>
+                          <SelectItem value="in_progress">In Progress</SelectItem>
+                          <SelectItem value="fc_review">FC Review</SelectItem>
+                          <SelectItem value="qa">QA</SelectItem>
+                          <SelectItem value="client_review">Client Review</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                          <SelectItem value="overdue">Overdue</SelectItem>
+                          <SelectItem value="on_hold">On Hold</SelectItem>
+                          <SelectItem value="cancelled">Cancelled</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </td>
 
-                  <td className="p-3">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onEdit(module)}
-                    >
-                      <Edit className="h-4 w-4 mr-1" />
-                      Edit
-                    </Button>
-                  </td>
-                </tr>
+                    <td className="p-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onEdit(module)}
+                      >
+                        <Edit className="h-4 w-4 mr-1" />
+                        Edit
+                      </Button>
+                    </td>
+                  </tr>
 
-                {/* Subtasks for expanded modules */}
-                {expandedModules.has(module.id) && module.subtasks && module.subtasks.length > 0 && (
-                  <tr className="border-b border-gray-100">
-                    <td colSpan={11} className="p-0">
-                      <div className="bg-blue-50 border-t border-blue-200">
-                        <table className="w-full border-collapse">
-                          <thead>
-                            <tr className="border-b border-blue-200">
-                              <th className="text-left p-3">
-                                <Checkbox
-                                  checked={selectedModules.includes(module.id)}
-                                  disabled={bulkStatusUpdateMutation.isPending}
-                                  onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
-                                />
-                              </th>
-                              <th 
-                                className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('name' as keyof Module)}
-                              >
-                                <div className="flex items-center space-x-1">
-                                  <span>Subtask</span>
-                                  {sortField === 'name' && (
-                                    <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                                  )}
-                                </div>
-                              </th>
-                              <th 
-                                className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('priority' as keyof Module)}
-                              >
-                                <div className="flex items-center space-x-1">
-                                  <span>Priority</span>
-                                  {sortField === 'priority' && (
-                                    <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                                  )}
-                                </div>
-                              </th>
-                              <th 
-                                className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('startDate' as keyof Module)}
-                              >
-                                <div className="flex items-center space-x-1">
-                                  <CalendarDays className="h-4 w-4" />
-                                  <span>Start Date</span>
-                                  {sortField === 'startDate' && (
-                                    <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                                  )}
-                                </div>
-                              </th>
-                              <th 
-                                className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('dueDate' as keyof Module)}
-                              >
-                                <div className="flex items-center space-x-1">
-                                  <CalendarDays className="h-4 w-4" />
-                                  <span>End Date</span>
-                                  {sortField === 'dueDate' && (
-                                    <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                                  )}
-                                </div>
-                              </th>
-
-                              <th className="text-left p-3">
-                                <div className="flex items-center space-x-1">
-                                  <CalendarDays className="h-4 w-4" />
-                                  <span>Estimated Days</span>
-                                </div>
-                              </th>
-                              <th className="text-left p-3">
-                                <div className="flex items-center space-x-1">
-                                  <User className="h-4 w-4" />
-                                  <span>Developer</span>
-                                </div>
-                              </th>
-                              <th className="text-left p-3">
-                                <div className="flex items-center space-x-1">
-                                  <UserCheck className="h-4 w-4" />
-                                  <span>Functional Consultant</span>
-                                </div>
-                              </th>
-                              <th className="text-left p-3">
-                                <div className="flex items-center space-x-1">
-                                  <UserCheck className="h-4 w-4" />
-                                  <span>Progress</span>
-                                </div>
-                              </th>
-                              <th 
-                                className="text-left p-3 cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleSort('status' as keyof Module)}
-                              >
-                                <div className="flex items-center space-x-1">
-                                  <span>Status</span>
-                                  {sortField === 'status' && (
-                                    <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                                  )}
-                                </div>
-                              </th>
-
-                              <th className="text-left p-3">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {module.subtasks.map((subtask) => (
-                              <tr key={subtask.id} className="border-b border-blue-100 hover:bg-blue-50">
-                                <td className="p-3">
+                  {/* Subtasks for expanded modules */}
+                  {expandedModules.has(module.id) && module.subtasks && module.subtasks.length > 0 && (
+                    <tr className="border-b border-gray-100">
+                      <td colSpan={11} className="p-0">
+                        <div className="bg-blue-50 border-t border-blue-200">
+                          <table className="w-full border-collapse">
+                            <thead>
+                              <tr className="border-b border-blue-200">
+                                <th className="text-left p-3 w-12">
                                   <Checkbox
                                     checked={selectedModules.includes(module.id)}
                                     disabled={bulkStatusUpdateMutation.isPending}
                                     onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
                                   />
-                                </td>
-                                <td className="p-3">
-                                  <div>
-                                    <div className="font-medium text-gray-900">{subtask.name}</div>
-                                    {subtask.description && (
-                                      <div className="text-sm text-gray-500 truncate max-w-xs">
-                                        {subtask.description}
-                                      </div>
+                                </th>
+                                <th 
+                                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-72"
+                                  onClick={() => handleSort('name' as keyof Module)}
+                                >
+                                  <div className="flex items-center space-x-1">
+                                    <span>Subtask</span>
+                                    {sortField === 'name' && (
+                                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                                     )}
                                   </div>
-                                </td>
-                                <td className="p-3">
-                                  <Badge className={getPriorityColor(subtask.priority)}>
-                                    {subtask.priority.charAt(0).toUpperCase() + subtask.priority.slice(1)}
-                                  </Badge>
-                                </td>
-                                <td className="p-3 text-sm text-gray-600">
-                                  {formatDate(subtask.startDate)}
-                                </td>
-                                <td className="p-3 text-sm text-gray-600">
-                                  {formatDate(subtask.dueDate)}
-                                </td>
-
-                                <td className="p-3 text-sm text-gray-600">
-                                  {subtask.estimatedDays || 'N/A'}
-                                </td>
-                                <td className="p-3 text-sm text-gray-600">
-                                  {subtask.assignedDev ? (
-                                    <div className="flex items-center space-x-2">
-                                      <User className="h-4 w-4 text-gray-500" />
-                                      <span className="font-medium">
-                                        {subtask.assignedDev.firstName && subtask.assignedDev.lastName 
-                                          ? `${subtask.assignedDev.firstName} ${subtask.assignedDev.lastName}`
-                                          : subtask.assignedDev.email
-                                        }
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    <span className="text-gray-400">Unassigned</span>
-                                  )}
-                                </td>
-                                <td className="p-3 text-sm text-gray-600">
-                                  {subtask.assignedConsultant ? (
-                                    <div className="flex items-center space-x-2">
-                                      <UserCheck className="h-4 w-4 text-gray-500" />
-                                      <span className="font-medium">
-                                        {subtask.assignedConsultant.firstName && subtask.assignedConsultant.lastName 
-                                          ? `${subtask.assignedConsultant.firstName} ${subtask.assignedConsultant.lastName}`
-                                          : subtask.assignedConsultant.email
-                                        }
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    <span className="text-gray-400">Unassigned</span>
-                                  )}
-                                </td>
-                                <td className="p-3 text-sm text-gray-600">
-                                  <div className="flex items-center space-x-2">
-                                    <div className="w-16 bg-gray-200 rounded-full h-2">
-                                      <div 
-                                        className={`h-2 rounded-full ${
-                                          subtask.progressPercent >= 100 ? 'bg-green-500' :
-                                          subtask.progressPercent >= 75 ? 'bg-blue-500' :
-                                          subtask.progressPercent >= 50 ? 'bg-yellow-500' :
-                                          subtask.progressPercent >= 25 ? 'bg-orange-500' : 'bg-red-500'
-                                        }`}
-                                        style={{ width: `${Math.min(subtask.progressPercent, 100)}%` }}
-                                      ></div>
-                                    </div>
-                                    <span className="font-medium">{subtask.progressPercent}%</span>
+                                </th>
+                                <th 
+                                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-32"
+                                  onClick={() => handleSort('priority' as keyof Module)}
+                                >
+                                  <div className="flex items-center space-x-1">
+                                    <span>Priority</span>
+                                    {sortField === 'priority' && (
+                                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                                    )}
                                   </div>
-                                </td>
-                                <td className="p-3">
-                                  <Select
-                                    value={subtask.status}
-                                    disabled={updateSubtaskStatusMutation.isPending}
-                                    onValueChange={(value) => updateSubtaskStatusMutation.mutate({
-                                      subtaskId: subtask.id,
-                                      status: value
-                                    })}
-                                  >
-                                    <SelectTrigger className={`w-32 relative ${
-                                      updateSubtaskStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
-                                    } ${subtask.status === 'completed' ? 'bg-green-50 border-green-200' : subtask.status === 'in_progress' ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
-                                      {updateSubtaskStatusMutation.isPending ? (
-                                        <div className="flex items-center">
-                                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                                          <span className="text-sm text-gray-500">Processing...</span>
-                                        </div>
-                                      ) : (
-                                        <SelectValue />
-                                      )}
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-blue-50 border-blue-200">
-                                      <SelectItem value="not_started">Not Started</SelectItem>
-                                      <SelectItem value="in_progress">In Progress</SelectItem>
-                                      <SelectItem value="fc_review">FC Review</SelectItem>
-                                      <SelectItem value="qa">QA</SelectItem>
-                                      <SelectItem value="client_review">Client Review</SelectItem>
-                                      <SelectItem value="completed">Completed</SelectItem>
-                                      <SelectItem value="overdue">Overdue</SelectItem>
-                                      <SelectItem value="on_hold">On Hold</SelectItem>
-                                      <SelectItem value="cancelled">Cancelled</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </td>
+                                </th>
+                                <th 
+                                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-36"
+                                  onClick={() => handleSort('startDate' as keyof Module)}
+                                >
+                                  <div className="flex items-center space-x-1">
+                                    <CalendarDays className="h-4 w-4" />
+                                    <span>Start Date</span>
+                                    {sortField === 'startDate' && (
+                                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                                    )}
+                                  </div>
+                                </th>
+                                <th 
+                                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-36"
+                                  onClick={() => handleSort('dueDate' as keyof Module)}
+                                >
+                                  <div className="flex items-center space-x-1">
+                                    <CalendarDays className="h-4 w-4" />
+                                    <span>End Date</span>
+                                    {sortField === 'dueDate' && (
+                                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                                    )}
+                                  </div>
+                                </th>
 
-                                <td className="p-3">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => onEdit({ ...module, subtasks: module.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
-                                  >
-                                    <Edit className="h-4 w-4 mr-1" />
-                                    Edit
-                                  </Button>
-                                </td>
+                                <th className="text-left p-3">
+                                  <div className="flex items-center space-x-1">
+                                    <CalendarDays className="h-4 w-4" />
+                                    <span>Estimated Days</span>
+                                  </div>
+                                </th>
+                                <th className="text-left p-3">
+                                  <div className="flex items-center space-x-1">
+                                    <User className="h-4 w-4" />
+                                    <span>Developer</span>
+                                  </div>
+                                </th>
+                                <th className="text-left p-3">
+                                  <div className="flex items-center space-x-1">
+                                    <UserCheck className="h-4 w-4" />
+                                    <span>Functional Consultant</span>
+                                  </div>
+                                </th>
+                                <th 
+                                  className="text-left p-3 cursor-pointer hover:bg-gray-50"
+                                  onClick={() => handleSort('status' as keyof Module)}
+                                >
+                                  <div className="flex items-center space-x-1">
+                                    <span>Status</span>
+                                    {sortField === 'status' && (
+                                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                                    )}
+                                  </div>
+                                </th>
+
+                                <th className="text-left p-3">Actions</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            ))}
+                            </thead>
+                            <tbody>
+                              {module.subtasks.map((subtask) => (
+                                <tr key={subtask.id} className="border-b border-blue-100 hover:bg-blue-50">
+                                  <td className="p-3">
+                                    <Checkbox
+                                      checked={selectedModules.includes(module.id)}
+                                      disabled={bulkStatusUpdateMutation.isPending}
+                                      onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
+                                    />
+                                  </td>
+                                  <td className="p-3">
+                                    <div>
+                                      <div className="font-medium text-gray-900">{subtask.name}</div>
+                                      {subtask.description && (
+                                        <div className="text-sm text-gray-500 truncate max-w-xs">
+                                          {subtask.description}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="p-3">
+                                    <Badge className={getPriorityColor(subtask.priority)}>
+                                      {subtask.priority.charAt(0).toUpperCase() + subtask.priority.slice(1)}
+                                    </Badge>
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {formatDate(subtask.startDate)}
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {formatDate(subtask.dueDate)}
+                                  </td>
+
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {subtask.estimatedDays || 'N/A'}
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {subtask.assignedDev ? (
+                                      <div className="flex items-center space-x-2">
+                                        <User className="h-4 w-4 text-gray-500" />
+                                        <span className="font-medium">
+                                          {subtask.assignedDev.firstName && subtask.assignedDev.lastName 
+                                            ? `${subtask.assignedDev.firstName} ${subtask.assignedDev.lastName}`
+                                            : subtask.assignedDev.email
+                                          }
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-400">Unassigned</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {subtask.assignedConsultant ? (
+                                      <div className="flex items-center space-x-2">
+                                        <UserCheck className="h-4 w-4 text-gray-500" />
+                                        <span className="font-medium">
+                                          {subtask.assignedConsultant.firstName && subtask.assignedConsultant.lastName 
+                                            ? `${subtask.assignedConsultant.firstName} ${subtask.assignedConsultant.lastName}`
+                                            : subtask.assignedConsultant.email
+                                          }
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-400">Unassigned</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3">
+                                    <Select
+                                      value={subtask.status}
+                                      disabled={updateSubtaskStatusMutation.isPending || 
+                                        Boolean(user && (user as any)?.role === 'employee' && 
+                                         !(subtask.assignedDevId === (user as any)?.id || 
+                                           subtask.assignedConsultantId === (user as any)?.id))}
+                                      onValueChange={(value) => updateSubtaskStatusMutation.mutate({
+                                        subtaskId: subtask.id,
+                                        status: value
+                                      })}
+                                    >
+                                      <SelectTrigger className={`w-32 relative ${
+                                        updateSubtaskStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                                      } ${subtask.status === 'completed' ? 'bg-green-50 border-green-200' : subtask.status === 'in_progress' ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+                                        {updateSubtaskStatusMutation.isPending ? (
+                                          <div className="flex items-center">
+                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                                            <span className="text-sm text-gray-500">Processing...</span>
+                                          </div>
+                                        ) : (
+                                          <SelectValue />
+                                        )}
+                                      </SelectTrigger>
+                                      <SelectContent className="bg-blue-50 border-blue-200">
+                                        {getAvailableSubtaskStatuses(subtask.status, subtask).map((status) => (
+                                          <SelectItem key={status.value} value={status.value}>
+                                            {status.label}
+                                          </SelectItem>
+                                        ))}
+                                        {user && (user as any)?.role === 'employee' && ['qa', 'client_review', 'completed'].includes(subtask.status) ? (
+                                          <SelectItem value={subtask.status} disabled>
+                                            {subtask.status === 'qa' ? 'QA' :
+                                             subtask.status === 'client_review' ? 'Client Review' :
+                                             'Completed'} (Current)
+                                          </SelectItem>
+                                        ) : null}
+                                      </SelectContent>
+                                    </Select>
+                                    {/* Show message when user can't modify this subtask */}
+                                    {Boolean(user && (user as any)?.role === 'employee' && 
+                                     !(subtask.assignedDevId === (user as any)?.id || 
+                                       subtask.assignedConsultantId === (user as any)?.id)) && (
+                                      <p className="text-xs text-gray-500 mt-1">Not assigned to you</p>
+                                    )}
+                                  </td>
+
+                                  <td className="p-3">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => onEdit({ ...module, subtasks: module.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
+                                    >
+                                      <Edit className="h-4 w-4 mr-1" />
+                                      Edit
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
             </tbody>
           </table>
         </div>

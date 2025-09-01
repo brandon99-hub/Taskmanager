@@ -1,9 +1,9 @@
-import bcrypt from 'bcryptjs';
-import passport from "passport";
+import * as bcrypt from 'bcryptjs';
+import * as passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
 import type { Express, RequestHandler } from "express";
-import connectPg from "connect-pg-simple";
+import * as connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 import { emailService } from "./services/emailService";
 import { registerUserSchema, loginUserSchema, type RegisterUser, type LoginUser } from "../shared/schema";
@@ -11,7 +11,7 @@ import { enhancedRegisterUserSchema, enhancedPasswordSchema, assessPasswordStren
 import { trackFailedLogin, isAccountLocked, clearFailedAttempts } from "./middleware/audit";
 import { logAuthSuccess, logAuthFailure, logAccountLockout } from "./utils/logger";
 import { z } from "zod";
-import crypto from "crypto";
+import * as crypto from "crypto";
 
 export function getSession() {
   if (!process.env.SESSION_SECRET) {
@@ -23,7 +23,7 @@ export function getSession() {
   }
   
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
-  const pgStore = connectPg(session);
+  const pgStore = connectPg.default(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
     createTableIfMissing: true,
@@ -103,7 +103,12 @@ export async function setupAuth(app: Express) {
         }
 
         const isValidPassword = await verifyPassword(password, user.password);
-        if (!isValidPassword) {
+        
+        // Also check temporary password if it exists and user must change password
+        const isValidTempPassword = user.temporaryPassword && user.mustChangePassword && 
+          password === user.temporaryPassword;
+        
+        if (!isValidPassword && !isValidTempPassword) {
           const lockInfo = trackFailedLogin(email);
           const ipLockInfo = trackFailedLogin(clientIP);
           

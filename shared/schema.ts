@@ -14,39 +14,13 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Session storage table (required for Replit Auth)
-export const sessions = pgTable(
-  "sessions",
-  {
-    sid: varchar("sid").primaryKey(),
-    sess: jsonb("sess").notNull(),
-    expire: timestamp("expire").notNull(),
-  },
-  (table) => [index("IDX_session_expire").on(table.expire)]
-);
-
-// User storage table (updated for local auth)
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email").unique().notNull(),
-  password: varchar("password").notNull(), // Added for local auth
-  firstName: varchar("first_name"),
-  middleName: varchar("middle_name"), // Added for personnel import
-  lastName: varchar("last_name"),
-  phoneNumber: varchar("phone_number"), // Added for personnel import
-  idNumber: varchar("id_number"), // Added for personnel import
-  profileImageUrl: varchar("profile_image_url"),
-  role: varchar("role", { length: 20 }).notNull().default("employee"),
-  isActive: boolean("is_active").notNull().default(true), // Added for account management
-  lastLoginAt: timestamp("last_login_at"),
-  resetToken: text("reset_token"), // Added for password reset
-  resetTokenExpiry: timestamp("reset_token_expiry"), // Added for password reset
-  // New credential fields
-  temporaryPassword: varchar("temporary_password"),
-  passwordGeneratedAt: timestamp("password_generated_at"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
+// Define all enums first
+// Project segments for categorization
+export const projectSegmentEnum = pgEnum("project_segment", [
+  "academic",
+  "parastals",
+  "private",
+]);
 
 // Project priorities and statuses
 export const projectStatusEnum = pgEnum("project_status", [
@@ -57,13 +31,6 @@ export const projectStatusEnum = pgEnum("project_status", [
   "cancelled",
   "terminated", // Added terminated status
   "on_support", // Added on_support status
-]);
-
-// Project segments for categorization
-export const projectSegmentEnum = pgEnum("project_segment", [
-  "academic",
-  "parastals",
-  "private",
 ]);
 
 export const taskPriorityEnum = pgEnum("task_priority", [
@@ -99,6 +66,46 @@ export const billingStatusEnum = pgEnum("billing_status", [
   "processing", // payment being processed
 ]);
 
+// Session storage table (required for Replit Auth)
+export const sessions = pgTable(
+  "sessions",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: jsonb("sess").notNull(),
+    expire: timestamp("expire").notNull(),
+  },
+  (table) => [index("IDX_session_expire").on(table.expire)]
+);
+
+// User storage table (updated for local auth)
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: varchar("email").unique().notNull(),
+  password: varchar("password").notNull(), // Added for local auth
+  firstName: varchar("first_name"),
+  middleName: varchar("middle_name"), // Added for personnel import
+  lastName: varchar("last_name"),
+  phoneNumber: varchar("phone_number"), // Added for personnel import
+  idNumber: varchar("id_number"), // Added for personnel import
+  profileImageUrl: varchar("profile_image_url"),
+  role: varchar("role", { length: 20 }).notNull().default("employee"),
+  isActive: boolean("is_active").notNull().default(true), // Added for account management
+  lastLoginAt: timestamp("last_login_at"),
+  resetToken: text("reset_token"), // Added for password reset
+  resetTokenExpiry: timestamp("reset_token_expiry"), // Added for password reset
+  // New credential fields
+  temporaryPassword: varchar("temporary_password"),
+  passwordGeneratedAt: timestamp("password_generated_at"),
+  mustChangePassword: boolean("must_change_password").default(false),
+  lastPasswordChange: timestamp("last_password_change"),
+  // New admin role assignment fields
+  isProjectManager: boolean("is_project_manager").default(false),
+  isFinanceHead: boolean("is_finance_head").default(false),
+  assignedSegment: projectSegmentEnum("assigned_segment"), // For segment leaders
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Segment leaders table
 export const segmentLeaders = pgTable("segment_leaders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -109,6 +116,21 @@ export const segmentLeaders = pgTable("segment_leaders", {
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
   uniqueSegment: index("unique_segment").on(table.segment),
+}));
+
+// Admin roles assignment table for tracking special admin roles
+export const adminRoles = pgTable("admin_roles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  roleType: varchar("role_type", { length: 50 }).notNull(), // 'project_manager', 'finance_head', 'segment_leader'
+  segment: projectSegmentEnum("segment"), // Only for segment leaders
+  assignedAt: timestamp("assigned_at").defaultNow(),
+  assignedBy: varchar("assigned_by").references(() => users.id).notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  uniqueUserRole: index("unique_user_role").on(table.userId, table.roleType, table.segment),
 }));
 
 // Employee roles table
@@ -526,6 +548,17 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
   }),
 }));
 
+export const adminRolesRelations = relations(adminRoles, ({ one }) => ({
+  user: one(users, {
+    fields: [adminRoles.userId],
+    references: [users.id],
+  }),
+  assignedByUser: one(users, {
+    fields: [adminRoles.assignedBy],
+    references: [users.id],
+  }),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({
   email: true,
@@ -555,6 +588,28 @@ export const insertTeamSchema = createInsertSchema(teams).omit({
   id: true,
   createdAt: true,
 });
+
+export const insertAdminRoleSchema = createInsertSchema(adminRoles).omit({
+  id: true,
+  assignedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Type definitions for admin role management
+export type AdminRoleType = 'project_manager' | 'finance_head' | 'segment_leader';
+
+export type AdminRoleAssignment = {
+  id: string;
+  userId: string;
+  roleType: AdminRoleType;
+  segment?: 'academic' | 'parastals' | 'private';
+  assignedAt: Date;
+  assignedBy: string;
+  isActive: boolean;
+  user?: User;
+  assignedByUser?: User;
+};
 
 export const insertProjectSchema = createInsertSchema(projects).omit({
   id: true,
@@ -612,10 +667,15 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
   createdAt: true,
 });
 
-export const insertSystemConfigSchema = createInsertSchema(systemConfig).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
+export const insertSystemConfigSchema = z.object({
+  key: z.string().min(1, "Key is required").max(100, "Key must be at most 100 characters"),
+  value: z.string().min(1, "Value is required"),
+  description: z.string().optional(),
+});
+
+export const insertModuleMilestoneSchema = z.object({
+  moduleId: z.string().uuid("Invalid module ID"),
+  milestoneId: z.string().uuid("Invalid milestone ID"),
 });
 
 // Types
@@ -687,6 +747,9 @@ export type InsertTeamMemberRole = typeof teamMemberRoles.$inferInsert;
 
 export type ExternalNotificationRecipient = typeof externalNotificationRecipients.$inferSelect;
 export type InsertExternalNotificationRecipient = typeof externalNotificationRecipients.$inferInsert;
+
+export type AdminRole = typeof adminRoles.$inferSelect;
+export type InsertAdminRole = z.infer<typeof insertAdminRoleSchema>;
 
 // Invoice reports table for tracking sent invoices
 export const invoiceReports = pgTable("invoice_reports", {

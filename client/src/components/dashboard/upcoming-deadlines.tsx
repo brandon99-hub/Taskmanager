@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,9 @@ import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 export default function UpcomingDeadlines() {
   const [currentPage, setCurrentPage] = useState(0);
   const itemsPerPage = 5;
+  const auth = useAuth() as any;
+  const { getDashboardType } = auth;
+  const dashboardType = getDashboardType();
 
   const { data: upcomingTasks = [], isLoading } = useQuery<any[]>({
     queryKey: ['/api/dashboard/upcoming-tasks'],
@@ -62,6 +66,14 @@ export default function UpcomingDeadlines() {
     return due.toLocaleDateString();
   };
 
+  // Get appropriate title based on user role
+  const getTitle = () => {
+    if (dashboardType === 'project_manager') {
+      return 'Upcoming Module Deadlines';
+    }
+    return 'Upcoming Milestone Deadlines';
+  };
+
   if (isLoading) {
     return (
       <Card className="bg-surface shadow-sm border border-gray-200">
@@ -102,14 +114,14 @@ export default function UpcomingDeadlines() {
       <CardHeader>
           <CardTitle className="text-lg flex items-center" data-testid="text-deadlines-title">
           <Calendar className="h-5 w-5 mr-2" />
-          Upcoming Milestone Deadlines
+          {getTitle()}
         </CardTitle>
       </CardHeader>
       <CardContent>
         {upcomingTasks.length === 0 ? (
           <div className="text-center py-8 text-gray-500" data-testid="text-no-deadlines">
             <Calendar className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p>No upcoming milestone deadlines</p>
+            <p>No upcoming {dashboardType === 'project_manager' ? 'module' : 'milestone'} deadlines</p>
           </div>
         ) : (
           <div className="space-y-4">

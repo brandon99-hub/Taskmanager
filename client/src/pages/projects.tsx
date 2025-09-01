@@ -20,7 +20,7 @@ import { calculateWeightBasedProgress } from "@/lib/utils";
 
 export default function Projects() {
   const auth = useAuth() as any;
-  const { isAuthenticated, isLoading, user } = auth;
+  const { isAuthenticated, isLoading, user, isAdminRole } = auth;
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { isMobile, isTablet } = useScreenSize();
@@ -228,7 +228,7 @@ export default function Projects() {
           </div>
           <div className="flex space-x-3 mt-4 md:mt-0">
             {/* Mount modal so it can open from global event as well */}
-            <CreateProjectModal />
+            {isAdminRole() && <CreateProjectModal />}
           </div>
         </div>
 
@@ -529,7 +529,7 @@ export default function Projects() {
                           >
                             View
                           </Button>
-                          {['admin', 'manager'].includes(user?.role) && (
+                          {isAdminRole() && (
                             <Button
                               variant="outline"
                               size="sm"

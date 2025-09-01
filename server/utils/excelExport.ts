@@ -72,7 +72,9 @@ function createSingleReport(workbook: XLSX.WorkBook, data: any, reportType: stri
       break;
       
     case 'gantt':
-      return createGanttWorksheet(data || [], title);
+      sheetData = data || [];
+      sheetName = 'GanttChart';
+      title = 'AppKings Solutions Limited - Gantt Chart Report';
       break;
       
     default:
@@ -80,15 +82,15 @@ function createSingleReport(workbook: XLSX.WorkBook, data: any, reportType: stri
   }
   
   
-  if (reportType === 'gantt') {
-    // Handle Gantt chart separately with custom formatting
-    const worksheet = createGanttWorksheet(sheetData, title);
-    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-    return;
-  }
+
 
   if (sheetData.length > 0) {
-    const worksheet = createWorksheetWithHeader(sheetData, title);
+    let worksheet;
+    if (reportType === 'gantt') {
+      worksheet = createGanttWorksheet(sheetData, title);
+    } else {
+      worksheet = createWorksheetWithHeader(sheetData, title);
+    }
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
   }
 }
@@ -322,13 +324,10 @@ function createWorksheetWithHeader(data: any[], title: string): XLSX.WorkSheet {
   return worksheet;
 }
 
-// Enhanced Gantt Chart Export with Visual Timeline
+// Enhanced Gantt Chart Export with Visual Timeline - Matching Screenshot Structure
 function createGanttWorksheet(data: any[], title: string): WorkSheet {
-  // Group data by project and create hierarchical structure
-  const projects = data.filter(item => item.Type === 'PROJECT');
-  const milestones = data.filter(item => item.Type === 'MILESTONE');
-  
-  if (projects.length === 0) {
+  // Process data in the order it appears (PROJECT, MODULE, SUBTASK, spacing)
+  if (data.length === 0) {
     return createWorksheetWithHeader(data, title);
   }
 
@@ -346,76 +345,129 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
   const minDate = new Date(Math.min(...allDates.map(d => d.getTime())));
   const maxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
   
-  // Generate weekly columns
-  const weekColumns = generateWeekColumns(minDate, maxDate);
+  // Generate weekly columns with proper formatting
+  const weekColumns = generateWeekColumnsForGantt(minDate, maxDate);
   
-  // Create enhanced data structure
+  // Create the exact structure from your screenshot
   const ganttRows: any[] = [];
   
-  projects.forEach((project, projectIndex) => {
-    // Add project header with WBS numbering
-    const projectWBS = `${projectIndex + 1}`;
-    const projectRow = {
-      'WBS': projectWBS,
-      'Task Name': project.Name,
-      'Duration (Days)': project['Duration (Days)'],
-      'Start Date': project['Start Date'],
-      'End Date': project['End Date'],
-      'Progress (%)': project['Progress (%)'],
-      'Status': project.Status,
-      'Assigned To': project.Manager,
-      ...createTimelineData(project, weekColumns)
-    };
-    ganttRows.push(projectRow);
-    
-    // Add milestones for this project
-    const projectMilestones = milestones.filter(m => 
-      m.Name.includes('└─') && data.indexOf(m) > data.indexOf(project) && 
-      (projectIndex === projects.length - 1 || data.indexOf(m) < data.indexOf(projects[projectIndex + 1]))
-    );
-    
-    projectMilestones.forEach((milestone, milestoneIndex) => {
-      const milestoneWBS = `${projectWBS}.${milestoneIndex + 1}`;
-      const milestoneRow = {
-        'WBS': milestoneWBS,
-        'Task Name': milestone.Name.replace('  └─ ', ''),
-        'Duration (Days)': milestone['Duration (Days)'],
-        'Start Date': milestone['Start Date'],
-        'End Date': milestone['End Date'],
-        'Progress (%)': milestone['Progress (%)'],
-        'Status': milestone.Status,
-        'Assigned To': milestone.Manager,
-        ...createTimelineData(milestone, weekColumns)
+  // Process data in order, keeping track of module numbering
+  let currentModuleNumber = 0;
+  let currentSubtaskNumber = 0;
+  let lastModuleIndex = -1;
+  
+  data.forEach((item, index) => {
+    if (item.Type === 'PROJECT') {
+      // Add project header
+      const projectRow = {
+        'WBS': '1', // Projects are always 1
+        'TASK': item.Name,
+        'DEVELOPER': item.Manager || 'N/A',
+        'FUNCTIONAL CONSULTANT': 'N/A',
+        'START': item['Start Date'],
+        'END': item['End Date'],
+        'DAYS': item['Duration (Days)'],
+        '% DONE': item['Progress (%)'],
+        'WORK DAYS': calculateWorkDays(item['Start Date'], item['End Date']),
+        ...createTimelineDataForGantt(item, weekColumns)
       };
-      ganttRows.push(milestoneRow);
-    });
-    
-    // Add spacing row
-    ganttRows.push({
-      'WBS': '',
-      'Task Name': '',
-      'Duration (Days)': '',
-      'Start Date': '',
-      'End Date': '',
-      'Progress (%)': '',
-      'Status': '',
-      'Assigned To': '',
-      ...Object.fromEntries(weekColumns.map(week => [week.header, '']))
-    });
+      ganttRows.push(projectRow);
+    } else if (item.Type === 'MODULE') {
+      // Reset subtask numbering for new module
+      currentModuleNumber++;
+      currentSubtaskNumber = 0;
+      lastModuleIndex = index;
+      
+      const moduleRow = {
+        'WBS': currentModuleNumber.toString(),
+        'TASK': item.Name.toUpperCase(), // Make module names caps
+        'DEVELOPER': '', // Empty for modules
+        'FUNCTIONAL CONSULTANT': '', // Empty for modules
+        'START': item['Start Date'],
+        'END': item['End Date'],
+        'DAYS': item['Duration (Days)'],
+        '% DONE': item['Progress (%)'],
+        'WORK DAYS': calculateWorkDays(item['Start Date'], item['End Date']),
+        ...createTimelineDataForGantt(item, weekColumns)
+      };
+      ganttRows.push(moduleRow);
+    } else if (item.Type === 'SUBTASK') {
+      // Add subtask with proper numbering
+      currentSubtaskNumber++;
+      const subtaskRow = {
+        'WBS': `${currentModuleNumber}.${currentSubtaskNumber}`,
+        'TASK': item.Name,
+        'DEVELOPER': item.Developer || 'N/A',
+        'FUNCTIONAL CONSULTANT': item.Consultant || 'N/A',
+        'START': item['Start Date'],
+        'END': item['End Date'],
+        'DAYS': item['Duration (Days)'],
+        '% DONE': item['Progress (%)'],
+        'WORK DAYS': calculateWorkDays(item['Start Date'], item['End Date']),
+        ...createTimelineDataForGantt(item, weekColumns)
+      };
+      ganttRows.push(subtaskRow);
+    } else if (item.Type === '') {
+      // Add spacing row
+      ganttRows.push({
+        'WBS': '',
+        'TASK': '',
+        'DEVELOPER': '',
+        'FUNCTIONAL CONSULTANT': '',
+        'START': '',
+        'END': '',
+        'DAYS': '',
+        '% DONE': '',
+        'WORK DAYS': '',
+        ...Object.fromEntries(weekColumns.map(week => [week.header, '']))
+      });
+    }
   });
 
-  // Create worksheet
-  const worksheet: WorkSheet = XLSX.utils.json_to_sheet(ganttRows);
-  
-  // Add header rows
+  // Create header rows with timeline structure matching your screenshots
   const headerData = [
     [''], // Empty row
     [title], // Main title
     [`Generated on: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`], // Date
     [''], // Empty row
+    // Column headers row
+    ['WBS', 'TASK', 'DEVELOPER', 'FUNCTIONAL CONSULTANT', 'START', 'END', 'DAYS', '% DONE', 'WORK DAYS', ...weekColumns.map(week => week.header)],
+    // Week numbers row
+    ['', '', '', '', '', '', '', '', '', ...weekColumns.map((_, index) => `Week ${index + 1}`)],
+    // Days of week row
+    ['', '', '', '', '', '', '', '', '', ...weekColumns.map(week => 'M T W T F S S')],
+    // Day numbers row
+    ['', '', '', '', '', '', '', '', '', ...weekColumns.map(week => {
+      const days = [];
+      for (let i = 0; i < 7; i++) {
+        const day = new Date(week.startDate);
+        day.setDate(day.getDate() + i);
+        days.push(day.getDate());
+      }
+      return days.join(' ');
+    })]
   ];
   
-  XLSX.utils.sheet_add_aoa(worksheet, headerData, { origin: 'A1' });
+  // Add data rows after headers with status information
+  const dataRows = ganttRows.map((row, index) => [
+    row['WBS'] || '',
+    row['TASK'] || '',
+    row['DEVELOPER'] || '',
+    row['FUNCTIONAL CONSULTANT'] || '',
+    row['START'] || '',
+    row['END'] || '',
+    row['DAYS'] || '',
+    row['% DONE'] || '',
+    row['WORK DAYS'] || '',
+    ...weekColumns.map(week => row[week.header] || ''),
+    row['Status'] || '' // Add status as hidden column for styling reference
+  ]);
+  
+  // Combine headers and data
+  const allData = [...headerData, ...dataRows];
+  
+  // Create worksheet from combined data (no automatic headers)
+  const worksheet: WorkSheet = XLSX.utils.aoa_to_sheet(allData);
   
   // Style the worksheet
   const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
@@ -433,8 +485,8 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
     e: { r: 2, c: range.e.c }
   });
   
-  // Apply formatting to timeline cells
-  applyGanttFormatting(worksheet, range, weekColumns.length);
+  // Apply formatting to timeline cells with colored bars
+  applyGanttFormattingForScreenshot(worksheet, range, weekColumns.length);
   
   return worksheet;
 }
@@ -463,6 +515,101 @@ function generateWeekColumns(startDate: Date, endDate: Date): Array<{header: str
   }
   
   return weeks;
+}
+
+// New function for Gantt chart with proper week formatting
+function generateWeekColumnsForGantt(startDate: Date, endDate: Date): Array<{header: string, startDate: Date, endDate: Date}> {
+  const weeks: Array<{header: string, startDate: Date, endDate: Date}> = [];
+  const current = new Date(startDate);
+  
+  // Start from Monday of the week containing startDate
+  current.setDate(current.getDate() - current.getDay() + 1);
+  
+  while (current <= endDate) {
+    const weekStart = new Date(current);
+    const weekEnd = new Date(current);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    
+    // Format like in your screenshot: "1 Sep 2025"
+    const weekHeader = `${weekStart.getDate()} ${weekStart.toLocaleDateString('en-US', { month: 'short' })} ${weekStart.getFullYear()}`;
+    
+    weeks.push({
+      header: weekHeader,
+      startDate: weekStart,
+      endDate: weekEnd
+    });
+    
+    current.setDate(current.getDate() + 7);
+  }
+  return weeks;
+}
+
+// Calculate work days (excluding weekends)
+function calculateWorkDays(startDateStr: string, endDateStr: string): number {
+  if (!startDateStr || startDateStr === 'N/A' || !endDateStr || endDateStr === 'N/A') {
+    return 0;
+  }
+  
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+  let workDays = 0;
+  
+  const current = new Date(startDate);
+  while (current <= endDate) {
+    const dayOfWeek = current.getDay();
+    // Count only weekdays (Monday = 1 to Friday = 5)
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      workDays++;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+  
+  return workDays;
+}
+
+// Create timeline data for Gantt chart with visual bars
+function createTimelineDataForGantt(item: any, weekColumns: Array<{header: string, startDate: Date, endDate: Date}>): Record<string, string> {
+  const timelineData: Record<string, string> = {};
+  
+  if (!item['Start Date'] || item['Start Date'] === 'N/A' || !item['End Date'] || item['End Date'] === 'N/A') {
+    // Fill with empty values if no dates
+    weekColumns.forEach(week => {
+      timelineData[week.header] = '';
+    });
+    return timelineData;
+  }
+  
+  const itemStart = new Date(item['Start Date']);
+  const itemEnd = new Date(item['End Date']);
+  const progress = parseInt(item['Progress (%)']) || 0;
+  
+  weekColumns.forEach(week => {
+    // Check if this week overlaps with the item's duration
+    const hasOverlap = itemStart <= week.endDate && itemEnd >= week.startDate;
+    
+    if (hasOverlap) {
+      // Create visual bars using Unicode block characters based on status
+      const status = item['Status'] || '';
+      if (status === 'done' || status === 'finished') {
+        timelineData[week.header] = '█'; // Green for completed
+      } else if (status === 'client_review' || status === 'qa') {
+        timelineData[week.header] = '▓'; // Light green for review
+      } else if (status === 'in_progress' || status === 'ongoing' || status === 'fc_review') {
+        timelineData[week.header] = '▒'; // Blue for in progress
+      } else if (status === 'started') {
+        timelineData[week.header] = '░'; // Orange for started
+      } else if (status === 'overdue' || status === 'delayed') {
+        timelineData[week.header] = '█'; // Red for overdue (will be styled differently)
+      } else if (status === 'on_hold' || status === 'cancelled') {
+        timelineData[week.header] = '▓'; // Gray for on hold/cancelled
+      } else {
+        timelineData[week.header] = '░'; // Light gray for planned/not started
+      }
+    } else {
+      timelineData[week.header] = '';
+    }
+  });
+  return timelineData;
 }
 
 function createTimelineData(item: any, weekColumns: Array<{header: string, startDate: Date, endDate: Date}>): Record<string, string> {
@@ -595,6 +742,199 @@ function applyGanttFormatting(worksheet: WorkSheet, range: XLSX.Range, timelineC
     { width: 12 }, // Status
     { width: 20 }, // Assigned To
     ...Array(timelineColumns).fill({ width: 8 }) // Timeline columns
+  ];
+}
+
+// New formatting function for screenshot-style Gantt chart
+function applyGanttFormattingForScreenshot(worksheet: WorkSheet, range: XLSX.Range, timelineColumns: number): void {
+  // Style header cells
+  if (worksheet['A2']) {
+    worksheet['A2'].s = {
+      font: { bold: true, sz: 14, color: { rgb: '1F4E79' } },
+      alignment: { horizontal: 'center' },
+      fill: { fgColor: { rgb: 'F0F0F0' } }
+    };
+  }
+  
+  if (worksheet['A3']) {
+    worksheet['A3'].s = {
+      font: { italic: true, sz: 10 },
+      alignment: { horizontal: 'center' },
+      fill: { fgColor: { rgb: 'F8F8F8' } }
+    };
+  }
+  
+  // Style timeline header rows (rows 5-8, now 4-7 in 0-indexed)
+  for (let r = 4; r <= 7; r++) {
+    for (let c = 9; c <= range.e.c; c++) { // Timeline starts at column J (index 9)
+      const cellRef = XLSX.utils.encode_cell({ r, c });
+      if (worksheet[cellRef]) {
+        worksheet[cellRef].s = {
+          font: { bold: true, sz: 9, color: { rgb: '000000' } },
+          alignment: { horizontal: 'center', vertical: 'center' },
+          fill: { fgColor: { rgb: 'E6F3FF' } },
+          border: {
+            top: { style: 'thin', color: { rgb: '000000' } },
+            bottom: { style: 'thin', color: { rgb: '000000' } },
+            left: { style: 'thin', color: { rgb: '000000' } },
+            right: { style: 'thin', color: { rgb: '000000' } }
+          }
+        };
+      }
+    }
+  }
+  
+  // Style data column headers (row 5, now 4 in 0-indexed)
+  for (let c = 0; c <= 8; c++) { // Columns A through I
+    const cellRef = XLSX.utils.encode_cell({ r: 4, c });
+    if (worksheet[cellRef]) {
+      worksheet[cellRef].s = {
+        font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
+        alignment: { horizontal: 'center' },
+        fill: { fgColor: { rgb: '4472C4' } },
+        border: {
+          top: { style: 'thin', color: { rgb: '000000' } },
+          bottom: { style: 'thin', color: { rgb: '000000' } },
+          left: { style: 'thin', color: { rgb: '000000' } },
+          right: { style: 'thin', color: { rgb: '000000' } }
+        }
+      };
+    }
+  }
+  
+  // Style data rows and timeline columns
+  const timelineStartCol = 9; // Timeline starts at column J (index 9)
+  for (let r = 7; r <= range.e.r; r++) {
+    // Check if this is a module row (WBS column contains only numbers, no dots)
+    const wbsCell = worksheet[XLSX.utils.encode_cell({ r, c: 0 })]; // Column A (WBS)
+    const taskCell = worksheet[XLSX.utils.encode_cell({ r, c: 1 })]; // Column B (TASK)
+    const isModuleRow = wbsCell && wbsCell.v && !wbsCell.v.toString().includes('.') && wbsCell.v.toString() !== '';
+    
+    // Style data columns (A through I)
+    for (let c = 0; c <= 8; c++) {
+      const cellRef = XLSX.utils.encode_cell({ r, c });
+      const cell = worksheet[cellRef];
+      
+      if (cell && cell.v) {
+        if (isModuleRow && c === 1) { // TASK column for modules
+          cell.s = {
+            font: { bold: true, sz: 11, color: { rgb: '000000' } },
+            alignment: { horizontal: 'left' },
+            fill: { fgColor: { rgb: 'F0F0F0' } },
+            border: {
+              top: { style: 'thin', color: { rgb: 'CCCCCC' } },
+              bottom: { style: 'thin', color: { rgb: 'CCCCCC' } },
+              left: { style: 'thin', color: { rgb: 'CCCCCC' } },
+              right: { style: 'thin', color: { rgb: 'CCCCCC' } }
+            }
+          };
+        } else {
+          cell.s = {
+            font: { sz: 10, color: { rgb: '000000' } },
+            alignment: { horizontal: 'left' },
+            fill: { fgColor: { rgb: 'FFFFFF' } },
+            border: {
+              top: { style: 'thin', color: { rgb: 'CCCCCC' } },
+              bottom: { style: 'thin', color: { rgb: 'CCCCCC' } },
+              left: { style: 'thin', color: { rgb: 'CCCCCC' } },
+              right: { style: 'thin', color: { rgb: 'CCCCCC' } }
+            }
+          };
+        }
+      }
+    }
+    
+    // Style timeline columns with colored bars for Gantt chart
+    for (let c = timelineStartCol; c <= range.e.c; c++) {
+      const cellRef = XLSX.utils.encode_cell({ r, c });
+      const cell = worksheet[cellRef];
+      
+      if (cell && cell.v) {
+        const value = cell.v.toString();
+        let fillColor = 'FFFFFF'; // Default white
+        let fontColor = '000000';
+        
+        // Get the actual status from the hidden status column
+        const statusCell = worksheet[XLSX.utils.encode_cell({ r, c: range.e.c })]; // Last column has status
+        const actualStatus = statusCell ? statusCell.v.toString() : '';
+        
+        // Apply colors based on actual status using Excel's built-in color palette
+        if (actualStatus === 'done' || actualStatus === 'finished') {
+          fillColor = '00B050'; // Green for completed
+          fontColor = 'FFFFFF';
+          console.log(`Applying GREEN to cell [${r},${c}] with status "${actualStatus}"`);
+        } else if (actualStatus === 'client_review' || actualStatus === 'qa') {
+          fillColor = '92D050'; // Light green for review
+          fontColor = '000000';
+          console.log(`Applying LIGHT GREEN to cell [${r},${c}] with status "${actualStatus}"`);
+        } else if (actualStatus === 'in_progress' || actualStatus === 'ongoing' || actualStatus === 'fc_review') {
+          fillColor = '4472C4'; // Blue for in progress (Excel's built-in blue)
+          fontColor = 'FFFFFF';
+          console.log(`Applying BLUE to cell [${r},${c}] with status "${actualStatus}"`);
+        } else if (actualStatus === 'started') {
+          fillColor = 'FFC000'; // Orange for started
+          fontColor = '000000';
+          console.log(`Applying ORANGE to cell [${r},${c}] with status "${actualStatus}"`);
+        } else if (actualStatus === 'overdue' || actualStatus === 'delayed') {
+          fillColor = 'FF0000'; // Red for overdue
+          fontColor = 'FFFFFF';
+          console.log(`Applying RED to cell [${r},${c}] with status "${actualStatus}"`);
+        } else if (actualStatus === 'on_hold' || actualStatus === 'cancelled') {
+          fillColor = 'A5A5A5'; // Gray for on hold/cancelled
+          fontColor = 'FFFFFF';
+          console.log(`Applying GRAY to cell [${r},${c}] with status "${actualStatus}"`);
+        } else {
+          fillColor = 'D9D9D9'; // Light gray for planned/not started
+          fontColor = '000000';
+          console.log(`Applying LIGHT GRAY to cell [${r},${c}] with status "${actualStatus}"`);
+        }
+        
+        // Apply the styling with a more reliable approach
+        if (!cell.s) cell.s = {};
+        
+        // Set background color using pattern fill (more reliable)
+        cell.s.fill = { 
+          patternType: 'solid',
+          fgColor: { rgb: fillColor }
+        };
+        
+        // Set font color and style
+        cell.s.font = { 
+          color: { rgb: fontColor }, 
+          sz: 10, 
+          bold: true 
+        };
+        
+        // Set alignment
+        cell.s.alignment = { 
+          horizontal: 'center', 
+          vertical: 'center' 
+        };
+        
+        // Set borders
+        cell.s.border = {
+          top: { style: 'thin', color: { rgb: 'CCCCCC' } },
+          bottom: { style: 'thin', color: { rgb: 'CCCCCC' } },
+          left: { style: 'thin', color: { rgb: 'CCCCCC' } },
+          right: { style: 'thin', color: { rgb: 'CCCCCC' } }
+        };
+      }
+    }
+  }
+  
+  // Set column widths to match your screenshot
+  worksheet['!cols'] = [
+    { width: 8 },  // WBS
+    { width: 40 }, // TASK
+    { width: 15 }, // DEVELOPER
+    { width: 20 }, // FUNCTIONAL CONSULTANT
+    { width: 12 }, // START
+    { width: 12 }, // END
+    { width: 8 },  // DAYS
+    { width: 8 },  // % DONE
+    { width: 10 }, // WORK DAYS
+    ...Array(timelineColumns).fill({ width: 6 }), // Timeline columns
+    { width: 0, hidden: true } // Hide status column
   ];
 }
 

@@ -2,46 +2,53 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useScreenSize } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
-import { BarChart3, CheckCircle, AlertTriangle, Users, Eye } from "lucide-react";
+import { BarChart3, CheckCircle, AlertTriangle, Eye, DollarSign, Building, GraduationCap, Clock } from "lucide-react";
 import MilestoneDetailModal from "./milestone-detail-modal";
+import React from "react"; // Added missing import
+
+// Define the metrics interface for better type safety
+interface DashboardMetrics {
+  activeProjects?: number;
+  projectsOnSupport?: number;
+  completedModules?: number;
+  totalModules?: number;
+  milestonesCount?: number;
+  overdueModules?: number;
+  totalBudget?: number;
+  collectedAmount?: number;
+  pendingAmount?: number;
+  onSupportProjects?: number;
+}
 
 export default function MetricsCards() {
   const auth = useAuth() as any;
-  const { user } = auth;
+  const { user, getDashboardType, getSegment } = auth;
   const { isMobile, isTablet } = useScreenSize();
+  const dashboardType = getDashboardType();
+  const segment = getSegment();
 
-  const { data: metrics, isLoading } = useQuery<any>({
+  const { data: metrics, isLoading } = useQuery<DashboardMetrics>({
     queryKey: ['/api/dashboard/metrics'],
   });
 
-  // Additional real data to power the subtexts
-  const { data: teams = [] } = useQuery<any[]>({
-    queryKey: ['/api/teams'],
-  });
+  // Log metrics when they change
+  React.useEffect(() => {
+    if (metrics) {
+      console.log('Dashboard metrics loaded:', metrics);
+      console.log('Completed modules count:', metrics.completedModules);
+      console.log('Dashboard type:', dashboardType);
+    }
+  }, [metrics, dashboardType]);
 
-  const { data: tasks = [] } = useQuery<any[]>({
-    queryKey: ['/api/tasks'],
-  });
-
+  // Additional data needed for some calculations
   const { data: upcoming = [] } = useQuery<any[]>({
     queryKey: ['/api/dashboard/upcoming-tasks'],
   });
 
-  // Get projects data to calculate onSupportProjects
+  // Get projects data for segment leaders to calculate segment-specific details
   const { data: projects = [] } = useQuery<any[]>({
     queryKey: ['/api/projects'],
-  });
-
-  // For employees, get their team count
-  const { data: employeeTeamsCount } = useQuery<{ count: number }>({
-    queryKey: ['/api/dashboard/teams-count'],
-    enabled: user?.role === 'employee',
-  });
-
-  // For admin/manager, get total users count
-  const { data: users = [] } = useQuery<any[]>({
-    queryKey: ['/api/users'],
-    enabled: user?.role === 'admin' || user?.role === 'manager',
+    enabled: dashboardType?.startsWith('segment_leader'),
   });
 
   if (isLoading) {
@@ -69,87 +76,172 @@ export default function MetricsCards() {
     );
   }
 
-  const daysAgo = (n: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() - n);
-    return d;
-  };
-
-  const completedThisWeek = Array.isArray(tasks)
-    ? tasks.filter((t: any) => t.status === 'done' && t.completedAt && new Date(t.completedAt) >= daysAgo(7)).length
-    : 0;
-
-  const teamsCount = Array.isArray(teams) ? teams.length : 0;
   const upcomingCount = Array.isArray(upcoming) ? upcoming.length : 0;
   
-  // Calculate onSupportProjects locally
-  const onSupportProjects = Array.isArray(projects) 
-    ? projects.filter((p: any) => p.status === 'on_support').length 
-    : 0;
-  
-  // Get total staff members for admin/manager, teams count for employee
-  const staffOrTeamsCount = user?.role === 'employee' 
-    ? (employeeTeamsCount?.count || 0)
-    : (Array.isArray(users) ? users.length : 0);
+  // Generate role-based cards
+  const getCardsForRole = () => {
+    const baseCards = {
+      activeProjects: {
+        title: "Active Projects",
+        value: metrics?.activeProjects || 0,
+        icon: BarChart3,
+        color: "bg-primary",
+        change: "",
+        changeLabel: "",
+        detail: `${(metrics?.activeProjects || 0) + (metrics?.projectsOnSupport || 0)} total projects`,
+        detailColor: "text-blue-600",
+        testId: "card-active-projects"
+      },
+      completedModules: {
+        title: dashboardType === 'project_manager' ? "Modules Completed" : "Milestones Completed",
+        value: metrics?.completedModules || 0,
+        icon: CheckCircle,
+        color: "bg-success",
+        change: "",
+        changeLabel: "",
+        detail: dashboardType === 'project_manager' 
+          ? `${metrics?.totalModules || 0} total modules` 
+          : `${metrics?.milestonesCount || 0} total milestones`,
+        detailColor: "text-green-600",
+        testId: "card-completed-tasks",
+        hasModal: true,
+        modalType: "completed"
+      },
+      overdueModules: {
+        title: dashboardType === 'project_manager' ? "Overdue Modules" : "Overdue Milestones",
+        value: metrics?.overdueModules || 0,
+        icon: AlertTriangle,
+        color: "bg-error",
+        change: `${metrics?.overdueModules || 0} overdue`,
+        changeLabel: "",
+        detail: "",
+        detailColor: "text-red-600",
+        isNegative: true,
+        testId: "card-overdue-tasks",
+        hasModal: true,
+        modalType: "overdue"
+      },
+      projectsOnSupport: {
+        title: "Projects on SLA",
+        value: metrics?.projectsOnSupport || 0,
+        icon: Eye,
+        color: "bg-success",
+        change: "",
+        changeLabel: "",
+        detail: `Success indicator - projects delivered`,
+        detailColor: "text-green-600",
+        testId: "card-projects-on-support"
+      },
+      onSupportProjects: {
+        title: "On SLA Projects",
+        value: metrics?.onSupportProjects || 0,
+        icon: Eye,
+        color: "bg-info",
+        change: "",
+        changeLabel: "",
+        detail: `${metrics?.activeProjects || 0} active projects`,
+        detailColor: "text-indigo-600",
+        testId: "card-on-support-projects"
+      },
+      totalBudget: {
+        title: "Total Contract Value",
+        value: `KSh ${(metrics?.totalBudget || 0).toLocaleString()}`,
+        icon: DollarSign,
+        color: "bg-success",
+        change: "",
+        changeLabel: "",
+        detail: "All active projects",
+        detailColor: "text-green-600",
+        testId: "card-total-budget"
+      },
+      collectedAmount: {
+        title: "Amount Collected",
+        value: `KSh ${(metrics?.collectedAmount || 0).toLocaleString()}`,
+        icon: CheckCircle,
+        color: "bg-success",
+        change: `${((metrics?.collectedAmount || 0) / (metrics?.totalBudget || 1) * 100).toFixed(1)}% of total`,
+        changeLabel: "",
+        detail: "Payments received",
+        detailColor: "text-green-600",
+        testId: "card-collected-amount"
+      },
+      pendingAmount: {
+        title: "Pending Collections",
+        value: `KSh ${(metrics?.pendingAmount || 0).toLocaleString()}`,
+        icon: Clock,
+        color: "bg-warning",
+        change: "",
+        changeLabel: "",
+        detail: "Outstanding invoices",
+        detailColor: "text-orange-600",
+        testId: "card-pending-amount"
+      }
+    };
 
-  const cards = [
-    {
-      title: "Active Projects",
-      value: projects.filter((p: any) => p.status === 'active').length,
-      icon: BarChart3,
-      color: "bg-primary",
-      change: "",
-      changeLabel: "",
-      detail: `${projects.length} total projects`,
-      detailColor: "text-blue-600",
-      testId: "card-active-projects"
-    },
-    {
-      title: "Milestones Completed",
-      value: metrics?.completedTasks || 0,
-      icon: CheckCircle,
-      color: "bg-success",
-      change: `+${completedThisWeek}`,
-      changeLabel: "this week",
-      detail: `${tasks.length} total milestones`,
-      detailColor: "text-green-600",
-      testId: "card-completed-tasks",
-      hasModal: true,
-      modalType: "completed"
-    },
-    {
-      title: "Overdue Milestones",
-      value: metrics?.overdueTasks || 0,
-      icon: AlertTriangle,
-      color: "bg-error",
-      change: `${metrics?.overdueTasks || 0} overdue · ${upcomingCount} due soon`,
-      changeLabel: "",
-      detail: "",
-      detailColor: "text-red-600",
-      isNegative: true,
-      testId: "card-overdue-tasks",
-      hasModal: true,
-      modalType: "overdue"
-    },
-    {
-      title: "On SLA Projects",
-      value: onSupportProjects,
-      icon: Eye,
-      color: "bg-info",
-      change: "",
-      changeLabel: "",
-      detail: `${projects.filter((p: any) => p.status === 'active').length} active projects`,
-      detailColor: "text-indigo-600",
-      testId: "card-on-support-projects"
+    // Role-specific card combinations
+    switch (dashboardType) {
+      case 'project_manager':
+        return [
+          baseCards.activeProjects,
+          baseCards.completedModules,
+          baseCards.overdueModules,
+          baseCards.projectsOnSupport
+        ];
+
+      case 'finance_head':
+        return [
+          baseCards.totalBudget,
+          baseCards.collectedAmount,
+          baseCards.pendingAmount,
+          baseCards.activeProjects
+        ];
+
+      case 'segment_leader_academic':
+      case 'segment_leader_parastals':
+      case 'segment_leader_private':
+        const segmentName = segment || dashboardType.split('_')[2];
+        const segmentIcon = segmentName === 'academic' ? GraduationCap : 
+                           segmentName === 'parastals' ? Building : 
+                           DollarSign;
+        
+        const segmentProjects = projects.filter((p: any) => p.segment === segmentName);
+        
+        return [
+          {
+            ...baseCards.activeProjects,
+            title: `${segmentName?.charAt(0).toUpperCase()}${segmentName?.slice(1)} Projects`,
+            icon: segmentIcon,
+            detail: `${segmentProjects.length} total in ${segmentName}`,
+          },
+          baseCards.completedModules,
+          baseCards.overdueModules,
+          {
+            ...baseCards.totalBudget,
+            title: "Segment Budget",
+          }
+        ];
+
+      default:
+        return [
+          baseCards.activeProjects,
+          baseCards.completedModules,
+          baseCards.overdueModules,
+          baseCards.onSupportProjects
+        ];
     }
-  ];
+  };
+
+  const cards = getCardsForRole();
 
   const renderIcon = (icon: any, color: string) => {
     if (icon === BarChart3) return <BarChart3 className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === CheckCircle) return <CheckCircle className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === AlertTriangle) return <AlertTriangle className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
-    if (icon === Users) return <Users className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === Eye) return <Eye className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === DollarSign) return <DollarSign className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === Building) return <Building className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === GraduationCap) return <GraduationCap className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === Clock) return <Clock className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     return null;
   };
 

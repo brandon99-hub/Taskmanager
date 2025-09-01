@@ -15,13 +15,28 @@ import { useToast } from "@/hooks/use-toast";
 
 export default function Navigation() {
   const auth = useAuth() as any;
-  const { user } = auth;
+  const { user, getDashboardType, isAdminRole } = auth;
   const [location] = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const { isMobile, isTablet } = useScreenSize();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Get the user's dashboard role display name
+  const getDashboardRoleDisplayName = () => {
+    const dashboardType = getDashboardType();
+    switch (dashboardType) {
+      case 'project_manager': return 'Project Manager';
+      case 'finance_head': return 'Finance Head';
+      case 'segment_leader_academic': return 'Academic Leader';
+      case 'segment_leader_parastals': return 'Parastatal Leader';
+      case 'segment_leader_private': return 'Private Leader';
+      case 'admin': return 'Admin';
+      case 'employee': return 'Employee';
+      default: return user?.role || 'Employee';
+    }
+  };
 
   const { data: notifications = [] } = useQuery<any[]>({
     queryKey: ['/api/notifications'],
@@ -144,7 +159,7 @@ export default function Navigation() {
   const navigationItems = [
     { path: "/", label: "Dashboard", icon: BarChart3 },
     { path: "/projects", label: "Projects", icon: FolderOpen },
-    { path: "/tasks", label: "Milestones", icon: CheckSquare },
+    { path: "/tasks", label: getDashboardType() === 'project_manager' ? "Modules" : "Milestones", icon: CheckSquare },
     ...(user?.role !== 'employee' ? [{ path: "/reports", label: "Reports", icon: FileText }] : []),
     { path: "/team", label: "Team", icon: Users },
   ];
@@ -355,7 +370,7 @@ export default function Navigation() {
                   }
                 </p>
                 <Badge variant="outline" className="text-xs" data-testid="badge-user-role">
-                  {user?.role || 'Employee'}
+                  {getDashboardRoleDisplayName()}
                 </Badge>
               </div>
               
@@ -383,7 +398,7 @@ export default function Navigation() {
                       }
                     </p>
                     <Badge variant="outline" className="text-xs mt-1" data-testid="mobile-user-role">
-                      {user?.role || 'Employee'}
+                      {getDashboardRoleDisplayName()}
                     </Badge>
                   </div>
                   <Link href="/home">
@@ -393,7 +408,7 @@ export default function Navigation() {
                     </DropdownMenuItem>
                   </Link>
                   {/* Executive Dashboard - Only for Admin and Manager */}
-                  {['admin', 'manager'].includes(user?.role) && (
+                  {isAdminRole() && (
                     <>
                       <Link href="/executive-dashboard">
                         <DropdownMenuItem data-testid="menu-executive-dashboard">

@@ -10,7 +10,6 @@ import {
   pgEnum,
   inet,
 } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Security event types enum
@@ -154,26 +153,50 @@ export const userSecuritySettings = pgTable(
 );
 
 // Insert schemas for validation
-export const insertSecurityEventSchema = createInsertSchema(securityEvents).omit({
-  id: true,
-  createdAt: true,
+export const insertSecurityEventSchema = z.object({
+  eventType: z.string().min(1, "Event type is required"),
+  severity: z.enum(["low", "medium", "high", "critical"]).default("medium"),
+  description: z.string().min(1, "Description is required"),
+  userId: z.string().optional(),
+  ipAddress: z.string().optional(),
+  userAgent: z.string().optional(),
+  metadata: z.record(z.any()).optional(),
 });
 
-export const insertFailedLoginAttemptSchema = createInsertSchema(failedLoginAttempts).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
+export const insertFailedLoginAttemptSchema = z.object({
+  identifier: z.string().min(1, "Identifier is required"),
+  ipAddress: z.string().optional(),
+  userAgent: z.string().optional(),
+  attemptCount: z.string().default("0"),
+  lastAttemptAt: z.date().optional(),
+  lockoutUntil: z.date().optional(),
+  updatedAt: z.date().optional(),
 });
 
-export const insertUserSessionSchema = createInsertSchema(userSessions).omit({
-  id: true,
-  createdAt: true,
+export const insertUserSessionSchema = z.object({
+  userId: z.string().min(1, "User ID is required"),
+  sessionId: z.string().min(1, "Session ID is required"),
+  deviceFingerprint: z.string().optional(),
+  ipAddress: z.string().optional(),
+  userAgent: z.string().optional(),
+  location: z.string().optional(),
+  isActive: z.boolean().default(true),
+  lastActivityAt: z.date().optional(),
+  expiresAt: z.date().optional(),
 });
 
-export const insertUserSecuritySettingsSchema = createInsertSchema(userSecuritySettings).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
+export const insertUserSecuritySettingsSchema = z.object({
+  userId: z.string().min(1, "User ID is required"),
+  failedLoginAttempts: z.string().default("0"),
+  accountLockedUntil: z.date().optional(),
+  lastPasswordChange: z.date().optional(),
+  passwordHistory: z.record(z.any()).optional(),
+  securityQuestions: z.record(z.any()).optional(),
+  loginNotifications: z.boolean().default(true),
+  suspiciousActivityAlerts: z.boolean().default(true),
+  sessionTimeout: z.string().default("3600"),
+  allowedIpRanges: z.record(z.any()).optional(),
+  updatedAt: z.date().optional(),
 });
 
 // Types

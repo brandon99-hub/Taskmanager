@@ -10,7 +10,8 @@
     "start": "tsx server/index.ts",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "create-admin": "node scripts/create-admin.js"
+    "setup:admin": "node scripts/create-admin.js",
+    "fix:passwords": "node scripts/hash-existing-passwords.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

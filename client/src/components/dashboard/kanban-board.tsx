@@ -15,43 +15,60 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 import { useLocation } from "wouter";
 import { useState } from "react";
 
-const statusColumns = [
-  { 
-    id: 'overdue', 
-    title: 'Overdue', 
-    mobileTitle: 'Overdue',
-    color: 'bg-red-50', 
-    icon: AlertTriangle 
-  },
-  { 
-    id: 'highPriorityTodo', 
-    title: 'High Priority Milestones', 
-    mobileTitle: 'Priority',
-    color: 'bg-orange-50', 
-    icon: Zap 
-  },
-  { 
-    id: 'review', 
-    title: 'Client Review', 
-    mobileTitle: 'Review',
-    color: 'bg-blue-50', 
-    icon: Eye 
-  },
-  { 
-    id: 'recentlyDone', 
-    title: 'Recently Done', 
-    mobileTitle: 'Done',
-    color: 'bg-green-50', 
-    icon: CheckCircle 
-  }
-];
-
 export default function KanbanBoard() {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, getDashboardType, getSegment } = useAuth();
   const currentUser = user as any;
+  const dashboardType = getDashboardType();
+  const segment = getSegment();
   const [, setLocation] = useLocation();
   const { isMobile, isTablet } = useScreenSize();
+
+  // Get terminology based on dashboard type
+  const getTaskTerminology = () => {
+    switch (dashboardType) {
+      case 'project_manager':
+        return { singular: 'module', plural: 'modules', title: 'Modules' };
+      case 'finance_head':
+        return { singular: 'milestone', plural: 'milestones', title: 'Milestones' };
+      default:
+        return { singular: 'task', plural: 'tasks', title: 'Tasks' };
+    }
+  };
+
+  const taskTerms = getTaskTerminology();
+
+  // Define status columns with dynamic terminology
+  const statusColumns = [
+    { 
+      id: 'overdue', 
+      title: 'Overdue', 
+      mobileTitle: 'Overdue',
+      color: 'bg-red-50', 
+      icon: AlertTriangle 
+    },
+    { 
+      id: 'highPriorityTodo', 
+      title: `High Priority ${taskTerms.title}`, 
+      mobileTitle: 'Priority',
+      color: 'bg-orange-50', 
+      icon: Zap 
+    },
+    { 
+      id: 'review', 
+      title: 'Client Review', 
+      mobileTitle: 'Review',
+      color: 'bg-blue-50', 
+      icon: Eye 
+    },
+    { 
+      id: 'recentlyDone', 
+      title: 'Recently Done', 
+      mobileTitle: 'Done',
+      color: 'bg-green-50', 
+      icon: CheckCircle 
+    }
+  ];
 
   // Pagination state for each column
   const [currentPages, setCurrentPages] = useState<Record<string, number>>({
@@ -87,7 +104,7 @@ export default function KanbanBoard() {
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       toast({
         title: "Success",
-        description: "Milestone status updated successfully",
+        description: `${taskTerms.title.slice(0, -1)} status updated successfully`,
       });
     },
     onError: (error) => {
@@ -104,7 +121,7 @@ export default function KanbanBoard() {
       }
       toast({
         title: "Error",
-        description: "Failed to update task status",
+        description: `Failed to update ${taskTerms.singular} status`,
         variant: "destructive",
       });
     },
@@ -136,10 +153,22 @@ export default function KanbanBoard() {
 
   // Get board title based on user role
   const getBoardTitle = () => {
-    if (currentUser?.role === 'employee') {
-      return 'My Critical Milestones';
+    switch (dashboardType) {
+      case 'project_manager':
+        return 'Project Critical Modules';
+      case 'finance_head':
+        return 'Financial Critical Milestones';
+      case 'segment_leader_academic':
+        return 'Academic Sector Modules';
+      case 'segment_leader_parastals':
+        return 'Parastatal Sector Modules';
+      case 'segment_leader_private':
+        return 'Private Sector Modules';
+      case 'employee':
+        return 'My Critical Tasks';
+      default:
+        return 'Critical Task Board';
     }
-    return 'Critical Milestone Board';
   };
 
   // Pagination functions
@@ -201,7 +230,7 @@ export default function KanbanBoard() {
             <CardTitle className="text-lg" data-testid="text-kanban-title">{getBoardTitle()}</CardTitle>
             {currentUser?.role === 'employee' && (
               <Badge variant="outline" className="text-xs">
-                {Object.values(tasksByStatus).reduce((total, tasks) => total + tasks.length, 0)} milestones
+                {Object.values(tasksByStatus).reduce((total, tasks) => total + tasks.length, 0)} {taskTerms.plural}
               </Badge>
             )}
           </div>
@@ -218,7 +247,7 @@ export default function KanbanBoard() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                 <p>Filter and search all milestones</p>
+                 <p>Filter and search all {taskTerms.plural}</p>
               </TooltipContent>
             </Tooltip>
             
@@ -234,7 +263,7 @@ export default function KanbanBoard() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                 <p>View all milestones</p>
+                 <p>View all {taskTerms.plural}</p>
               </TooltipContent>
             </Tooltip>
           </div>
@@ -434,7 +463,7 @@ export default function KanbanBoard() {
                   
                   {paginatedTasks.length === 0 && (
                     <div className="text-center py-8 text-gray-500" data-testid={`text-empty-column-${column.id}`}>
-                      No {column.title.toLowerCase()} milestones
+                      No {column.title.toLowerCase()} {taskTerms.plural}
                     </div>
                   )}
                 </div>

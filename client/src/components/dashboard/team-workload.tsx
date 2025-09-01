@@ -47,22 +47,20 @@ export default function TeamWorkload() {
 
   const getWorkloadStatus = (percentage: number, totalTasks: number) => {
     // For employees, consider both completion rate and task count
-    if (totalTasks <= 2) {
+    if (totalTasks <= 10) {
       // Low task count - focus on completion rate
       if (percentage >= 80) return { label: 'Excellent', variant: 'default' as const };
       if (percentage >= 60) return { label: 'Good', variant: 'secondary' as const };
       return { label: 'Normal', variant: 'outline' as const };
-    } else if (totalTasks <= 4) {
-      // Medium task count
-      if (percentage >= 90) return { label: 'Overloaded', variant: 'destructive' as const };
-      if (percentage >= 75) return { label: 'High', variant: 'secondary' as const };
-      if (percentage >= 50) return { label: 'Normal', variant: 'outline' as const };
-      return { label: 'Light', variant: 'outline' as const };
-    } else {
-      // High task count
+    } else if (totalTasks <= 30) {
+      // Medium task count - minimum "High" workload
       if (percentage >= 80) return { label: 'Overloaded', variant: 'destructive' as const };
       if (percentage >= 60) return { label: 'High', variant: 'secondary' as const };
-      return { label: 'Normal', variant: 'outline' as const };
+      return { label: 'High', variant: 'secondary' as const }; // Minimum high for 11-30 tasks
+    } else {
+      // High task count (31+) - minimum "Overloaded" workload
+      if (percentage >= 60) return { label: 'Overloaded', variant: 'destructive' as const };
+      return { label: 'Overloaded', variant: 'destructive' as const }; // Minimum overloaded for 31+ tasks
     }
   };
 

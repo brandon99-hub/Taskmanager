@@ -115,10 +115,19 @@ export default function MilestonesTable({
     return `Due in ${days} days`;
   };
 
-  const totalFeeAmount = milestones.reduce((sum, milestone) => sum + (milestone.feeAmount || 0), 0);
+  const totalFeeAmount = milestones.reduce((sum, milestone) => {
+    const fee = milestone.feeAmount || 0;
+    // Ensure we're working with valid numbers
+    return sum + (typeof fee === 'number' ? fee : parseFloat(fee) || 0);
+  }, 0);
+  
   const paidAmount = milestones
     .filter(m => m.billingStatus === 'paid')
-    .reduce((sum, milestone) => sum + (milestone.feeAmount || 0), 0);
+    .reduce((sum, milestone) => {
+      const fee = milestone.feeAmount || 0;
+      // Ensure we're working with valid numbers
+      return sum + (typeof fee === 'number' ? fee : parseFloat(fee) || 0);
+    }, 0);
   const pendingAmount = totalFeeAmount - paidAmount;
 
   // Filter milestones based on search and status

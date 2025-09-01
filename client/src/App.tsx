@@ -19,7 +19,7 @@ import ExecutiveDashboard from "@/pages/executive-dashboard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 function Router() {
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const { isAuthenticated, isLoading, user, isAdminRole } = useAuth();
 
   if (isLoading) {
     return (
@@ -45,7 +45,7 @@ function Router() {
           <Route path="/projects" component={Projects} />
           <Route path="/projects/:id" component={ProjectDetail} />
           <Route path="/tasks" component={Tasks} />
-          {isAuthenticated && (user as any)?.role !== 'employee' && (
+          {isAuthenticated && isAdminRole() && (
             <>
               <Route path="/reports" component={Reports} />
               <Route path="/executive-dashboard" component={ExecutiveDashboard} />

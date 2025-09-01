@@ -1,7 +1,7 @@
-import nodemailer from 'nodemailer';
-import handlebars from 'handlebars';
+import * as nodemailer from 'nodemailer';
+import * as handlebars from 'handlebars';
 import { readFile } from 'fs/promises';
-import path from 'path';
+import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 // Use process.cwd() as fallback for CommonJS compatibility

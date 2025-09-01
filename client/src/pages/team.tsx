@@ -52,20 +52,22 @@ export default function Team() {
   const [isTeamDetailOpen, setIsTeamDetailOpen] = useState(false);
   const [isSegmentLeaderModalOpen, setIsSegmentLeaderModalOpen] = useState(false);
   
-  // Segment leader form state
-  const [segmentLeaderData, setSegmentLeaderData] = useState({
+  // Segment leader form state (now admin role management state)
+  const [adminRoleData, setAdminRoleData] = useState({
     academic: { name: 'Academic Leader', email: 'academic.leader@company.com' },
     parastals: { name: 'Parastals Leader', email: 'parastals.leader@company.com' },
     private: { name: 'Private Leader', email: 'private.leader@company.com' },
+    projectManager: { name: 'Project Manager', email: 'project.manager@company.com' },
+    financeHead: { name: 'Finance Head', email: 'finance.head@company.com' },
     financeEmail: 'finance@company.com',
     accountManagerEmail: 'accountmanager@company.com'
   });
 
   // Debug log for initial state
-  console.log('Initial segment leader data:', segmentLeaderData);
+  console.log('Initial admin role data:', adminRoleData);
   
-  // Loading state for segment leader save
-  const [isSavingSegmentLeaders, setIsSavingSegmentLeaders] = useState(false);
+  // Loading state for admin role save
+  const [isSavingAdminRoles, setIsSavingAdminRoles] = useState(false);
   
   // Fetch finance and account manager emails for auto-fill
   const { data: systemEmails } = useQuery({
@@ -81,6 +83,64 @@ export default function Team() {
     },
     enabled: !!isAuthenticated,
   });
+  
+  // Fetch admin roles data when modal opens
+  const { data: adminRolesData } = useQuery({
+    queryKey: ['/api/admin/roles'],
+    queryFn: async () => {
+      const res = await fetch('/api/admin/roles', { 
+        credentials: 'include' 
+      });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!isAuthenticated && isSegmentLeaderModalOpen,
+  });
+
+  // Update form state when data is loaded
+  useEffect(() => {
+    if (systemEmails) {
+      setAdminRoleData(prev => ({
+        ...prev,
+        financeEmail: systemEmails.financeEmail || prev.financeEmail,
+        accountManagerEmail: systemEmails.accountManagerEmail || prev.accountManagerEmail,
+      }));
+    }
+  }, [systemEmails]);
+
+  // Update form state when admin roles data is loaded
+  useEffect(() => {
+    if (adminRolesData && isSegmentLeaderModalOpen) {
+      // Extract segment leaders from admin roles data
+      const segmentLeaders = adminRolesData.filter((role: any) => role.roleType === 'segment_leader');
+      const projectManager = adminRolesData.find((role: any) => role.roleType === 'project_manager');
+      const financeHead = adminRolesData.find((role: any) => role.roleType === 'finance_head');
+
+      setAdminRoleData(prev => ({
+        ...prev,
+        academic: segmentLeaders.find((s: any) => s.segment === 'academic')?.user ? {
+          name: `${segmentLeaders.find((s: any) => s.segment === 'academic')?.user.firstName || ''} ${segmentLeaders.find((s: any) => s.segment === 'academic')?.user.lastName || ''}`.trim(),
+          email: segmentLeaders.find((s: any) => s.segment === 'academic')?.user.email || ''
+        } : prev.academic,
+        parastals: segmentLeaders.find((s: any) => s.segment === 'parastals')?.user ? {
+          name: `${segmentLeaders.find((s: any) => s.segment === 'parastals')?.user.firstName || ''} ${segmentLeaders.find((s: any) => s.segment === 'parastals')?.user.lastName || ''}`.trim(),
+          email: segmentLeaders.find((s: any) => s.segment === 'parastals')?.user.email || ''
+        } : prev.parastals,
+        private: segmentLeaders.find((s: any) => s.segment === 'private')?.user ? {
+          name: `${segmentLeaders.find((s: any) => s.segment === 'private')?.user.firstName || ''} ${segmentLeaders.find((s: any) => s.segment === 'private')?.user.lastName || ''}`.trim(),
+          email: segmentLeaders.find((s: any) => s.segment === 'private')?.user.email || ''
+        } : prev.private,
+        projectManager: projectManager?.user ? {
+          name: `${projectManager.user.firstName || ''} ${projectManager.user.lastName || ''}`.trim(),
+          email: projectManager.user.email || ''
+        } : prev.projectManager,
+        financeHead: financeHead?.user ? {
+          name: `${financeHead.user.firstName || ''} ${financeHead.user.lastName || ''}`.trim(),
+          email: financeHead.user.email || ''
+        } : prev.financeHead,
+      }));
+    }
+  }, [adminRolesData, isSegmentLeaderModalOpen]);
   
   // Search states for each role in team composition
   const [bcDevSearch, setBcDevSearch] = useState("");
@@ -164,45 +224,199 @@ export default function Team() {
     setIsTeamDetailOpen(true);
   };
 
-  const handleSaveSegmentLeaders = async () => {
-    setIsSavingSegmentLeaders(true);
+  const handleSaveAdminRoles = async () => {
+    setIsSavingAdminRoles(true);
     try {
-      // Save segment leaders to database
-      const response = await fetch('/api/segment-leaders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      // Validate email addresses first
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const validationErrors: string[] = [];
+
+      const rolesConfig = [
+        {
+          email: adminRoleData.projectManager.email,
+          name: adminRoleData.projectManager.name,
+          firstName: adminRoleData.projectManager.name.split(' ')[0] || 'Project',
+          lastName: adminRoleData.projectManager.name.split(' ').slice(1).join(' ') || 'Manager',
+          role: 'project_manager',
+          displayName: 'Project Manager'
         },
-        credentials: 'include',
-        body: JSON.stringify(segmentLeaderData)
+        {
+          email: adminRoleData.financeHead.email,
+          name: adminRoleData.financeHead.name,
+          firstName: adminRoleData.financeHead.name.split(' ')[0] || 'Finance',
+          lastName: adminRoleData.financeHead.name.split(' ').slice(1).join(' ') || 'Head',
+          role: 'finance_head',
+          displayName: 'Finance Head'
+        },
+        {
+          email: adminRoleData.academic.email,
+          name: adminRoleData.academic.name,
+          firstName: adminRoleData.academic.name.split(' ')[0] || 'Academic',
+          lastName: adminRoleData.academic.name.split(' ').slice(1).join(' ') || 'Leader',
+          role: 'segment_leader',
+          segment: 'academic',
+          displayName: 'Academic Segment Leader'
+        },
+        {
+          email: adminRoleData.parastals.email,
+          name: adminRoleData.parastals.name,
+          firstName: adminRoleData.parastals.name.split(' ')[0] || 'Parastals',
+          lastName: adminRoleData.parastals.name.split(' ').slice(1).join(' ') || 'Leader',
+          role: 'segment_leader',
+          segment: 'parastals',
+          displayName: 'Parastals Segment Leader'
+        },
+        {
+          email: adminRoleData.private.email,
+          name: adminRoleData.private.name,
+          firstName: adminRoleData.private.name.split(' ')[0] || 'Private',
+          lastName: adminRoleData.private.name.split(' ').slice(1).join(' ') || 'Leader',
+          role: 'segment_leader',
+          segment: 'private',
+          displayName: 'Private Segment Leader'
+        }
+      ];
+
+      // Validate emails and names
+      rolesConfig.forEach(config => {
+        // Skip validation for placeholder emails
+        if (config.email.includes('@company.com')) {
+          return;
+        }
+        
+        if (config.email && !emailRegex.test(config.email)) {
+          validationErrors.push(`${config.displayName}: Invalid email format`);
+        }
+        
+        if (config.email && (!config.name || config.name.trim().length < 2)) {
+          validationErrors.push(`${config.displayName}: Name is required when email is provided`);
+        }
       });
 
-      if (response.ok) {
+      // If validation fails, show errors and don't close modal
+      if (validationErrors.length > 0) {
+        toast({
+          title: "Validation Error",
+          description: validationErrors.join('; '),
+          variant: "destructive",
+        });
+        return; // Don't close modal, don't proceed
+      }
+
+      // Track results for user feedback
+      let successCount = 0;
+      let errorCount = 0;
+      const errors: string[] = [];
+
+      // Create users with admin roles - this will trigger credential emails
+      for (const roleConfig of rolesConfig) {
+        try {
+          // Skip if email is empty or default placeholder
+          if (!roleConfig.email || 
+              roleConfig.email.includes('@company.com') || 
+              roleConfig.email.includes('@') === false) {
+            continue;
+          }
+
+          const userResponse = await fetch('/api/admin/users', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+              email: roleConfig.email,
+              firstName: roleConfig.firstName,
+              lastName: roleConfig.lastName,
+              role: roleConfig.role,
+              segment: roleConfig.segment
+            })
+          });
+
+          if (userResponse.ok) {
+            successCount++;
+            console.log(`Successfully created/updated user for ${roleConfig.displayName}:`, roleConfig.email);
+          } else {
+            const errorData = await userResponse.json();
+            // If user already exists, that's fine - they might have been created before
+            if (errorData.message && errorData.message.includes('already exists')) {
+              console.log(`User already exists for ${roleConfig.displayName}:`, roleConfig.email);
+              successCount++;
+            } else {
+              errorCount++;
+              errors.push(`${roleConfig.displayName}: ${errorData.message || 'Unknown error'}`);
+            }
+          }
+        } catch (error) {
+          errorCount++;
+          errors.push(`${roleConfig.displayName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          console.error(`Error creating user for ${roleConfig.displayName}:`, error);
+        }
+      }
+
+      // Save segment leaders to database (backward compatibility)
+      try {
+        const segmentResponse = await fetch('/api/segment-leaders', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            academic: adminRoleData.academic,
+            parastals: adminRoleData.parastals,
+            private: adminRoleData.private,
+            financeEmail: adminRoleData.financeEmail,
+            accountManagerEmail: adminRoleData.accountManagerEmail
+          })
+        });
+
+        if (!segmentResponse.ok) {
+          throw new Error('Failed to save segment leaders');
+        }
+      } catch (error) {
+        console.error('Error saving segment leaders:', error);
+        errors.push('Failed to save segment leader configuration');
+        errorCount++;
+      }
+
+      // Show appropriate feedback
+      if (errorCount === 0) {
         toast({
           title: "Success",
-          description: "Segment leaders updated successfully",
+          description: `Admin roles updated successfully. ${successCount} users processed and credential emails sent.`,
         });
-        setIsSegmentLeaderModalOpen(false);
-        // Refresh data if needed
-        queryClient.invalidateQueries({ queryKey: ['/api/segment-leaders'] });
-        // Also refresh the system emails to show the updated values
-        queryClient.invalidateQueries({ queryKey: ['/api/system-config/emails'] });
+        setIsSegmentLeaderModalOpen(false); // Only close on complete success
+      } else if (successCount > 0) {
+        toast({
+          title: "Partial Success",
+          description: `${successCount} users processed successfully, but ${errorCount} had issues: ${errors.join(', ')}`,
+          variant: "default",
+        });
+        console.error('Admin role assignment errors:', errors);
+        // Don't close modal on partial success so user can review and retry
       } else {
-        throw new Error('Failed to save segment leaders');
+        throw new Error(`All operations failed: ${errors.join(', ')}`);
       }
+      
+      // Refresh data
+      queryClient.invalidateQueries({ queryKey: ['/api/segment-leaders'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/system-config/emails'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/roles'] });
     } catch (error) {
-      console.error('Error saving segment leaders:', error);
+      console.error('Error saving admin roles:', error);
       toast({
         title: "Error",
-        description: "Failed to save segment leaders",
+        description: error instanceof Error ? error.message : "Failed to save admin roles",
         variant: "destructive",
       });
+      // Don't close modal on error
     } finally {
-      setIsSavingSegmentLeaders(false);
+      setIsSavingAdminRoles(false);
     }
   };
 
-  const handleCancelSegmentLeaders = () => {
+  const handleCancelAdminRoles = () => {
     setIsSegmentLeaderModalOpen(false);
     // Reset form data to original values if needed
   };
@@ -289,7 +503,7 @@ export default function Team() {
   useEffect(() => {
     if (systemEmails) {
       console.log('Updating segment leader data with system emails:', systemEmails); // Debug log
-      setSegmentLeaderData(prev => ({
+      setAdminRoleData(prev => ({
         ...prev,
         financeEmail: systemEmails.financeEmail || 'finance@company.com',
         accountManagerEmail: systemEmails.accountManagerEmail || 'accountmanager@company.com'
@@ -1000,23 +1214,87 @@ export default function Team() {
                 </DialogContent>
               </Dialog>
                 
-                {/* Segment Leader Management */}
+                {/* Admin Role Management */}
                 <Dialog open={isSegmentLeaderModalOpen} onOpenChange={setIsSegmentLeaderModalOpen}>
                   <DialogTrigger asChild>
                     <Button variant="outline" className="border-orange-200 text-orange-700 hover:bg-orange-50">
                       <UserPlus className="h-4 w-4 mr-2" />
-                      Manage Segment Leaders
+                      Manage Admin Roles
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                  <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
-                      <DialogTitle className="text-xl font-semibold text-gray-900">Segment Leader Management</DialogTitle>
+                      <DialogTitle className="text-xl font-semibold text-gray-900">Admin Role Management</DialogTitle>
                       <DialogDescription className="text-gray-600">
-                        Manage segment leaders and their contact information for notifications.
+                        Manage admin roles including segment leaders, project manager, and finance head for system operations.
                       </DialogDescription>
                     </DialogHeader>
                     
                     <div className="space-y-6 py-4">
+                      {/* Global Admin Roles Section */}
+                      <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg p-6 space-y-4">
+                        <h3 className="font-medium text-purple-900 text-lg mb-4">Global Admin Roles</h3>
+                        
+                        {/* Project Manager */}
+                        <div className="bg-white rounded-lg p-4 space-y-3 border border-purple-200">
+                          <h4 className="font-medium text-purple-800 flex items-center gap-2">
+                            <Badge variant="secondary" className="bg-purple-100 text-purple-800">Project Manager</Badge>
+                            Project Manager
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Manager Name</label>
+                              <Input 
+                                placeholder="Enter project manager name"
+                                className="h-10"
+                                value={adminRoleData.projectManager.name}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, projectManager: { ...adminRoleData.projectManager, name: e.target.value } })}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                              <Input 
+                                placeholder="manager@company.com"
+                                className="h-10"
+                                value={adminRoleData.projectManager.email}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, projectManager: { ...adminRoleData.projectManager, email: e.target.value } })}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Finance Head */}
+                        <div className="bg-white rounded-lg p-4 space-y-3 border border-purple-200">
+                          <h4 className="font-medium text-purple-800 flex items-center gap-2">
+                            <Badge variant="secondary" className="bg-purple-100 text-purple-800">Finance Head</Badge>
+                            Finance Head
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Finance Head Name</label>
+                              <Input 
+                                placeholder="Enter finance head name"
+                                className="h-10"
+                                value={adminRoleData.financeHead.name}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, financeHead: { ...adminRoleData.financeHead, name: e.target.value } })}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                              <Input 
+                                placeholder="finance.head@company.com"
+                                className="h-10"
+                                value={adminRoleData.financeHead.email}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, financeHead: { ...adminRoleData.financeHead, email: e.target.value } })}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Segment Leaders Section */}
+                      <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-lg p-6 space-y-4">
+                        <h3 className="font-medium text-blue-900 text-lg mb-4">Segment Leaders</h3>
                       {/* Academic Segment */}
                       <div className="bg-blue-50 rounded-lg p-4 space-y-3">
                         <h3 className="font-medium text-blue-900 flex items-center gap-2">
@@ -1029,8 +1307,8 @@ export default function Team() {
                             <Input 
                               placeholder="Enter leader name"
                               className="h-10"
-                              value={segmentLeaderData.academic.name}
-                              onChange={(e) => setSegmentLeaderData({ ...segmentLeaderData, academic: { ...segmentLeaderData.academic, name: e.target.value } })}
+                              value={adminRoleData.academic.name}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, academic: { ...adminRoleData.academic, name: e.target.value } })}
                             />
                           </div>
                           <div>
@@ -1038,8 +1316,8 @@ export default function Team() {
                             <Input 
                               placeholder="leader@academic.com"
                               className="h-10"
-                              value={segmentLeaderData.academic.email}
-                              onChange={(e) => setSegmentLeaderData({ ...segmentLeaderData, academic: { ...segmentLeaderData.academic, email: e.target.value } })}
+                              value={adminRoleData.academic.email}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, academic: { ...adminRoleData.academic, email: e.target.value } })}
                             />
                           </div>
                         </div>
@@ -1057,8 +1335,8 @@ export default function Team() {
                             <Input 
                               placeholder="Enter leader name"
                               className="h-10"
-                              value={segmentLeaderData.parastals.name}
-                              onChange={(e) => setSegmentLeaderData({ ...segmentLeaderData, parastals: { ...segmentLeaderData.parastals, name: e.target.value } })}
+                              value={adminRoleData.parastals.name}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, parastals: { ...adminRoleData.parastals, name: e.target.value } })}
                             />
                           </div>
                           <div>
@@ -1066,8 +1344,8 @@ export default function Team() {
                             <Input 
                               placeholder="leader@parastals.com"
                               className="h-10"
-                              value={segmentLeaderData.parastals.email}
-                              onChange={(e) => setSegmentLeaderData({ ...segmentLeaderData, parastals: { ...segmentLeaderData.parastals, email: e.target.value } })}
+                              value={adminRoleData.parastals.email}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, parastals: { ...adminRoleData.parastals, email: e.target.value } })}
                             />
                           </div>
                         </div>
@@ -1085,8 +1363,8 @@ export default function Team() {
                             <Input 
                               placeholder="Enter leader name"
                               className="h-10"
-                              value={segmentLeaderData.private.name}
-                              onChange={(e) => setSegmentLeaderData({ ...segmentLeaderData, private: { ...segmentLeaderData.private, name: e.target.value } })}
+                              value={adminRoleData.private.name}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, private: { ...adminRoleData.private, name: e.target.value } })}
                             />
                           </div>
                           <div>
@@ -1094,11 +1372,12 @@ export default function Team() {
                             <Input 
                               placeholder="leader@private.com"
                               className="h-10"
-                              value={segmentLeaderData.private.email}
-                              onChange={(e) => setSegmentLeaderData({ ...segmentLeaderData, private: { ...segmentLeaderData.private, email: e.target.value } })}
+                              value={adminRoleData.private.email}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, private: { ...adminRoleData.private, email: e.target.value } })}
                             />
                           </div>
                         </div>
+                      </div>
                       </div>
 
                       {/* Global Notification Settings */}
@@ -1111,8 +1390,8 @@ export default function Team() {
                             <Input 
                               placeholder="finance@company.com"
                               className="h-10"
-                              value={segmentLeaderData.financeEmail}
-                              onChange={(e) => setSegmentLeaderData({ ...segmentLeaderData, financeEmail: e.target.value })}
+                              value={adminRoleData.financeEmail}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, financeEmail: e.target.value })}
                             />
                             <p className="text-xs text-gray-500 mt-1">For overdue milestones and payment reminders</p>
                           </div>
@@ -1121,8 +1400,8 @@ export default function Team() {
                             <Input 
                               placeholder="accountmanager@company.com"
                               className="h-10"
-                              value={segmentLeaderData.accountManagerEmail}
-                              onChange={(e) => setSegmentLeaderData({ ...segmentLeaderData, accountManagerEmail: e.target.value })}
+                              value={adminRoleData.accountManagerEmail}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, accountManagerEmail: e.target.value })}
                             />
                             <p className="text-xs text-gray-500 mt-1">For project completion forecasts</p>
                           </div>
@@ -1130,16 +1409,16 @@ export default function Team() {
                       </div>
 
                       <div className="flex justify-end space-x-3 pt-4 border-t">
-                        <Button variant="outline" className="h-10 px-6" onClick={handleCancelSegmentLeaders}>
+                        <Button variant="outline" className="h-10 px-6" onClick={handleCancelAdminRoles}>
                           Cancel
                         </Button>
                         <Button 
                           type="submit" 
-                          disabled={isSavingSegmentLeaders}
-                          onClick={handleSaveSegmentLeaders}
+                          disabled={isSavingAdminRoles}
+                          onClick={handleSaveAdminRoles}
                           className="h-10 px-6 bg-blue-600 hover:bg-blue-700"
                         >
-                          {isSavingSegmentLeaders ? "Saving..." : "Save Changes"}
+                          {isSavingAdminRoles ? "Saving..." : "Save Changes"}
                         </Button>
                       </div>
                     </div>
@@ -1300,25 +1579,42 @@ export default function Team() {
                         </div>
                         
                         <Badge 
-                          variant={member.workloadPercentage >= 80 ? "default" : 
-                                 member.workloadPercentage >= 60 ? "secondary" : "outline"}
+                          variant={(() => {
+                            const totalTasks = member.totalTasks || 0;
+                            const percentage = member.workloadPercentage || 0;
+                            
+                            if (totalTasks <= 10) {
+                              if (percentage >= 80) return "default"; // Excellent - blue
+                              if (percentage >= 60) return "secondary"; // Good - gray
+                              return "outline"; // Normal - outline
+                            } else if (totalTasks <= 30) {
+                              if (percentage >= 80) return "destructive"; // Overloaded - red
+                              return "secondary"; // High - gray
+                            } else {
+                              return "destructive"; // Overloaded - red
+                            }
+                          })()}
                           data-testid={`badge-performance-${member.userId}`}
                         >
                           {(() => {
                             // Use the same logic as dashboard for consistency
-                            if (member.totalTasks <= 2) {
-                              if (member.workloadPercentage >= 80) return "Excellent";
-                              if (member.workloadPercentage >= 60) return "Good";
+                            const totalTasks = member.totalTasks || 0;
+                            const percentage = member.workloadPercentage || 0;
+                            
+                            if (totalTasks <= 10) {
+                              // Low task count - focus on completion rate
+                              if (percentage >= 80) return "Excellent";
+                              if (percentage >= 60) return "Good";
                               return "Normal";
-                            } else if (member.totalTasks <= 4) {
-                              if (member.workloadPercentage >= 90) return "Overloaded";
-                              if (member.workloadPercentage >= 75) return "High";
-                              if (member.workloadPercentage >= 50) return "Normal";
-                              return "Light";
+                            } else if (totalTasks <= 30) {
+                              // Medium task count - minimum "High" workload
+                              if (percentage >= 80) return "Overloaded";
+                              if (percentage >= 60) return "High";
+                              return "High"; // Minimum high for 11-30 tasks
                             } else {
-                              if (member.workloadPercentage >= 80) return "Overloaded";
-                              if (member.workloadPercentage >= 60) return "High";
-                              return "Normal";
+                              // High task count (31+) - minimum "Overloaded" workload
+                              if (percentage >= 60) return "Overloaded";
+                              return "Overloaded"; // Minimum overloaded for 31+ tasks
                             }
                           })()}
                         </Badge>
@@ -1536,22 +1832,18 @@ export default function Team() {
                             
                             <Badge 
                               variant={(() => {
-                                const percentage = member.workloadPercentage || 0;
                                 const totalTasks = member.totalTasks || 0;
+                                const percentage = member.workloadPercentage || 0;
                                 
-                                if (totalTasks <= 2) {
-                                  if (percentage >= 80) return "default";
-                                  if (percentage >= 60) return "secondary";
-                                  return "outline";
-                                } else if (totalTasks <= 4) {
-                                  if (percentage >= 90) return "destructive";
-                                  if (percentage >= 75) return "secondary";
-                                  if (percentage >= 50) return "outline";
-                                  return "outline";
+                                if (totalTasks <= 10) {
+                                  if (percentage >= 80) return "default"; // Excellent - blue
+                                  if (percentage >= 60) return "secondary"; // Good - gray
+                                  return "outline"; // Normal - outline
+                                } else if (totalTasks <= 30) {
+                                  if (percentage >= 80) return "destructive"; // Overloaded - red
+                                  return "secondary"; // High - gray
                                 } else {
-                                  if (percentage >= 80) return "destructive";
-                                  if (percentage >= 60) return "secondary";
-                                  return "outline";
+                                  return "destructive"; // Overloaded - red
                                 }
                               })()}
                             >
@@ -1559,19 +1851,20 @@ export default function Team() {
                                 const percentage = member.workloadPercentage || 0;
                                 const totalTasks = member.totalTasks || 0;
                                 
-                                if (totalTasks <= 2) {
+                                if (totalTasks <= 10) {
+                                  // Low task count - focus on completion rate
                                   if (percentage >= 80) return "Excellent";
                                   if (percentage >= 60) return "Good";
                                   return "Normal";
-                                } else if (totalTasks <= 4) {
-                                  if (percentage >= 90) return "Overloaded";
-                                  if (percentage >= 75) return "High";
-                                  if (percentage >= 50) return "Normal";
-                                  return "Light";
-                                } else {
+                                } else if (totalTasks <= 30) {
+                                  // Medium task count - minimum "High" workload
                                   if (percentage >= 80) return "Overloaded";
                                   if (percentage >= 60) return "High";
-                                  return "Normal";
+                                  return "High"; // Minimum high for 11-30 tasks
+                                } else {
+                                  // High task count (31+) - minimum "Overloaded" workload
+                                  if (percentage >= 60) return "Overloaded";
+                                  return "Overloaded"; // Minimum overloaded for 31+ tasks
                                 }
                               })()}
                             </Badge>

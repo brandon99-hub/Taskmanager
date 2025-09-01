@@ -156,126 +156,52 @@ export default function ProjectDetail() {
     }
   }, [taskIdFromUrl, milestones]);
 
-  // Generate phases from modules data since phases table doesn't exist yet
+  // Fetch phases from server API (includes real status updates from automation)
   const { data: phases = [], isLoading: phasesLoading, error: phasesError } = useQuery<Phase[]>({
     queryKey: ['/api/projects', projectId, 'phases'],
     queryFn: async () => {
       if (!projectId) return [];
       
-      // Always generate the 6 hardcoded phases, even if no modules exist
-      
-      // Generate phases from modules data
-      const phaseMap = new Map<number, Phase>();
-      
-      // Initialize with hardcoded phases (matching PhaseOverview component interface)
-      const hardcodedPhases: Omit<Phase, 'modules'>[] = [
-        { 
-          id: '1', 
-          phaseNumber: 1, 
-          phaseName: 'Initiation & Contracting', 
-          description: 'Project setup and contract finalization',
-          startDate: null,
-          endDate: null,
-          status: 'not_started' as const,
-          progress: 0,
-          deliverables: [],
-          reports: []
-        },
-        { 
-          id: '2', 
-          phaseNumber: 2, 
-          phaseName: 'Requirements Gathering & Design', 
-          description: 'Requirements analysis and system design',
-          startDate: null,
-          endDate: null,
-          status: 'not_started' as const,
-          progress: 0,
-          deliverables: [],
-          reports: []
-        },
-        { 
-          id: '3', 
-          phaseNumber: 3, 
-          phaseName: 'System Customization & Development', 
-          description: 'System development and customization',
-          startDate: null,
-          endDate: null,
-          status: 'not_started' as const,
-          progress: 0,
-          deliverables: [],
-          reports: []
-        },
-        { 
-          id: '4', 
-          phaseNumber: 4, 
-          phaseName: 'Testing & Validation', 
-          description: 'System testing and validation',
-          startDate: null,
-          endDate: null,
-          status: 'not_started' as const,
-          progress: 0,
-          deliverables: [],
-          reports: []
-        },
-        { 
-          id: '5', 
-          phaseNumber: 5, 
-          phaseName: 'Deployment & Go-Live', 
-          description: 'System deployment and go-live',
-          startDate: null,
-          endDate: null,
-          status: 'not_started' as const,
-          progress: 0,
-          deliverables: [],
-          reports: []
-        },
-        { 
-          id: '6', 
-          phaseNumber: 6, 
-          phaseName: 'Transition & Closure', 
-          description: 'Project transition and closure',
-          startDate: null,
-          endDate: null,
-          status: 'not_started' as const,
-          progress: 0,
-          deliverables: [],
-          reports: []
+      // First, ensure phases exist for this project
+      try {
+        const createResponse = await fetch(`/api/projects/${projectId}/phases`, {
+          method: 'POST',
+          credentials: 'include'
+        });
+        if (!createResponse.ok && createResponse.status !== 409) {
+          // 409 means phases already exist, which is fine
+          console.warn('Failed to create phases, continuing with fetch');
         }
-      ];
+      } catch (error) {
+        console.warn('Error creating phases:', error);
+      }
       
-      // Group modules by phase
-      modules.forEach((module: any) => {
-        const phaseNumber = module.phaseNumber || 1;
-        if (!phaseMap.has(phaseNumber)) {
-          const basePhase = hardcodedPhases.find(p => p.phaseNumber === phaseNumber);
-          if (basePhase) {
-            phaseMap.set(phaseNumber, {
-              ...basePhase,
-              modules: []
-            });
-          }
-        }
-        if (phaseMap.has(phaseNumber)) {
-          phaseMap.get(phaseNumber)!.modules.push(module);
-        }
+      // Fetch the actual phases from server
+      const response = await fetch(`/api/projects/${projectId}/phases`, {
+        credentials: 'include'
       });
       
-      // Fill in phases with no modules
-      hardcodedPhases.forEach(phase => {
-        if (!phaseMap.has(phase.phaseNumber)) {
-          phaseMap.set(phase.phaseNumber, {
-            ...phase,
-            modules: []
-          });
-        }
-      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch phases');
+      }
       
-      // Convert to array and sort by phase number
-      const sortedPhases: Phase[] = Array.from(phaseMap.values()).sort((a, b) => a.phaseNumber - b.phaseNumber);
+      const serverPhases = await response.json();
       
-      return sortedPhases;
+      // Transform server phase data to match client interface
+      return serverPhases.map((phase: any) => ({
+        id: phase.id,
+        phaseNumber: phase.phaseNumber,
+        phaseName: phase.phaseName,
+        description: phase.description,
+        startDate: phase.startDate,
+        endDate: phase.endDate,
+        status: phase.status,
+        progress: phase.progress || 0,
+        deliverables: phase.deliverables || [],
+        reports: phase.reports || []
+      }));
     },
-    enabled: !!isAuthenticated && !!projectId && !!modules,
+    enabled: !!isAuthenticated && !!projectId,
   });
 
 
@@ -405,8 +331,11 @@ export default function ProjectDetail() {
     if (!projectId) return;
     try {
       await apiRequest('PUT', `/api/phases/${phaseId}`, updates);
+      // Invalidate phase queries to refresh the data
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] });
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+      // Also invalidate modules query to ensure phase status updates are reflected
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] });
       toast({
         title: "Success",
         description: "Phase updated successfully",
@@ -425,8 +354,11 @@ export default function ProjectDetail() {
     if (!projectId) return;
     try {
       await apiRequest('PUT', `/api/phases/${phaseId}/complete`, { completionReport });
+      // Invalidate phase queries to refresh the data
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] });
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+      // Also invalidate modules query to ensure phase status updates are reflected
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] });
       toast({
         title: "Success",
         description: "Phase completed successfully",
@@ -746,53 +678,53 @@ export default function ProjectDetail() {
                 </p>
               </div>
 
-              {/* Milestone Summary */}
+              {/* Module Summary */}
               <div className="space-y-4">
-                <h4 className="font-medium text-gray-900">Milestone Progress</h4>
+                <h4 className="font-medium text-gray-900">Module Progress</h4>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span>Weight-Based Progress:</span>
                     <span className="font-medium text-blue-600">{(() => {
-                      return calculateWeightBasedProgress(milestones);
+                      return calculateWeightBasedProgress(modules);
                     })()}%</span>
                   </div>
                   <Progress 
                     value={(() => {
-                      return calculateWeightBasedProgress(milestones);
+                      return calculateWeightBasedProgress(modules);
                     })()} 
                     className="h-2" 
                   />
                   <div className="text-xs text-gray-500 mb-3">
-                    Progress calculated by milestone priority weights (Critical=4, High=3, Medium=2, Low=1)
+                    Progress calculated by module priority weights and status progression (Critical=4, High=3, Medium=2, Low=1)
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Total:</span>
-                    <span className="font-medium">{milestones.length}</span>
+                    <span className="font-medium">{modules.length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Completed:</span>
-                    <span className="font-medium text-green-600">{milestones.filter((m: any) => m.status === 'done').length}</span>
+                    <span className="font-medium text-green-600">{modules.filter((m: any) => m.status === 'completed').length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>In Progress:</span>
-                    <span className="font-medium text-blue-600">{milestones.filter((m: any) => m.status === 'in_progress').length}</span>
+                    <span className="font-medium text-blue-600">{modules.filter((m: any) => m.status === 'in_progress' || m.status === 'fc_review' || m.status === 'qa' || m.status === 'client_review').length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Pending:</span>
-                    <span className="font-medium">{milestones.filter((m: any) => m.status === 'todo').length}</span>
+                    <span className="font-medium">{modules.filter((m: any) => m.status === 'not_started' || m.status === 'on_hold').length}</span>
                   </div>
                 </div>
                 <Progress 
                   value={(() => {
-                    const total = milestones.length;
-                    const done = milestones.filter((m: any) => m.status === 'done').length;
+                    const total = modules.length;
+                    const done = modules.filter((m: any) => m.status === 'completed').length;
                     return total > 0 ? (done / total) * 100 : 0;
                   })()} 
                   className="h-2" 
                 />
                 <p className="text-xs text-gray-500">Count-based progress: {(() => {
-                  const total = milestones.length;
-                  const done = milestones.filter((m: any) => m.status === 'done').length;
+                  const total = modules.length;
+                  const done = modules.filter((m: any) => m.status === 'completed').length;
                   return total > 0 ? Math.round((done / total) * 100) : 0;
                 })()}%</p>
               </div>
@@ -906,6 +838,7 @@ export default function ProjectDetail() {
                 projectId={projectId!}
                 phases={phases}
                 modules={modules}
+                projectTeam={project.team}
                 onPhaseUpdate={handlePhaseUpdate}
                 onPhaseComplete={handlePhaseComplete}
               />
@@ -988,6 +921,7 @@ export default function ProjectDetail() {
               <ModuleTable 
                 modules={modules}
                 projectSegment={project.segment || 'private'}
+                projectTeam={project.team}
                 onEdit={handleEditMilestone}
                 initiallyExpandedModule={expandedMilestone}
               />

@@ -98,7 +98,8 @@ export default function Reports() {
         'Team Performance': 'performance',
         'Workload Analysis': 'workload',
         'Financial Report': 'financial',
-        'Complete': 'complete'
+        'Complete': 'complete',
+        'Gantt Chart': 'gantt'
       };
 
       const apiReportType = reportTypeMap[reportType] || reportType.toLowerCase();

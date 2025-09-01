@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import * as bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./auth";
 import {
@@ -37,6 +38,23 @@ function validateAndConvertDates(data: any, dateFields: string[]): { cleanedData
   return { cleanedData, errors };
 }
 
+// Helper function to check if user has admin privileges
+async function hasAdminPrivileges(user: any): Promise<boolean> {
+  if (['admin', 'manager'].includes(user.role)) {
+    return true;
+  }
+  
+  try {
+    const dashboardRole = await storage.getUserDashboardRole(user.id);
+    return dashboardRole.isProjectManager || 
+           dashboardRole.isFinanceHead || 
+           !!dashboardRole.assignedSegment;
+  } catch (error) {
+    console.error('Error checking admin privileges:', error);
+    return false;
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   try {
     // Auth middleware
@@ -50,7 +68,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Users listing (for selecting team members)
   app.get('/api/users', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const role = (req.query.role as string) || undefined;
@@ -68,9 +86,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Dashboard routes
   app.get('/api/dashboard/metrics', isAuthenticated, async (req: any, res) => {
     try {
-      const metrics = req.user.role === 'employee'
-        ? await storage.getDashboardMetricsForUser(req.user.id)
-        : await storage.getDashboardMetrics();
+      let metrics;
+      
+      // Get user's dashboard role to determine which metrics to fetch
+      const dashboardRole = await storage.getUserDashboardRole(req.user.id);
+      
+      console.log('User dashboard role:', dashboardRole);
+      console.log('User role:', req.user.role);
+      
+      if (dashboardRole.assignedSegment) {
+        // Segment leader - get segment-specific metrics
+        metrics = await storage.getDashboardMetricsForSegment(dashboardRole.assignedSegment);
+      } else if (req.user.role === 'employee') {
+        // Employee - get user-specific metrics
+        metrics = await storage.getDashboardMetricsForUser(req.user.id);
+      } else {
+        // Admin, manager, project manager, finance head - get global metrics
+        metrics = await storage.getDashboardMetrics();
+      }
+      
+      console.log('Sending metrics to client:', metrics);
       res.json(metrics);
     } catch (error) {
       console.error("Error fetching dashboard metrics:", error);
@@ -131,7 +166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Best performing team endpoint
   app.get('/api/dashboard/best-team', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const bestTeam = await storage.getBestPerformingTeam();
@@ -177,7 +212,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Monthly targets calculation endpoint
   app.post('/api/dashboard/calculate-monthly-targets', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       
@@ -217,10 +252,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Completed modules endpoint for project managers
+  app.get('/api/dashboard/completed-modules', isAuthenticated, async (req: any, res) => {
+    try {
+      const completedTasks = req.user.role === 'employee'
+        ? await storage.getTasksByUser(req.user.id)
+        : await storage.getTasks();
+      
+      // Filter for completed tasks with project and user details
+      const completed = completedTasks.filter((task: any) => task.status === 'done');
+      res.json(completed);
+    } catch (error) {
+      console.error("Error fetching completed modules:", error);
+      res.status(500).json({ message: "Failed to fetch completed modules" });
+    }
+  });
+
+  // Overdue modules endpoint for project managers
+  app.get('/api/dashboard/overdue-modules', isAuthenticated, async (req: any, res) => {
+    try {
+      const overdueTasks = req.user.role === 'employee'
+        ? await storage.getOverdueTasksForUser(req.user.id)
+        : await storage.getOverdueTasks();
+      
+      res.json(overdueTasks);
+    } catch (error) {
+      console.error("Error fetching overdue modules:", error);
+      res.status(500).json({ message: "Failed to fetch overdue modules" });
+    }
+  });
+
+  // Project Performance Dashboard endpoint for Project Managers
+  app.get('/api/dashboard/project-performance', isAuthenticated, async (req: any, res) => {
+    try {
+      // Check if user has project manager permissions
+      const dashboardRole = await storage.getUserDashboardRole(req.user.id);
+      if (!dashboardRole.isProjectManager && !['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const month = req.query.month ? parseInt(req.query.month as string) : undefined;
+      
+      const performanceData = await storage.getProjectPerformanceData(year, month);
+      res.json(performanceData);
+    } catch (error) {
+      console.error("Error fetching project performance data:", error);
+      res.status(500).json({ message: "Failed to fetch project performance data" });
+    }
+  });
+
+  // Risk Management & Quality Control endpoint for Project Managers
+  app.get('/api/dashboard/risk-quality', isAuthenticated, async (req: any, res) => {
+    try {
+      // Check if user has project manager permissions
+      const dashboardRole = await storage.getUserDashboardRole(req.user.id);
+      if (!dashboardRole.isProjectManager && !['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const month = req.query.month ? parseInt(req.query.month as string) : undefined;
+      
+      const riskQualityData = await storage.getRiskQualityData(year, month);
+      res.json(riskQualityData);
+    } catch (error) {
+      console.error("Error fetching risk quality data:", error);
+      res.status(500).json({ message: "Failed to fetch risk quality data" });
+    }
+  });
+
   // Export routes
   app.post('/api/reports/export', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
 
@@ -235,7 +340,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         performance: 'Team Performance',
         workload: 'Workload Analysis',
         financial: 'Financial Report',
-        complete: 'Complete Report'
+        complete: 'Complete Report',
+        gantt: 'Gantt Chart'
       };
       
       const reportName = reportNames[reportType as keyof typeof reportNames] || 'Report';
@@ -339,7 +445,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Save segment leaders route
   app.post('/api/segment-leaders', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
 
@@ -372,6 +478,319 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin Role Management Routes
+  // Get all admin roles
+  app.get('/api/admin/roles', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const adminRoles = await storage.getAdminRoles();
+      res.json(adminRoles);
+    } catch (error) {
+      console.error("Error fetching admin roles:", error);
+      res.status(500).json({ message: "Failed to fetch admin roles" });
+    }
+  });
+
+  // Get admin roles for a specific user
+  app.get('/api/admin/roles/user/:userId', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const { userId } = req.params;
+      const adminRoles = await storage.getAdminRolesByUser(userId);
+      res.json(adminRoles);
+    } catch (error) {
+      console.error("Error fetching user admin roles:", error);
+      res.status(500).json({ message: "Failed to fetch user admin roles" });
+    }
+  });
+
+  // Assign admin role to user
+  app.post('/api/admin/roles', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const { userId, roleType, segment } = req.body;
+      
+      if (!userId || !roleType) {
+        return res.status(400).json({ message: 'User ID and role type are required' });
+      }
+      
+      if (!['project_manager', 'finance_head', 'segment_leader'].includes(roleType)) {
+        return res.status(400).json({ message: 'Invalid role type' });
+      }
+      
+      if (roleType === 'segment_leader' && !segment) {
+        return res.status(400).json({ message: 'Segment is required for segment leader role' });
+      }
+      
+      if (roleType === 'segment_leader' && !['academic', 'parastals', 'private'].includes(segment)) {
+        return res.status(400).json({ message: 'Invalid segment' });
+      }
+      
+      const adminRole = await storage.assignAdminRole({
+        userId,
+        roleType,
+        segment: roleType === 'segment_leader' ? segment : undefined,
+        assignedBy: req.user.id,
+      });
+      
+      res.status(201).json(adminRole);
+    } catch (error) {
+      console.error("Error assigning admin role:", error);
+      if (error instanceof Error && error.message.includes('already has this admin role')) {
+        return res.status(400).json({ message: error.message });
+      }
+      res.status(500).json({ message: "Failed to assign admin role" });
+    }
+  });
+
+  // Remove admin role from user
+  app.delete('/api/admin/roles/:userId/:roleType', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const { userId, roleType } = req.params;
+      const { segment } = req.query;
+      
+      if (!['project_manager', 'finance_head', 'segment_leader'].includes(roleType)) {
+        return res.status(400).json({ message: 'Invalid role type' });
+      }
+      
+      await storage.removeAdminRole(userId, roleType as any, segment as string);
+      res.json({ message: 'Admin role removed successfully' });
+    } catch (error) {
+      console.error("Error removing admin role:", error);
+      if (error instanceof Error && error.message.includes('not found')) {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: "Failed to remove admin role" });
+    }
+  });
+
+  // Get user's dashboard role (for role-based dashboard)
+  app.get('/api/user/dashboard-role', isAuthenticated, async (req: any, res) => {
+    try {
+      const dashboardRole = await storage.getUserDashboardRole(req.user.id);
+      res.json(dashboardRole);
+    } catch (error) {
+      console.error("Error fetching user dashboard role:", error);
+      res.status(500).json({ message: "Failed to fetch user dashboard role" });
+    }
+  });
+
+
+
+  // Get all segment leader data (for dashboard)
+  app.get('/api/admin/segment-leader-data', isAuthenticated, async (req: any, res) => {
+    try {
+      const segmentData = await storage.getSegmentLeaderData();
+      res.json(segmentData);
+    } catch (error) {
+      console.error("Error fetching segment leader data:", error);
+      res.status(500).json({ message: "Failed to fetch segment leader data" });
+    }
+  });
+
+  // Create user with admin credentials
+  app.post('/api/admin/users', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      const { email, firstName, lastName, role, segment } = req.body;
+      
+      if (!email || !firstName || !lastName || !role) {
+        return res.status(400).json({ message: 'Email, first name, last name, and role are required' });
+      }
+      
+      if (!['project_manager', 'finance_head', 'segment_leader'].includes(role)) {
+        return res.status(400).json({ message: 'Invalid admin role' });
+      }
+      
+      if (role === 'segment_leader' && !segment) {
+        return res.status(400).json({ message: 'Segment is required for segment leader role' });
+      }
+      
+      const result = await storage.createUserWithCredentials(
+        { email, firstName, lastName, role, segment },
+        req.user.id
+      );
+      
+      // Send admin role assignment notification
+      const { notificationService } = await import('./services/notificationService');
+      await notificationService.sendAdminRoleAssignedNotification({
+        user: result.user,
+        roleType: role,
+        segment,
+        assignedBy: req.user,
+        temporaryPassword: result.temporaryPassword
+      });
+      
+      // Return user info without password in response
+      res.status(201).json({
+        user: result.user,
+        temporaryPassword: result.temporaryPassword,
+        message: 'User created successfully. Please securely share the temporary password.'
+      });
+    } catch (error) {
+      console.error("Error creating user with credentials:", error);
+      if (error instanceof Error && error.message.includes('already exists')) {
+        return res.status(400).json({ message: 'User with this email already exists' });
+      }
+      res.status(500).json({ message: "Failed to create user" });
+    }
+  });
+
+  // Notification endpoints
+  // Send subtask assignment notification
+  app.post('/api/notifications/subtask-assignment', isAuthenticated, async (req: any, res) => {
+    try {
+      const { subtaskId, assigneeId } = req.body;
+      
+      if (!subtaskId || !assigneeId) {
+        return res.status(400).json({ message: 'Subtask ID and assignee ID are required' });
+      }
+      
+      // Get subtask, module, project, and user details
+      const subtask = await storage.getSubtask(subtaskId);
+      const assignee = await storage.getUser(assigneeId);
+      
+      if (!subtask || !assignee) {
+        return res.status(404).json({ message: 'Subtask or assignee not found' });
+      }
+      
+      const module = await storage.getModule(subtask.moduleId);
+      const project = module ? await storage.getProject(module.projectId) : null;
+      
+      if (!module || !project) {
+        return res.status(404).json({ message: 'Module or project not found' });
+      }
+      
+      // Send notification
+      const { notificationService } = await import('./services/notificationService');
+      await notificationService.sendSubtaskAssignmentNotification({
+        subtask,
+        module,
+        project,
+        assignee,
+        assignedBy: req.user
+      });
+      
+      res.json({ message: 'Subtask assignment notification sent successfully' });
+    } catch (error) {
+      console.error("Error sending subtask assignment notification:", error);
+      res.status(500).json({ message: "Failed to send notification" });
+    }
+  });
+
+  // Check finance deadlines and send warnings
+  app.post('/api/notifications/finance-deadlines', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!['admin', 'manager', 'finance_head'].includes(req.user.role) && !req.user.isFinanceHead) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      // Get overdue or due soon milestones
+      const milestones = await storage.getMilestones();
+      const dueMilestones = milestones.filter((m: any) => {
+        if (m.status !== 'completed') return false;
+        if (m.billingStatus === 'paid') return false;
+        
+        const dueDate = new Date(m.dueDate);
+        const now = new Date();
+        const daysDiff = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        
+        return daysDiff <= 7; // Due within 7 days
+      });
+      
+      if (dueMilestones.length === 0) {
+        return res.json({ message: 'No upcoming payment deadlines' });
+      }
+      
+      // Get finance head
+      const financeHeads = await storage.getAdminRoles();
+      const financeHead = financeHeads.find((r: any) => r.roleType === 'finance_head' && r.isActive);
+      
+      if (financeHead) {
+        const { notificationService } = await import('./services/notificationService');
+        await notificationService.sendFinanceDeadlineWarning({
+          milestones: dueMilestones,
+          financeHead: financeHead.user
+        });
+      }
+      
+      res.json({ 
+        message: 'Finance deadline warnings sent successfully',
+        milestonesCount: dueMilestones.length
+      });
+    } catch (error) {
+      console.error("Error sending finance deadline warnings:", error);
+      res.status(500).json({ message: "Failed to send warnings" });
+    }
+  });
+
+  // Password change endpoints
+  // Check if user must change password
+  app.get('/api/auth/must-change-password', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.id);
+      res.json({ mustChangePassword: user?.mustChangePassword || false });
+    } catch (error) {
+      console.error("Error checking password change requirement:", error);
+      res.status(500).json({ message: "Failed to check password requirement" });
+    }
+  });
+
+  // Force password change
+  app.post('/api/auth/change-password', isAuthenticated, async (req: any, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: 'Current password and new password are required' });
+      }
+      
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: 'New password must be at least 8 characters long' });
+      }
+      
+      const user = await storage.getUser(req.user.id);
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      
+      // Verify current password (check both hashed password and temporary password)
+      const isValidCurrentPassword = user.password === currentPassword || 
+        user.temporaryPassword === currentPassword;
+        
+      if (!isValidCurrentPassword) {
+        return res.status(400).json({ message: 'Current password is incorrect' });
+      }
+      
+      // Hash the new password before storing
+      const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+      
+      // Update password (properly hashed and clear temporary password)
+      await storage.updateUserPassword(req.user.id, hashedNewPassword, user.mustChangePassword || false);
+      
+      res.json({ message: 'Password changed successfully' });
+    } catch (error) {
+      console.error("Error changing password:", error);
+      res.status(500).json({ message: "Failed to change password" });
+    }
+  });
+
   app.get('/api/teams/:id', isAuthenticated, async (req, res) => {
     try {
       // Handle "none" teamId case
@@ -394,7 +813,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/teams', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
 
@@ -445,7 +864,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/teams/:id', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const teamData = insertTeamSchema.partial().parse(req.body);
@@ -461,6 +880,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
+
+  // Milestone routes
+  app.get('/api/milestones', isAuthenticated, async (req: any, res) => {
+    try {
+      const milestones = await storage.getMilestones();
+      res.json(milestones);
+    } catch (error) {
+      console.error("Error fetching milestones:", error);
+      res.status(500).json({ message: "Failed to fetch milestones" });
+    }
+  });
+
+  app.get('/api/milestones/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const milestone = await storage.getMilestone(req.params.id);
+      if (!milestone) {
+        return res.status(404).json({ message: "Milestone not found" });
+      }
+      res.json(milestone);
+    } catch (error) {
+      console.error("Error fetching milestone:", error);
+      res.status(500).json({ message: "Failed to fetch milestone" });
+    }
+  });
 
   // Project routes
   app.get('/api/projects', isAuthenticated, async (req: any, res) => {
@@ -541,7 +984,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/projects/:id', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
 
@@ -630,7 +1073,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Project termination endpoint
   app.put('/api/projects/:id/terminate', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const project = await storage.terminateProject(req.params.id);
@@ -677,7 +1120,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/phases/:id', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const phase = await storage.updateProjectPhase(req.params.id, req.body);
@@ -690,7 +1133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/phases/:id/complete', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const { completionReport } = req.body;
@@ -718,7 +1161,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/phases/:id/deliverables', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const deliverable = await storage.addPhaseDeliverable(req.params.id, req.body);
@@ -731,7 +1174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/deliverables/:id', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const deliverable = await storage.updatePhaseDeliverable(req.params.id, req.body);
@@ -755,7 +1198,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/projects/:id/milestones', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       
@@ -934,7 +1377,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/modules', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       
@@ -963,7 +1406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/modules/:id', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       
@@ -995,7 +1438,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Individual milestone routes
   app.put('/api/milestones/:id', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       
@@ -1028,7 +1471,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/deliverables/:id/complete', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const deliverable = await storage.completePhaseDeliverable(req.params.id);
@@ -1052,7 +1495,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/phases/:id/reports', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const report = await storage.createPhaseReport(req.params.id, {
@@ -1079,7 +1522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/projects/:id/charter', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const charter = await storage.createProjectCharter(req.params.id, req.body);
@@ -1092,7 +1535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/projects/:id/charter', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const charter = await storage.updateProjectCharter(req.params.id, req.body);
@@ -1470,7 +1913,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Check if user is assigned to this task or has permission
-      if (task.assignedUserId !== req.user.id && !['admin', 'manager'].includes(req.user.role)) {
+      if (task.assignedUserId !== req.user.id && !(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'You can only set reminders for your own milestones' });
       }
 
@@ -1580,6 +2023,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Send notification for developer and consultant roles
+      try {
+        // Get the module/project details
+        const module = await storage.getModule(cleaned.moduleId);
+        const project = module ? await storage.getProject(module.projectId) : null;
+        
+        if (module && project) {
+          // Send notification for specialized roles
+          await notificationService.sendSubtaskSpecializedRoleNotification({
+            subtask,
+            module,
+            project,
+            assignedBy: req.user
+          });
+        }
+      } catch (notificationError) {
+        // Don't fail the subtask creation if notification fails
+        console.error("Error sending specialized role notification:", notificationError);
+      }
+      
       res.status(201).json(subtask);
     } catch (error) {
       console.error("Error creating subtask:", error);
@@ -1654,11 +2117,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Role-based status change restrictions
         if (req.user.role === 'employee') {
-          // Employees can only set status to fc_review, not to qa, client_review, or finished
+          // Check if employee is assigned to this subtask
+          const isAssignedToSubtask = 
+            currentSubtask.assignedUserId === req.user.id ||
+            currentSubtask.assignedDevId === req.user.id ||
+            currentSubtask.assignedConsultantId === req.user.id;
+          
+          if (!isAssignedToSubtask) {
+            return res.status(403).json({ 
+              message: 'You can only modify subtasks assigned to you' 
+            });
+          }
+          
+          // Employees can only set status to fc_review, not to qa, client_review, or completed
           if (['qa', 'client_review', 'finished'].includes(newStatus)) {
             return res.status(403).json({ 
               message: 'Employees cannot set status to QA, Client Review, or Completed. Submit for FC review instead.' 
             });
+          }
+          
+          // FCs can mark subtasks as completed, but Devs cannot
+          if (newStatus === 'completed') {
+            if (currentSubtask.assignedConsultantId === req.user.id) {
+              // FC can mark as completed
+              // Allow this to proceed
+            } else {
+              // Dev cannot mark as completed
+              return res.status(403).json({ 
+                message: 'Developers cannot mark subtasks as completed. Submit for FC review instead.' 
+              });
+            }
           }
         }
         
@@ -1701,25 +2189,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Check if developer or consultant assignments changed and send notification
+      if ((payload.assignedDevId !== undefined && 
+           payload.assignedDevId !== currentSubtask.assignedDevId) ||
+          (payload.assignedConsultantId !== undefined && 
+           payload.assignedConsultantId !== currentSubtask.assignedConsultantId)) {
+        
+        // Get the module/project details
+        const module = await storage.getModule(currentSubtask.moduleId);
+        const project = module ? await storage.getProject(module.projectId) : null;
+        
+        if (module && project) {
+          // Send notification for specialized roles
+          await notificationService.sendSubtaskSpecializedRoleNotification({
+            subtask,
+            module,
+            project,
+            assignedBy: req.user
+          });
+        }
+      }
+      
       // Send FC review notification when status changes to fc_review
       if (payload.status === 'fc_review' && currentSubtask.status !== 'fc_review') {
         try {
-          // Get the FC consultant details
-          const fcConsultant = await storage.getUser(currentSubtask.assignedConsultantId);
-          if (fcConsultant) {
-            // Get the module/project details
-            const module = await storage.getModule(currentSubtask.moduleId);
-            const project = module ? await storage.getProject(module.projectId) : null;
-            
-            if (module && project) {
-              // Send FC review notification
-              await notificationService.sendTaskAssignedNotification({
-                task: { ...subtask, name: subtask.name, id: subtask.id },
-                project: project,
-              user: fcConsultant,
+          // Get the module/project details
+          const module = await storage.getModule(currentSubtask.moduleId);
+          const project = module ? await storage.getProject(module.projectId) : null;
+          
+          if (module && project) {
+            // Send specialized role notification for FC review
+            await notificationService.sendSubtaskSpecializedRoleNotification({
+              subtask: { ...subtask, name: subtask.name, id: subtask.id },
+              module,
+              project,
               assignedBy: req.user
-              });
-            }
+            });
           }
         } catch (notificationError) {
           // Don't fail the subtask update if notification fails
@@ -1736,7 +2241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete('/api/subtasks/:id', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       await storage.deleteSubtask(req.params.id);
@@ -1819,7 +2324,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Manual notification check endpoints
   app.post('/api/notifications/check-due-soon', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Only managers and admins can trigger notification checks' });
       }
       
@@ -1837,7 +2342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/notifications/check-overdue', isAuthenticated, async (req: any, res) => {
     try {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Only managers and admins can trigger notification checks' });
       }
       
@@ -2020,11 +2525,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Dashboard Gantt chart data endpoint - for specific project
+  app.get('/api/dashboard/gantt/:projectId', isAuthenticated, async (req: any, res) => {
+    try {
+      const { projectId } = req.params;
+      
+      const project = await storage.getProject(projectId);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      const phases = await storage.getProjectPhases(projectId);
+      let tasks = await storage.getTasksByProject(projectId);
+
+      // Auto-assign phases to modules if they don't have phases
+      if (phases.length > 0 && tasks.length > 0) {
+        tasks = tasks.map((task, index) => {
+          if (!task.phaseNumber) {
+            // Assign to phases in order (1 module per phase, then cycle)
+            const phaseIndex = index % phases.length;
+            const phase = phases[phaseIndex];
+            return {
+              ...task,
+              phaseNumber: phase.phaseNumber,
+              phaseName: phase.phaseName
+            };
+          }
+          return task;
+        });
+      }
+
+      // Structure data for Gantt chart (same as project detail page)
+      const ganttData = {
+        project: {
+          id: project.id,
+          name: project.name,
+          startDate: project.startDate,
+          endDate: project.endDate,
+        },
+        phases: phases.map(phase => ({
+          id: phase.id,
+          name: phase.phaseName,
+          phaseNumber: phase.phaseNumber,
+          startDate: phase.startDate,
+          endDate: phase.endDate,
+          status: phase.status,
+          progress: phase.progress,
+          deliverables: phase.deliverables,
+        })),
+        tasks: tasks.map(task => ({
+          id: task.id,
+          name: task.name,
+          startDate: task.startDate,
+          dueDate: task.dueDate,
+          status: task.status,
+          progress: task.progressPercent,
+          assignedUser: task.assignedUser,
+          priority: task.priority,
+          phaseNumber: task.phaseNumber,
+          phaseName: task.phaseName,
+          subtasks: task.subtasks || [],
+        })),
+      };
+
+      res.json(ganttData);
+    } catch (error) {
+      console.error("Error fetching dashboard Gantt data:", error);
+      res.status(500).json({ message: "Failed to fetch Gantt chart data" });
+    }
+  });
+
   // Executive Dashboard endpoint
   app.get('/api/dashboard/executive', isAuthenticated, async (req: any, res) => {
     try {
       // Only admin and manager can access executive dashboard
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Access denied' });
       }
 
@@ -2162,7 +2737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Risk management automation endpoint
   app.post('/api/automation/check-module-deadlines', async (req, res) => {
     try {
-      if (!['admin', 'manager'].includes((req as any).user?.role)) {
+      if (!(await hasAdminPrivileges((req as any).user))) {
         return res.status(403).json({ message: 'Only managers and admins can trigger deadline checks' });
       }
       
@@ -2348,11 +2923,10 @@ async function getGanttExportData(storage: any, filters: any) {
   const ganttData: any[] = [];
   
   for (const project of projects) {
-    // Get project phases and milestones
-    const phases = await storage.getProjectPhases(project.id);
-    const milestones = await storage.getTasksByProject(project.id);
+    // Get project modules with subtasks
+    const modules = await storage.getModulesByProject(project.id);
     
-    // Add project header row
+    // Add project header row (this will be the main project)
     ganttData.push({
       'Type': 'PROJECT',
       'Name': project.name,
@@ -2367,58 +2941,82 @@ async function getGanttExportData(storage: any, filters: any) {
       'Budget (KSh)': parseFloat(project.budget || 0).toLocaleString()
     });
     
-    // Group milestones by phase if phases exist
-    if (phases.length > 0) {
-      phases.forEach((phase: any) => {
-        // Add phase header
-        ganttData.push({
-          'Type': 'PHASE',
-          'Name': `  │─ Phase ${phase.phaseNumber}: ${phase.phaseName}`,
-          'Start Date': phase.startDate ? new Date(phase.startDate).toLocaleDateString() : 'N/A',
-          'End Date': phase.endDate ? new Date(phase.endDate).toLocaleDateString() : 'N/A',
-          'Duration (Days)': phase.startDate && phase.endDate ? 
-            Math.ceil((new Date(phase.endDate).getTime() - new Date(phase.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
-          'Status': phase.status || 'pending',
-          'Progress (%)': phase.progress || 0,
-          'Manager': '',
-          'Client': '',
-          'Budget (KSh)': ''
-        });
-        
-        // Add milestones for this phase
-        const phaseMilestones = milestones.filter((m: any) => m.phaseNumber === phase.phaseNumber);
-        phaseMilestones.forEach((milestone: any) => {
-          ganttData.push({
-            'Type': 'MILESTONE',
-            'Name': `    └─ ${milestone.name}`,
-            'Start Date': milestone.startDate ? new Date(milestone.startDate).toLocaleDateString() : 'N/A',
-            'End Date': milestone.dueDate ? new Date(milestone.dueDate).toLocaleDateString() : 'N/A',
-            'Duration (Days)': milestone.startDate && milestone.dueDate ? 
-              Math.ceil((new Date(milestone.dueDate).getTime() - new Date(milestone.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
-            'Status': milestone.status,
-            'Progress (%)': milestone.progressPercent || 0,
-            'Manager': milestone.assignedUser?.firstName || milestone.assignedUser?.email || 'Unassigned',
-            'Client': '',
-            'Budget (KSh)': milestone.feeAmount ? parseFloat(milestone.feeAmount).toLocaleString() : '0'
-          });
-        });
+    // Process modules (these are like "Finance Module" in your screenshot)
+    for (const module of modules) {
+      // Add module header row
+      ganttData.push({
+        'Type': 'MODULE',
+        'Name': module.name,
+        'Start Date': module.startDate ? new Date(module.startDate).toLocaleDateString() : 'N/A',
+        'End Date': module.dueDate ? new Date(module.dueDate).toLocaleDateString() : 'N/A',
+        'Duration (Days)': module.startDate && module.dueDate ? 
+          Math.ceil((new Date(module.dueDate).getTime() - new Date(module.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+        'Status': module.status,
+        'Progress (%)': module.progressPercent || 0,
+        'Manager': module.assignedUser?.firstName || module.assignedUser?.email || 'Unassigned',
+        'Client': '',
+        'Budget (KSh)': module.feeAmount ? parseFloat(module.feeAmount).toLocaleString() : '0'
       });
-    } else {
-      // Add milestones directly under project if no phases
-      milestones.forEach((milestone: any) => {
-        ganttData.push({
-          'Type': 'MILESTONE',
-          'Name': `  └─ ${milestone.name}`,
-          'Start Date': milestone.startDate ? new Date(milestone.startDate).toLocaleDateString() : 'N/A',
-          'End Date': milestone.dueDate ? new Date(milestone.dueDate).toLocaleDateString() : 'N/A',
-          'Duration (Days)': milestone.startDate && milestone.dueDate ? 
-            Math.ceil((new Date(milestone.dueDate).getTime() - new Date(milestone.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
-          'Status': milestone.status,
-          'Progress (%)': milestone.progressPercent || 0,
-          'Manager': milestone.assignedUser?.firstName || milestone.assignedUser?.email || 'Unassigned',
-          'Client': '',
-          'Budget (KSh)': milestone.feeAmount ? parseFloat(milestone.feeAmount).toLocaleString() : '0'
-        });
+      
+      // Add subtasks for this module (these are like "Chart of Accounts & General Ledger Integrations" in your screenshot)
+      if (module.subtasks && module.subtasks.length > 0) {
+        for (const subtask of module.subtasks) {
+          // Get developer and consultant information
+          let developerName = 'N/A';
+          let consultantName = 'N/A';
+          
+          if (subtask.assignedDevId) {
+            try {
+              const developer = await storage.getUser(subtask.assignedDevId);
+              if (developer) {
+                developerName = developer.firstName || developer.email || 'N/A';
+              }
+            } catch (error) {
+              console.error(`Error fetching developer for subtask ${subtask.id}:`, error);
+            }
+          }
+          
+          if (subtask.assignedConsultantId) {
+            try {
+              const consultant = await storage.getUser(subtask.assignedConsultantId);
+              if (consultant) {
+                consultantName = consultant.firstName || consultant.email || 'N/A';
+              }
+            } catch (error) {
+              console.error(`Error fetching consultant for subtask ${subtask.id}:`, error);
+            }
+          }
+          
+          ganttData.push({
+            'Type': 'SUBTASK',
+            'Name': subtask.name,
+            'Start Date': subtask.startDate ? new Date(subtask.startDate).toLocaleDateString() : 'N/A',
+            'End Date': subtask.dueDate ? new Date(subtask.dueDate).toLocaleDateString() : 'N/A',
+            'Duration (Days)': subtask.startDate && subtask.dueDate ? 
+              Math.ceil((new Date(subtask.dueDate).getTime() - new Date(subtask.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+            'Status': subtask.status,
+            'Progress (%)': subtask.progressPercent || 0,
+            'Manager': subtask.assignedUser?.firstName || subtask.assignedUser?.email || 'Unassigned',
+            'Developer': developerName,
+            'Consultant': consultantName,
+            'Client': '',
+            'Budget (KSh)': subtask.feeAmount ? parseFloat(subtask.feeAmount).toLocaleString() : '0'
+          });
+        }
+      }
+      
+      // Add spacing row between modules
+      ganttData.push({
+        'Type': '',
+        'Name': '',
+        'Start Date': '',
+        'End Date': '',
+        'Duration (Days)': '',
+        'Status': '',
+        'Progress (%)': '',
+        'Manager': '',
+        'Client': '',
+        'Budget (KSh)': ''
       });
     }
     

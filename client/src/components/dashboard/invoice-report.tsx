@@ -22,15 +22,23 @@ import {
 
 export default function InvoiceReport() {
   const auth = useAuth() as any;
-  const { user } = auth;
+  const { user, getDashboardType, getSegment } = auth;
+  const dashboardType = getDashboardType();
+  const segment = getSegment();
 
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | undefined>(undefined);
   const [segmentViewMode, setSegmentViewMode] = useState<'table' | 'chart'>('table');
   const [performanceViewMode, setPerformanceViewMode] = useState<'table' | 'chart'>('table');
 
-  // Only show for managers and admins
-  if (!['admin', 'manager'].includes(user?.role)) {
+  // Show invoice report based on role
+  const shouldShowInvoiceReport = () => {
+    return dashboardType === 'finance_head' || 
+           dashboardType === 'project_manager' || 
+           ['admin', 'manager'].includes(user?.role);
+  };
+
+  if (!shouldShowInvoiceReport()) {
     return null;
   }
 

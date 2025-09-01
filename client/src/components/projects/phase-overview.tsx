@@ -27,6 +27,10 @@ interface PhaseOverviewProps {
   onPhaseUpdate: (phaseId: string, updates: Partial<Phase>) => void;
   onPhaseComplete: (phaseId: string, completionReport: string) => void;
   modules?: any[];
+  projectTeam?: {
+    id: string;
+    name: string;
+  };
 }
 
 const getPhaseStatusIcon = (status: Phase['status']) => {
@@ -72,6 +76,7 @@ export default function PhaseOverview({
   projectId, 
   phases, 
   modules, 
+  projectTeam,
   onPhaseUpdate, 
   onPhaseComplete 
 }: PhaseOverviewProps) {
@@ -404,6 +409,7 @@ export default function PhaseOverview({
       <PhaseDetailModal
         phase={selectedPhaseForModal}
         modules={modules || []}
+        projectTeam={projectTeam}
         isOpen={isModalOpen}
         onClose={closePhaseModal}
         onPhaseUpdate={onPhaseUpdate}

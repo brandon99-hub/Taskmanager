@@ -321,6 +321,32 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
     return markers;
   }, [timelineData]);
 
+  // Generate daily markers for detailed timeline
+  const dailyMarkers = useMemo(() => {
+    if (!timelineData) return [];
+    
+    const markers: Array<{
+      day: number;
+      date: Date;
+      position: number;
+      isWeekend: boolean;
+    }> = [];
+    
+    for (let i = 0; i <= timelineData.totalDays; i++) {
+      const dayDate = new Date(timelineData.projectStart);
+      dayDate.setDate(dayDate.getDate() + i);
+      
+      markers.push({
+        day: i + 1,
+        date: dayDate,
+        position: (i * timelineData.dayWidth) + timelineData.timelineOffset,
+        isWeekend: dayDate.getDay() === 0 || dayDate.getDay() === 6 // Sunday or Saturday
+      });
+    }
+    
+    return markers;
+  }, [timelineData]);
+
   if (!timelineData) {
     return (
       <Card>
@@ -458,19 +484,39 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                   
                   {/* Timeline Grid - Starts exactly where milestone bars begin */}
                   <div className="flex-1 relative">
-                    <div className="flex">
+                    {/* Weekly Markers - Top row with week numbers and dates */}
+                    <div className="flex" style={{ height: '44px' }}>
                       {timelineMarkers.map((marker) => (
                         <div
                           key={marker.week}
-                          className="border-r border-gray-200 text-center text-xs text-gray-600 p-2 bg-gradient-to-b from-gray-50 to-white"
+                          className="border-r border-gray-200 text-center text-xs text-gray-600 p-1 bg-gradient-to-b from-gray-50 to-white flex flex-col justify-center"
                           style={{ 
                             width: 7 * timelineData.dayWidth,
-                            // Ensure week headers align with timeline bars
+                            minWidth: 7 * timelineData.dayWidth,
                             position: 'relative'
                           }}
                         >
                           <div className="font-semibold text-gray-800">Week {marker.week}</div>
                           <div className="text-gray-500">{marker.date.toLocaleDateString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    {/* Daily Markers - Bottom row with day numbers */}
+                    <div className="flex" style={{ height: '24px' }}>
+                      {dailyMarkers.map((marker) => (
+                        <div
+                          key={`day-${marker.day}`}
+                          className={`text-center text-xs border-r border-gray-100 flex items-center justify-center ${
+                            marker.isWeekend ? 'bg-gray-100 text-gray-500' : 'bg-white text-gray-700'
+                          }`}
+                          style={{ 
+                            width: timelineData.dayWidth,
+                            minWidth: timelineData.dayWidth,
+                            position: 'relative'
+                          }}
+                        >
+                          <div className="font-medium">{marker.date.getDate()}</div>
                         </div>
                       ))}
                     </div>
