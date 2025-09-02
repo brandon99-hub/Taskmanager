@@ -275,6 +275,33 @@ export const projectPhases = pgTable("project_phases", {
   uniqueProjectPhase: index("unique_project_phase").on(table.projectId, table.phaseNumber),
 }));
 
+// Contracts table for managing project contracts
+export const contracts = pgTable("contracts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  contractNumber: varchar("contract_number", { length: 50 }).notNull().unique(),
+  projectId: varchar("project_id").references(() => projects.id, { onDelete: 'cascade' }).notNull(),
+  clientName: varchar("client_name", { length: 200 }).notNull(),
+  clientEmail: varchar("client_email", { length: 200 }).notNull(),
+  clientPhone: varchar("client_phone", { length: 50 }),
+  clientAddress: text("client_address"),
+  contractType: varchar("contract_type", { length: 20 }).notNull(), // fixed_price, time_materials, milestone_based
+  totalValue: decimal("total_value", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).notNull().default("KES"),
+  startDate: timestamp("start_date").notNull(),
+  endDate: timestamp("end_date").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("draft"), // draft, pending_approval, approved, active, completed, terminated
+  signedDate: timestamp("signed_date"),
+  createdBy: varchar("created_by").references(() => users.id).notNull(),
+  projectScope: text("project_scope"),
+  deliverables: jsonb("deliverables"), // Array of deliverable items
+  paymentTerms: text("payment_terms"),
+  specialClauses: jsonb("special_clauses"), // Array of special clauses
+  responsibilities: jsonb("responsibilities"), // Object with client and contractor responsibilities
+  timeline: jsonb("timeline"), // Array of timeline phases
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Module-milestone relationship table (many modules can belong to one milestone)
 export const moduleMilestones = pgTable("module_milestones", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

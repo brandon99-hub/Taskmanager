@@ -1098,7 +1098,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Allow all authenticated users to create phases (they're just metadata)
       const phases = await storage.createProjectPhases(req.params.id);
-      res.status(201).json(phases);
+      
+      // Check if phases were already existing (not newly created)
+      const existingPhases = await storage.getProjectPhases(req.params.id);
+      if (existingPhases.length > 0 && phases.length === existingPhases.length) {
+        // Phases already existed, return 409 to indicate they already exist
+        res.status(409).json(phases);
+      } else {
+        // New phases were created
+        res.status(201).json(phases);
+      }
     } catch (error) {
       console.error("Error creating project phases:", error);
       res.status(500).json({ message: "Failed to create project phases" });
@@ -1156,6 +1165,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching phase deliverables:", error);
       res.status(500).json({ message: "Failed to fetch phase deliverables" });
+    }
+  });
+
+  // Contract management routes
+  app.get('/api/contracts', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const contracts = await storage.getContracts();
+      res.json(contracts);
+    } catch (error) {
+      console.error("Error fetching contracts:", error);
+      res.status(500).json({ message: "Failed to fetch contracts" });
+    }
+  });
+
+  app.get('/api/contracts/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const contract = await storage.getContract(req.params.id);
+      if (!contract) {
+        return res.status(404).json({ message: "Contract not found" });
+      }
+      res.json(contract);
+    } catch (error) {
+      console.error("Error fetching contract:", error);
+      res.status(500).json({ message: "Failed to fetch contract" });
+    }
+  });
+
+  app.post('/api/contracts', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const contract = await storage.createContract(req.body);
+      res.status(201).json(contract);
+    } catch (error) {
+      console.error("Error creating contract:", error);
+      res.status(500).json({ message: "Failed to create contract" });
+    }
+  });
+
+  app.put('/api/contracts/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const contract = await storage.updateContract(req.params.id, req.body);
+      res.json(contract);
+    } catch (error) {
+      console.error("Error updating contract:", error);
+      res.status(500).json({ message: "Failed to update contract" });
     }
   });
 

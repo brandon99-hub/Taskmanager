@@ -17,6 +17,7 @@ import {
   subtasks,
   subtaskDependencies,
   projectPhases,
+  contracts,
   type User,
   type UpsertUser,
   type Team,
@@ -154,6 +155,12 @@ export interface IStorage {
   completePhaseDeliverable(deliverableId: string): Promise<any>;
   getPhaseReports(phaseId: string): Promise<any[]>;
   createPhaseReport(phaseId: string, report: any): Promise<any>;
+
+  // Contract operations
+  getContracts(): Promise<any[]>;
+  getContract(contractId: string): Promise<any>;
+  createContract(contract: any): Promise<any>;
+  updateContract(contractId: string, contract: any): Promise<any>;
 
   // Project charter operations
   getProjectCharter(projectId: string): Promise<any>;
@@ -2366,6 +2373,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createProjectPhases(projectId: string): Promise<any[]> {
+    // Check if phases already exist for this project
+    const existingPhases = await this.getProjectPhases(projectId);
+    if (existingPhases.length > 0) {
+      return existingPhases; // Return existing phases instead of creating duplicates
+    }
+    
     // Import phase constants for default phases
     const { PROJECT_PHASES } = await import('../shared/phaseConstants');
     
@@ -2644,6 +2657,81 @@ export class DatabaseStorage implements IStorage {
   async updateProjectCharter(projectId: string, charter: any): Promise<any> {
     // TODO: Implement when project charter table is created
     return null;
+  }
+
+  // Contract operations
+  async getContracts(): Promise<any[]> {
+    const result = await db
+      .select({
+        contract: contracts,
+        project: projects,
+        creator: users,
+      })
+      .from(contracts)
+      .leftJoin(projects, eq(contracts.projectId, projects.id))
+      .leftJoin(users, eq(contracts.createdBy, users.id))
+      .orderBy(desc(contracts.createdAt));
+    
+    return result.map(row => ({
+      ...row.contract,
+      projectName: row.project?.name || 'Unknown Project',
+      createdBy: row.creator?.firstName + ' ' + row.creator?.lastName || 'Unknown User',
+    }));
+  }
+
+  async getContract(contractId: string): Promise<any> {
+    const [result] = await db
+      .select({
+        contract: contracts,
+        project: projects,
+        creator: users,
+      })
+      .from(contracts)
+      .leftJoin(projects, eq(contracts.projectId, projects.id))
+      .leftJoin(users, eq(contracts.createdBy, users.id))
+      .where(eq(contracts.id, contractId));
+    
+    if (!result) return null;
+    
+    return {
+      ...result.contract,
+      projectName: result.project?.name || 'Unknown Project',
+      createdBy: result.creator?.firstName + ' ' + result.creator?.lastName || 'Unknown User',
+    };
+  }
+
+  async createContract(contractData: any): Promise<any> {
+    // Generate contract number if not provided
+    if (!contractData.contractNumber) {
+      const year = new Date().getFullYear();
+      const count = await db.select({ count: sql<number>`count(*)` }).from(contracts);
+      const contractNumber = `CON-${year}-${String(count[0].count + 1).padStart(4, '0')}`;
+      contractData.contractNumber = contractNumber;
+    }
+
+    const [createdContract] = await db
+      .insert(contracts)
+      .values({
+        ...contractData,
+        createdAt: new Date() as any,
+        updatedAt: new Date() as any,
+      } as any)
+      .returning();
+    
+    return createdContract;
+  }
+
+  async updateContract(contractId: string, contractData: any): Promise<any> {
+    const [updatedContract] = await db
+      .update(contracts)
+      .set({
+        ...contractData,
+        updatedAt: new Date() as any,
+      } as any)
+      .where(eq(contracts.id, contractId))
+      .returning();
+    
+    return updatedContract;
   }
 
   // Module deadline and status operations

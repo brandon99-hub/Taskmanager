@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useScreenSize } from "@/hooks/use-mobile";
-import { BarChart3, Bell, Home, FolderOpen, CheckSquare, FileText, Users, LogOut, Menu, User, X, Check, CheckCheck, Clock, AlertTriangle, Info } from "lucide-react";
+import { BarChart3, Bell, Home, FolderOpen, CheckSquare, FileText, Users, LogOut, Menu, User, X, Check, CheckCheck, Clock, AlertTriangle, Info, FileSignature } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -407,9 +407,15 @@ export default function Navigation() {
                       <span>Profile</span>
                     </DropdownMenuItem>
                   </Link>
-                  {/* Executive Dashboard - Only for Admin and Manager */}
+                  {/* Admin Menu Items - Only for Admin and Manager */}
                   {isAdminRole() && (
                     <>
+                      <Link href="/contracts">
+                        <DropdownMenuItem data-testid="menu-contracts">
+                          <FileSignature className="mr-2 h-4 w-4" />
+                          <span>Contracts</span>
+                        </DropdownMenuItem>
+                      </Link>
                       <Link href="/executive-dashboard">
                         <DropdownMenuItem data-testid="menu-executive-dashboard">
                           <BarChart3 className="mr-2 h-4 w-4" />

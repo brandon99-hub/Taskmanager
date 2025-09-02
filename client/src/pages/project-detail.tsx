@@ -170,10 +170,9 @@ export default function ProjectDetail() {
         });
         if (!createResponse.ok && createResponse.status !== 409) {
           // 409 means phases already exist, which is fine
-          console.warn('Failed to create phases, continuing with fetch');
         }
       } catch (error) {
-        console.warn('Error creating phases:', error);
+        // Error creating phases, continue with fetch
       }
       
       // Fetch the actual phases from server

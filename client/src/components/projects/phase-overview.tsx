@@ -174,7 +174,6 @@ export default function PhaseOverview({
     if (modules && phases) {
       // This will trigger the server-side automation when the component re-renders
       // The server automation runs automatically when subtasks are updated
-      console.log('Phase overview updated - server automation will run automatically');
     }
   }, [modules, phases]);
 
