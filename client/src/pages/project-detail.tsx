@@ -52,6 +52,7 @@ export default function ProjectDetail() {
     description?: string;
     priority: 'low' | 'medium' | 'high' | 'critical';
     status: 'not_started' | 'in_progress' | 'fc_review' | 'qa' | 'client_review' | 'completed' | 'overdue' | 'on_hold' | 'cancelled';
+    billingStatus?: 'none' | 'to_send' | 'sent' | 'paid' | 'overdue' | 'processing';
     startDate?: string;
     dueDate?: string;
     estimatedHours?: number;
@@ -70,6 +71,31 @@ export default function ProjectDetail() {
     createdAt: string;
     updatedAt: string;
     subtasks?: any[];
+    // Phase 3 specific fields
+    milestoneId?: string; // For modules under milestones
+    feeAmount?: number; // For milestones (billing entities)
+    expectedInvoiceDate?: string; // For milestones
+    expectedCollectionDate?: string; // For milestones
+    isMilestone?: boolean; // Flag to identify if this is a milestone
+    modules?: Module[]; // Nested modules for milestones
+  }
+
+  interface Milestone {
+    id: string;
+    name: string;
+    description?: string;
+    startDate?: string;
+    endDate?: string;
+    feeAmount: number;
+    billingStatus: string;
+    expectedInvoiceDate: string;
+    expectedCollectionDate: string;
+    invoiceSentAt?: string;
+    paymentReceivedAt?: string;
+    overdueFlag: boolean;
+    createdAt: string;
+    updatedAt: string;
+    modules?: Module[];
   }
 
   const auth = useAuth() as any;
@@ -133,7 +159,8 @@ export default function ProjectDetail() {
     enabled: !!isAuthenticated && !!projectId,
   });
 
-  const { data: milestones = [], isLoading: milestonesLoading } = useQuery<any[]>({
+  // Fetch milestones directly from the milestones API
+  const { data: milestones = [], isLoading: milestonesLoading } = useQuery<Milestone[]>({
     queryKey: ['/api/projects', projectId, 'milestones'],
     queryFn: async () => {
       if (!projectId) return [];
@@ -679,7 +706,7 @@ export default function ProjectDetail() {
 
               {/* Module Summary */}
               <div className="space-y-4">
-                <h4 className="font-medium text-gray-900">Module Progress</h4>
+                <h4 className="font-medium text-gray-900">Milestone Progress</h4>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span>Weight-Based Progress:</span>
@@ -764,10 +791,10 @@ export default function ProjectDetail() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <nav className="flex" aria-label="Tabs">
               {[
-                { id: 'modules', name: 'Modules', description: 'Track project modules and tasks' },
+                { id: 'modules', name: 'Milestones', description: 'Track project milestones and tasks' },
                 { id: 'phases', name: 'Phases', description: 'Manage project phases and workflow' },
                 { id: 'gantt', name: 'Gantt Chart', description: 'Visualize project timeline' },
-                { id: 'milestones', name: 'Milestones', description: 'Manage billing milestones' }
+                { id: 'milestones', name: 'Billing Milestones', description: 'Manage billing milestones' }
               ].map((tab, index) => (
                 <button
                   key={tab.id}
@@ -899,11 +926,11 @@ export default function ProjectDetail() {
 
         {activeTab === 'modules' && (
           <div className="space-y-6">
-            {/* Modules Table */}
+            {/* Milestones Table */}
             {modulesLoading ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>Modules</CardTitle>
+                  <CardTitle>Milestones</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="animate-pulse space-y-4">

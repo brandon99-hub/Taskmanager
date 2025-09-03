@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Download, X, CalendarDays, UserCircle2, Users, DollarSign, ChevronDown, ChevronRight, Clock, FolderOpen } from "lucide-react";
+import { Plus, Download, X, CalendarDays, UserCircle2, Users, DollarSign, ChevronDown, ChevronRight, Clock, FolderOpen, User } from "lucide-react";
 import { useLocation, useSearch } from "wouter";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
@@ -351,17 +351,36 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     enabled: isEditMode && isOpen && !!project?.id,
   });
 
-  // Fetch existing milestones in edit mode
+  // Fetch existing milestones in edit mode (from modules data since milestones are now part of modules)
   const { data: existingMilestones = [], isLoading: milestonesLoading, error: milestonesError } = useQuery<any[]>({
     queryKey: ['/api/projects', project?.id, 'milestones'],
     queryFn: async () => {
       if (!project?.id) return [];
-      const res = await fetch(`/api/projects/${project.id}/milestones`, { credentials: 'include', cache: 'no-store' });
+      // Get milestones from modules data since milestones are now returned as modules with isMilestone: true
+      const res = await fetch(`/api/projects/${project.id}/modules`, { credentials: 'include', cache: 'no-store' });
       if (!res.ok) {
         return [];
       }
-      const data = await res.json();
-      return data;
+      const modulesData = await res.json();
+      // Filter only milestone modules and format them for the milestone form
+      const milestoneModules = modulesData.filter((module: any) => module.isMilestone);
+      console.log('Found milestone modules:', milestoneModules);
+      const formattedMilestones = milestoneModules.map((milestone: any) => ({
+        id: milestone.id,
+        name: milestone.name,
+        description: milestone.description,
+        feeAmount: milestone.feeAmount,
+        expectedInvoiceDate: milestone.expectedInvoiceDate,
+        expectedCollectionDate: milestone.expectedCollectionDate,
+        billingStatus: milestone.billingStatus,
+        phaseNumber: milestone.phaseNumber,
+        phaseName: milestone.phaseName,
+        startDate: milestone.startDate,
+        endDate: milestone.dueDate,
+        status: milestone.status
+      }));
+      console.log('Formatted milestones for form:', formattedMilestones);
+      return formattedMilestones;
     },
     enabled: isEditMode && isOpen && !!project?.id,
   });
@@ -430,7 +449,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           const phaseNumber = module.phaseNumber || 1;
           const phaseName = module.phaseName || `Phase ${phaseNumber}`;
           
-          console.log(`Processing module ${module.name} for phase ${phaseNumber}`);
+          console.log(`Processing module ${module.name} for phase ${phaseNumber}, milestoneId: ${module.milestoneId}`);
           
           if (!phaseMap.has(phaseNumber)) {
             phaseMap.set(phaseNumber, {
@@ -438,11 +457,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
               name: phaseName,
               description: `Phase ${phaseNumber}: ${phaseName}`,
               status: 'not_started',
-              modules: []
+              phaseNumber: phaseNumber,
+              modules: [],
+              milestones: [] // Initialize milestones array for all phases
             });
           }
           
-          phaseMap.get(phaseNumber).modules.push({
+          const formattedModule = {
             ...module,
             // Ensure module dates are properly formatted for form inputs
             startDate: module.startDate ? new Date(module.startDate).toISOString().slice(0, 10) : '',
@@ -457,27 +478,125 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
               assignedDevId: subtask.assignedDevId || undefined,
               assignedConsultantId: subtask.assignedConsultantId || undefined
             }))
-          });
+          };
+          
+          // For Phase 3, check if this is a milestone or a module under a milestone
+          if (phaseNumber === 3) {
+            if (module.isMilestone) {
+              // This is a milestone itself - add it to milestones array
+              const milestone = {
+                ...formattedModule,
+                startDate: module.startDate ? new Date(module.startDate).toISOString().slice(0, 10) : '',
+                endDate: module.dueDate ? new Date(module.dueDate).toISOString().slice(0, 10) : '',
+                expectedInvoiceDate: module.expectedInvoiceDate ? new Date(module.expectedInvoiceDate).toISOString().slice(0, 10) : '',
+                expectedCollectionDate: module.expectedCollectionDate ? new Date(module.expectedCollectionDate).toISOString().slice(0, 10) : '',
+                feeAmount: module.feeAmount ? String(module.feeAmount) : '',
+                modules: (module.modules || []).map((nestedModule: any) => ({
+                  ...nestedModule,
+                  // Format dates for nested modules
+                  startDate: nestedModule.startDate ? new Date(nestedModule.startDate).toISOString().slice(0, 10) : '',
+                  dueDate: nestedModule.dueDate ? new Date(nestedModule.dueDate).toISOString().slice(0, 10) : '',
+                  // Format subtasks within nested modules
+                  subtasks: (nestedModule.subtasks || []).map((subtask: any) => ({
+                    ...subtask,
+                    startDate: subtask.startDate ? new Date(subtask.startDate).toISOString().slice(0, 10) : '',
+                    dueDate: subtask.dueDate ? new Date(subtask.dueDate).toISOString().slice(0, 10) : '',
+                    estimatedDays: subtask.estimatedDays ? String(subtask.estimatedDays) : '',
+                    assignedDevId: subtask.assignedDevId || undefined,
+                    assignedConsultantId: subtask.assignedConsultantId || undefined
+                  }))
+                }))
+              };
+              phaseMap.get(phaseNumber).milestones.push(milestone);
+            } else if (module.milestoneId) {
+              // This is a module under a milestone - find the milestone and add the module to it
+              let milestone = phaseMap.get(phaseNumber).milestones.find((m: any) => m.id === module.milestoneId);
+              if (!milestone) {
+                // Find the milestone in existingMilestones
+                const existingMilestone = existingMilestones.find((m: any) => m.id === module.milestoneId);
+                if (existingMilestone) {
+                  milestone = {
+                    ...existingMilestone,
+                    startDate: existingMilestone.startDate ? new Date(existingMilestone.startDate).toISOString().slice(0, 10) : '',
+                    endDate: existingMilestone.endDate ? new Date(existingMilestone.endDate).toISOString().slice(0, 10) : '',
+                    expectedInvoiceDate: existingMilestone.expectedInvoiceDate ? new Date(existingMilestone.expectedInvoiceDate).toISOString().slice(0, 10) : '',
+                    expectedCollectionDate: existingMilestone.expectedCollectionDate ? new Date(existingMilestone.expectedCollectionDate).toISOString().slice(0, 10) : '',
+                    feeAmount: existingMilestone.feeAmount ? String(existingMilestone.feeAmount) : '',
+                    modules: []
+                  };
+                  phaseMap.get(phaseNumber).milestones.push(milestone);
+                }
+              }
+              if (milestone) {
+                milestone.modules.push(formattedModule);
+              }
+            } else {
+              // Regular module in Phase 3 (shouldn't happen but handle it)
+              phaseMap.get(phaseNumber).modules.push(formattedModule);
+            }
+          } else {
+            // For other phases, check if this is a milestone or regular module
+            if (module.isMilestone) {
+              // This is a milestone - add it to milestones array for this phase
+              const milestone = {
+                ...formattedModule,
+                startDate: module.startDate ? new Date(module.startDate).toISOString().slice(0, 10) : '',
+                endDate: module.dueDate ? new Date(module.dueDate).toISOString().slice(0, 10) : '',
+                expectedInvoiceDate: module.expectedInvoiceDate ? new Date(module.expectedInvoiceDate).toISOString().slice(0, 10) : '',
+                expectedCollectionDate: module.expectedCollectionDate ? new Date(module.expectedCollectionDate).toISOString().slice(0, 10) : '',
+                feeAmount: module.feeAmount ? String(module.feeAmount) : '',
+                modules: [] // Other phases don't have nested modules
+              };
+              phaseMap.get(phaseNumber).milestones.push(milestone);
+            } else {
+              // Regular module - add to modules array
+              phaseMap.get(phaseNumber).modules.push(formattedModule);
+            }
+          }
         });
         
         console.log('Phase map created:', Array.from(phaseMap.entries()));
         
-        // Merge modules into existing phases
+        // Merge modules and milestones into existing phases
         updatedPhases.forEach(phase => {
-          const phaseModules = phaseMap.get(parseInt(phase.id));
-          if (phaseModules) {
-            phase.modules = phaseModules.modules;
+          const phaseData = phaseMap.get(parseInt(phase.id));
+          if (phaseData) {
+            phase.modules = phaseData.modules;
+            phase.milestones = phaseData.milestones;
             // Update phase name if it was customized
-            if (phaseModules.name !== `Phase ${phase.id}`) {
-              phase.name = phaseModules.name;
+            if (phaseData.name !== `Phase ${phase.id}`) {
+              phase.name = phaseData.name;
             }
           } else {
             phase.modules = [];
+            phase.milestones = [];
           }
         });
         
         console.log('Updated phases with existing modules:', updatedPhases);
         console.log('Phase 1 modules count:', updatedPhases[0]?.modules?.length);
+        
+        // Initialize subtasks as collapsed in edit mode - collapse ALL subtasks by default
+        const collapsedKeys = new Set<string>();
+        updatedPhases.forEach((phase, phaseIndex) => {
+          if (phase.phaseNumber === 3) {
+            // For Phase 3, collapse subtasks under each module
+            phase.milestones?.forEach((milestone: any, milestoneIndex: number) => {
+              milestone.modules?.forEach((module: any, moduleIndex: number) => {
+                // Always collapse subtasks when editing, regardless of whether they have subtasks
+                collapsedKeys.add(`module-${phaseIndex}-${moduleIndex}`);
+              });
+            });
+          } else {
+            // For other phases, collapse subtasks under each module
+            phase.modules?.forEach((module: any, moduleIndex: number) => {
+              // Always collapse subtasks when editing, regardless of whether they have subtasks
+              collapsedKeys.add(`module-${phaseIndex}-${moduleIndex}`);
+            });
+          }
+        });
+        setCollapsedModuleSubtasks(collapsedKeys);
+        
         return updatedPhases;
       });
       
@@ -486,10 +605,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       console.log('No existing modules found for project:', project?.id);
       // Keep existing phases but clear their modules
       setPhases(prevPhases => 
-        prevPhases.map(phase => ({ ...phase, modules: [] }))
+        prevPhases.map(phase => ({ ...phase, modules: [], milestones: [] }))
       );
     }
-  }, [isEditMode, existingModules, project]);
+  }, [isEditMode, existingModules, existingMilestones, project]);
 
   // Keep modules state in sync with phases (only for new projects, not edit mode)
   useEffect(() => {
@@ -753,16 +872,47 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       return;
     }
 
-    // Extract all modules from phases
-    const allModules = phases.flatMap((phase, phaseIndex) => 
-      (phase.modules || []).map((module: any) => ({
+    // Extract all modules from phases (handling both regular phases and Phase 3 structure)
+    const allModules = phases.flatMap((phase, phaseIndex) => {
+      if (phase.phaseNumber === 3) {
+        // Phase 3: Extract modules from milestones
+        return (phase.milestones || []).flatMap((milestone: any, milestoneIndex: number) => 
+          (milestone.modules || []).map((module: any) => ({
         ...module,
         // Ensure phase information is preserved
         phaseNumber: module.phaseNumber || phaseIndex + 1,
-        phaseName: module.phaseName || phase.phaseName || phase.name || `Phase ${phaseIndex + 1}`
+            phaseName: module.phaseName || phase.phaseName || phase.name || `Phase ${phaseIndex + 1}`,
+            // Add milestone information for Phase 3
+            milestoneId: milestone.id,
+            milestoneName: milestone.name,
+            milestoneIndex: milestoneIndex
       }))
     );
+      } else {
+        // Regular phases (1,2,4,5,6): Extract modules directly
+        return (phase.modules || []).map((module: any) => ({
+          ...module,
+          // Ensure phase information is preserved
+          phaseNumber: module.phaseNumber || phaseIndex + 1,
+          phaseName: module.phaseName || phase.phaseName || phase.name || `Phase ${phaseIndex + 1}`
+        }));
+      }
+    });
+    // Extract all milestones from Phase 3
+    const allMilestones = phases.flatMap((phase, phaseIndex) => {
+      if (phase.phaseNumber === 3) {
+        return (phase.milestones || []).map((milestone: any) => ({
+          ...milestone,
+          // Ensure phase information is preserved
+          phaseNumber: phaseIndex + 1,
+          phaseName: phase.phaseName || phase.name || `Phase ${phaseIndex + 1}`
+        }));
+      }
+      return [];
+    });
+    
     console.log('All modules from phases:', allModules);
+    console.log('All milestones from Phase 3:', allMilestones);
     console.log('Phases state:', phases);
     console.log('Module phase numbers:', allModules.map(m => ({ name: m.name, phaseNumber: m.phaseNumber, phaseName: m.phaseName })));
     
@@ -819,11 +969,11 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       onSuccess: async (project) => {
         console.log('Project mutation successful:', project);
         
-        // Handle modules for both create and edit modes
-        if (completeModules.length > 0) {
+        // Handle modules and milestones for both create and edit modes
+        if (completeModules.length > 0 || allMilestones.length > 0) {
           try {
             console.log('Processing modules and milestones...');
-            await processModulesAndMilestones(completeModules, project, isEditMode);
+            await processModulesAndMilestones(completeModules, project, isEditMode, allMilestones);
             
             // Only show success and close modal after milestones are processed successfully
             setIsOpen(false);
@@ -967,7 +1117,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     }
     
     try {
-      const num = Number(numValue);
+      // Remove commas and other formatting characters
+      const cleanValue = String(numValue).replace(/[,\s]/g, '');
+      const num = Number(cleanValue);
       if (isNaN(num)) {
         console.warn('Invalid number value:', numValue);
         return undefined;
@@ -992,8 +1144,110 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   };
 
   // Enhanced module and milestone processing with improved batch handling
-  const processModulesAndMilestones = async (validated: any[], project: any, isEditMode: boolean) => {
-    console.log('processModulesAndMilestones called with:', { validated, project, isEditMode });
+  const processModulesAndMilestones = async (validated: any[], project: any, isEditMode: boolean, milestones: any[] = []) => {
+    console.log('processModulesAndMilestones called with:', { validated, project, isEditMode, milestones });
+    
+    // Process milestones first (especially important for Phase 3)
+    if (milestones.length > 0) {
+      setMilestoneProgress({ current: 0, total: milestones.length, message: 'Processing billing milestones...' });
+      
+      const milestoneResults: { milestone: any; success: boolean; error?: string }[] = [];
+      
+      for (let i = 0; i < milestones.length; i++) {
+        const milestone = milestones[i];
+        setMilestoneProgress({ 
+          current: i + 1, 
+          total: milestones.length, 
+          message: `Processing milestone ${i + 1}/${milestones.length}...` 
+        });
+        
+        try {
+          if (isEditMode && (milestone as any).id) {
+            // Update existing milestone
+            const milestonePayload = {
+              name: milestone.name,
+              description: milestone.description || undefined,
+              feeAmount: formatNumber(milestone.feeAmount),
+              startDate: formatDate(milestone.startDate),
+              endDate: formatDate(milestone.endDate),
+              expectedInvoiceDate: formatDate(milestone.expectedInvoiceDate),
+              expectedCollectionDate: formatDate(milestone.expectedCollectionDate),
+              billingStatus: milestone.billingStatus || 'none',
+            };
+            
+            // Clean the payload before sending
+            const cleanedMilestonePayload = cleanPayload(milestonePayload);
+            console.log('Cleaned milestone update payload:', cleanedMilestonePayload);
+            
+            const updateResponse = await apiRequest('PUT', `/api/milestones/${(milestone as any).id}`, cleanedMilestonePayload);
+            
+            if (!updateResponse.ok) {
+              const errorText = await updateResponse.text();
+              throw new Error(`HTTP ${updateResponse.status}: ${errorText}`);
+            }
+          } else {
+            // Create new milestone
+            const milestonePayload = {
+              name: milestone.name,
+              description: milestone.description || undefined,
+              feeAmount: formatNumber(milestone.feeAmount),
+              startDate: formatDate(milestone.startDate),
+              endDate: formatDate(milestone.endDate),
+              expectedInvoiceDate: formatDate(milestone.expectedInvoiceDate),
+              expectedCollectionDate: formatDate(milestone.expectedCollectionDate),
+              billingStatus: milestone.billingStatus || 'none',
+              projectId: project.id,
+              createdById: user.id,
+            };
+            
+            console.log('Creating milestone with payload:', milestonePayload);
+            
+            // Clean the payload before sending
+            const cleanedMilestonePayload = cleanPayload(milestonePayload);
+            console.log('Cleaned milestone payload:', cleanedMilestonePayload);
+            
+            const milestoneResponse = await apiRequest('POST', `/api/projects/${project.id}/milestones`, cleanedMilestonePayload);
+            
+            if (!milestoneResponse.ok) {
+              const errorText = await milestoneResponse.text();
+              throw new Error(`HTTP ${milestoneResponse.status}: ${errorText}`);
+            }
+
+            const milestoneData = await milestoneResponse.json();
+            
+            // Store the milestone ID for later use in module creation
+            milestone.id = milestoneData.id;
+
+            // Invalidate queries to refresh the UI
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'milestones'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'phases'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
+          }
+          
+          milestoneResults.push({ milestone, success: true });
+        } catch (error: any) {
+          console.error('Milestone processing failed:', error?.message || 'Unknown error');
+          milestoneResults.push({ milestone, success: false, error: error?.message || 'Unknown error' });
+        }
+      }
+      
+      // Generate results report for milestones
+      const successfulMilestones = milestoneResults.filter(r => r.success);
+      const failedMilestones = milestoneResults.filter(r => !r.success);
+      
+      if (failedMilestones.length === 0 && successfulMilestones.length > 0) {
+        toast({
+          title: 'Success',
+          description: `All ${successfulMilestones.length} billing milestones processed successfully!`,
+        });
+      } else if (failedMilestones.length > 0) {
+        toast({
+          title: 'Milestone Processing Issues',
+          description: `${successfulMilestones.length} of ${milestoneResults.length} billing milestones processed successfully. ${failedMilestones.length} failed.`,
+          variant: 'destructive'
+        });
+      }
+    }
     
     // Detect changes if in edit mode
     let processableModules = validated;
@@ -1127,6 +1381,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                   createdById: user.id,
                   weight: 2,
                   progressPercent: 0,
+                  // Add milestone relationship for Phase 3 modules
+                  ...(module.milestoneId && { milestoneId: module.milestoneId }),
                 };
                 
                 console.log('Creating module with payload:', modulePayload);
@@ -1199,105 +1455,6 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         toast({
           title: 'Failed',
           description: `All ${failed.length} modules failed to process.`,
-          variant: 'destructive'
-        });
-      }
-    }
-    
-    // Process billing milestones separately
-    if (milestones.length > 0) {
-      setMilestoneProgress({ current: 0, total: milestones.length, message: 'Processing billing milestones...' });
-      
-      const milestoneResults: { milestone: any; success: boolean; error?: string }[] = [];
-      
-      for (let i = 0; i < milestones.length; i++) {
-        const milestone = milestones[i];
-          setMilestoneProgress({ 
-          current: i + 1, 
-          total: milestones.length, 
-          message: `Processing milestone ${i + 1}/${milestones.length}...` 
-        });
-        
-        try {
-          if (isEditMode && (milestone as any).id) {
-            // Update existing milestone
-            const milestonePayload = {
-              name: milestone.name,
-              description: milestone.description || undefined,
-              feeAmount: formatNumber(milestone.feeAmount),
-              expectedInvoiceDate: formatDate(milestone.expectedInvoiceDate),
-              expectedCollectionDate: formatDate(milestone.expectedCollectionDate),
-              billingStatus: milestone.billingStatus || 'none',
-            };
-            
-            // Clean the payload before sending
-            const cleanedMilestonePayload = cleanPayload(milestonePayload);
-            console.log('Cleaned milestone update payload:', cleanedMilestonePayload);
-            
-            const updateResponse = await apiRequest('PUT', `/api/milestones/${(milestone as any).id}`, cleanedMilestonePayload);
-            
-            if (!updateResponse.ok) {
-              const errorText = await updateResponse.text();
-              throw new Error(`HTTP ${updateResponse.status}: ${errorText}`);
-            }
-          } else {
-            // Create new milestone
-            const milestonePayload = {
-              name: milestone.name,
-              description: milestone.description || undefined,
-              feeAmount: formatNumber(milestone.feeAmount),
-              expectedInvoiceDate: formatDate(milestone.expectedInvoiceDate),
-              expectedCollectionDate: formatDate(milestone.expectedCollectionDate),
-              billingStatus: milestone.billingStatus || 'none',
-              projectId: project.id,
-              createdById: user.id,
-            };
-            
-            console.log('Creating milestone with payload:', milestonePayload);
-            console.log('Milestone payload types:', {
-              expectedInvoiceDate: typeof milestonePayload.expectedInvoiceDate,
-              expectedCollectionDate: typeof milestonePayload.expectedCollectionDate,
-              expectedInvoiceDateValue: milestonePayload.expectedInvoiceDate,
-              expectedCollectionDateValue: milestonePayload.expectedCollectionDate
-            });
-            
-            // Clean the payload before sending
-            const cleanedMilestonePayload = cleanPayload(milestonePayload);
-            console.log('Cleaned milestone payload:', cleanedMilestonePayload);
-            
-            const milestoneResponse = await apiRequest('POST', `/api/projects/${project.id}/milestones`, cleanedMilestonePayload);
-            
-            if (!milestoneResponse.ok) {
-              const errorText = await milestoneResponse.text();
-              throw new Error(`HTTP ${milestoneResponse.status}: ${errorText}`);
-            }
-
-            // Invalidate queries to refresh the UI
-            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'milestones'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'phases'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
-          }
-          
-          milestoneResults.push({ milestone, success: true });
-        } catch (error: any) {
-          console.error('Milestone processing failed:', error?.message || 'Unknown error');
-          milestoneResults.push({ milestone, success: false, error: error?.message || 'Unknown error' });
-        }
-      }
-      
-      // Generate results report for milestones
-      const successfulMilestones = milestoneResults.filter(r => r.success);
-      const failedMilestones = milestoneResults.filter(r => !r.success);
-      
-      if (failedMilestones.length === 0 && successfulMilestones.length > 0) {
-          toast({
-            title: 'Success',
-          description: `All ${successfulMilestones.length} billing milestones processed successfully!`,
-          });
-      } else if (failedMilestones.length > 0) {
-          toast({
-          title: 'Milestone Processing Issues',
-          description: `${successfulMilestones.length} of ${milestoneResults.length} billing milestones processed successfully. ${failedMilestones.length} failed.`,
           variant: 'destructive'
         });
       }
@@ -1421,6 +1578,119 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     const newPhases = [...phases];
     newPhases[phaseIndex].modules[moduleIndex] = {
       ...newPhases[phaseIndex].modules[moduleIndex],
+      [field]: value
+    };
+    setPhases(newPhases);
+  };
+
+  // Milestone helper functions for Phase 3
+  const addMilestoneToPhase = (phaseIndex: number) => {
+    const newMilestone = {
+      name: '',
+      feeAmount: '',
+      startDate: '',
+      endDate: '',
+      expectedInvoiceDate: '',
+      expectedCollectionDate: '',
+      modules: []
+    };
+    
+    const newPhases = [...phases];
+    if (!newPhases[phaseIndex].milestones) {
+      newPhases[phaseIndex].milestones = [];
+    }
+    newPhases[phaseIndex].milestones = [...newPhases[phaseIndex].milestones, newMilestone];
+    setPhases(newPhases);
+  };
+
+  const removeMilestoneFromPhase = (phaseIndex: number, milestoneIndex: number) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].milestones = newPhases[phaseIndex].milestones.filter((_: any, i: number) => i !== milestoneIndex);
+    setPhases(newPhases);
+  };
+
+  const updateMilestoneInPhase = (phaseIndex: number, milestoneIndex: number, field: string, value: any) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].milestones[milestoneIndex] = {
+      ...newPhases[phaseIndex].milestones[milestoneIndex],
+      [field]: value
+    };
+    
+    // Auto-calculate expected collection date when invoice date changes
+    if (field === 'expectedInvoiceDate' && value) {
+      const invoiceDate = new Date(value);
+      const collectionDate = new Date(invoiceDate);
+      collectionDate.setDate(collectionDate.getDate() + 30);
+      newPhases[phaseIndex].milestones[milestoneIndex].expectedCollectionDate = collectionDate.toISOString().split('T')[0];
+    }
+    
+    setPhases(newPhases);
+  };
+
+  // Module helper functions for Phase 3 milestones
+  const addModuleToMilestone = (phaseIndex: number, milestoneIndex: number) => {
+    const newModule = {
+      name: '',
+      priority: 'medium',
+      startDate: '',
+      dueDate: '',
+      subtasks: []
+    };
+    
+    const newPhases = [...phases];
+    if (!newPhases[phaseIndex].milestones[milestoneIndex].modules) {
+      newPhases[phaseIndex].milestones[milestoneIndex].modules = [];
+    }
+    newPhases[phaseIndex].milestones[milestoneIndex].modules = [...newPhases[phaseIndex].milestones[milestoneIndex].modules, newModule];
+    setPhases(newPhases);
+  };
+
+  const removeModuleFromMilestone = (phaseIndex: number, milestoneIndex: number, moduleIndex: number) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].milestones[milestoneIndex].modules = newPhases[phaseIndex].milestones[milestoneIndex].modules.filter((_: any, i: number) => i !== moduleIndex);
+    setPhases(newPhases);
+  };
+
+  const updateModuleInMilestone = (phaseIndex: number, milestoneIndex: number, moduleIndex: number, field: string, value: any) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex] = {
+      ...newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex],
+      [field]: value
+    };
+    setPhases(newPhases);
+  };
+
+  // Subtask helper functions for Phase 3 modules
+  const addSubtaskToModule = (phaseIndex: number, milestoneIndex: number, moduleIndex: number) => {
+    const newSubtask = {
+      name: '',
+      priority: 'medium',
+      status: 'not_started',
+      startDate: '',
+      dueDate: '',
+      estimatedDays: 1,
+      assignedDevId: undefined,
+      assignedConsultantId: undefined
+    };
+    
+    const newPhases = [...phases];
+    if (!newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks) {
+      newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks = [];
+    }
+    newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks = [...newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks, newSubtask];
+    setPhases(newPhases);
+  };
+
+  const removeSubtaskFromModule = (phaseIndex: number, milestoneIndex: number, moduleIndex: number, subtaskIndex: number) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks = newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks.filter((_: any, i: number) => i !== subtaskIndex);
+    setPhases(newPhases);
+  };
+
+  const updateSubtaskInModule = (phaseIndex: number, milestoneIndex: number, moduleIndex: number, subtaskIndex: number, field: string, value: any) => {
+    const newPhases = [...phases];
+    newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks[subtaskIndex] = {
+      ...newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks[subtaskIndex],
       [field]: value
     };
     setPhases(newPhases);
@@ -2036,7 +2306,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                 <div className="p-3 bg-gradient-to-br from-purple-500 to-blue-600 rounded-xl">
                   <Clock className="h-7 w-7 text-white" />
                 </div>
-                Project Phases & Modules
+                Project Phases & Milestones
                 <Badge variant="secondary" className="ml-3 bg-gradient-to-r from-purple-100 to-blue-100 text-purple-800 border-purple-200 px-4 py-2 text-sm font-medium">
                   {phases.length} phases
                 </Badge>
@@ -2061,6 +2331,18 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                           <Badge className={`px-4 py-2 text-sm font-medium ${getStatusColor(phase.status)}`}>
                             {phase.status.replace('_', ' ')}
                           </Badge>
+                      {phase.phaseNumber === 3 ? (
+                        <Button 
+                          type="button" 
+                          variant="outline"
+                          size="sm"
+                          onClick={() => addMilestoneToPhase(phaseIndex)}
+                          className="text-blue-700 border-blue-300 hover:bg-blue-50 hover:border-blue-400 transition-all duration-200 shadow-sm"
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Add Milestone
+                        </Button>
+                      ) : (
                       <Button 
                         type="button" 
                           variant="outline"
@@ -2069,15 +2351,483 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                             className="text-purple-700 border-purple-300 hover:bg-purple-50 hover:border-purple-400 transition-all duration-200 shadow-sm"
                         >
                             <Plus className="h-4 w-4 mr-2" />
-                          Add Module
+                          Add Milestone
                       </Button>
+                      )}
                       </div>
                       </div>
                     </div>
                     
                     {/* Phase Content */}
                     <div className="p-6 space-y-6">
-                      {phase.modules.map((module: any, moduleIndex: number) => (
+                      {/* Phase 3 Structure: Milestone → Module → Subtask */}
+                      {phase.phaseNumber === 3 ? (
+                        <div className="space-y-6">
+                          {phase.milestones && phase.milestones.length > 0 ? (
+                            phase.milestones.map((milestone: any, milestoneIndex: number) => (
+                              <div key={`milestone-${phase.id || phaseIndex}-${milestone.id || milestoneIndex}`} className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200 hover:border-blue-300 transition-all duration-200 shadow-sm">
+                                {/* Milestone Header */}
+                                <div className="flex items-center justify-between mb-6">
+                                  <div className="flex items-center gap-3">
+                                    <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg text-white font-semibold text-sm shadow-md">
+                                      {milestoneIndex + 1}
+                                    </div>
+                                    <div>
+                                      <h5 className="text-lg font-semibold text-gray-800">Milestone {milestoneIndex + 1}</h5>
+                                      <p className="text-sm text-gray-600">Billing milestone</p>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => removeMilestoneFromPhase(phaseIndex, milestoneIndex)}
+                                    className="text-red-600 hover:text-red-700 hover:bg-red-50 transition-all duration-200"
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                </div>
+
+                                {/* Milestone Fields */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium text-gray-700">Milestone Name</label>
+                                    <Input
+                                      placeholder="Enter milestone name"
+                                      value={milestone.name}
+                                      onChange={(e) => updateMilestoneInPhase(phaseIndex, milestoneIndex, 'name', e.target.value)}
+                                      className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium text-gray-700">Fee Amount (KSH)</label>
+                                    <Input
+                                      type="text"
+                                      placeholder="Enter amount in KSH"
+                                      value={milestone.feeAmount || ''}
+                                      onChange={(e) => {
+                                        const rawValue = e.target.value.replace(/[^\d.]/g, '');
+                                        let formattedValue = rawValue;
+                                        if (rawValue.includes('.')) {
+                                          const [whole, decimal] = rawValue.split('.');
+                                          formattedValue = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + decimal;
+                                        } else if (rawValue.length > 3) {
+                                          formattedValue = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                                        }
+                                        updateMilestoneInPhase(phaseIndex, milestoneIndex, 'feeAmount', formattedValue);
+                                      }}
+                                      className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium text-gray-700">Start Date</label>
+                                    <Input
+                                      type="date"
+                                      placeholder="Select start date"
+                                      value={milestone.startDate || ''}
+                                      onChange={(e) => updateMilestoneInPhase(phaseIndex, milestoneIndex, 'startDate', e.target.value)}
+                                      className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium text-gray-700">End Date</label>
+                                    <Input
+                                      type="date"
+                                      placeholder="Select end date"
+                                      value={milestone.endDate || ''}
+                                      onChange={(e) => updateMilestoneInPhase(phaseIndex, milestoneIndex, 'endDate', e.target.value)}
+                                      className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium text-gray-700">Expected Invoice Date</label>
+                                    <Input
+                                      type="date"
+                                      placeholder="Select invoice date"
+                                      value={milestone.expectedInvoiceDate || ''}
+                                      onChange={(e) => updateMilestoneInPhase(phaseIndex, milestoneIndex, 'expectedInvoiceDate', e.target.value)}
+                                      className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium text-gray-700">Expected Collection Date</label>
+                                    <Input
+                                      type="date"
+                                      placeholder="Auto-calculated (30 days after invoice)"
+                                      value={milestone.expectedCollectionDate || ''}
+                                      readOnly
+                                      className="border-green-300 bg-gray-50 text-gray-600 cursor-not-allowed"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-2">
+                                      Automatically calculated as 30 days after invoice date
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {/* Modules under this milestone */}
+                                <div className="border-t border-blue-200 pt-6">
+                                  <div className="flex items-center justify-between mb-4">
+                                    <h6 className="text-md font-semibold text-gray-800 flex items-center gap-2">
+                                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                      Modules ({(milestone.modules || []).length})
+                                    </h6>
+                                    <Button 
+                                      type="button" 
+                                      variant="outline" 
+                                      size="sm"
+                                      onClick={() => addModuleToMilestone(phaseIndex, milestoneIndex)}
+                                      className="text-green-600 border-green-300 hover:bg-green-50 hover:border-green-400 transition-all duration-200"
+                                    >
+                                      <Plus className="h-4 w-4 mr-2" />
+                                      Add Module
+                                    </Button>
+                                  </div>
+
+                                  {milestone.modules && milestone.modules.length > 0 ? (
+                                    <div className="space-y-4">
+                                      {milestone.modules.map((module: any, moduleIndex: number) => (
+                                        <div key={`module-${milestoneIndex}-${moduleIndex}`} className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-6 border border-green-200 hover:border-green-300 transition-all duration-200 shadow-sm">
+                                          {/* Module Header */}
+                                          <div className="flex items-center justify-between mb-4">
+                                            <div className="flex items-center gap-3">
+                                              <div className="flex items-center justify-center w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg text-white font-semibold text-sm shadow-md">
+                                                {moduleIndex + 1}
+                                              </div>
+                                              <div>
+                                                <h6 className="font-semibold text-gray-800 text-base">Module {moduleIndex + 1}</h6>
+                                                <p className="text-sm text-gray-600">Priority: {module.priority}</p>
+                                              </div>
+                                              <Badge className={`px-3 py-1 text-xs font-medium ${getPriorityColor(module.priority)}`}>
+                                                {module.priority}
+                                              </Badge>
+                                            </div>
+                                            <Button 
+                                              type="button" 
+                                              variant="ghost" 
+                                              size="sm"
+                                              onClick={() => removeModuleFromMilestone(phaseIndex, milestoneIndex, moduleIndex)}
+                                              className="text-red-600 hover:text-red-700 hover:bg-red-50 transition-all duration-200"
+                                            >
+                                              <X className="h-4 w-4" />
+                                            </Button>
+                                          </div>
+
+                                          {/* Module Fields */}
+                                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                                            <div className="space-y-2">
+                                              <label className="text-sm font-medium text-gray-700">Module Name</label>
+                                              <Input 
+                                                placeholder="Enter module name"
+                                                value={module.name}
+                                                onChange={(e) => updateModuleInMilestone(phaseIndex, milestoneIndex, moduleIndex, 'name', e.target.value)}
+                                                className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
+                                              />
+                                            </div>
+                                            <div className="space-y-2">
+                                              <label className="text-sm font-medium text-gray-700">Priority Level</label>
+                                              <Select 
+                                                value={module.priority}
+                                                onValueChange={(value) => updateModuleInMilestone(phaseIndex, milestoneIndex, moduleIndex, 'priority', value as any)}
+                                              >
+                                                <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="low">Low Priority</SelectItem>
+                                                  <SelectItem value="medium">Medium Priority</SelectItem>
+                                                  <SelectItem value="high">High Priority</SelectItem>
+                                                  <SelectItem value="critical">Critical Priority</SelectItem>
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+                                          </div>
+
+                                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                                            <div className="space-y-2">
+                                              <label className="text-sm font-medium text-gray-700">Start Date</label>
+                                              <Input 
+                                                type="date"
+                                                placeholder="Select start date"
+                                                value={module.startDate || ''}
+                                                onChange={(e) => updateModuleInMilestone(phaseIndex, milestoneIndex, moduleIndex, 'startDate', e.target.value)}
+                                                className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
+                                              />
+                                            </div>
+                                            <div className="space-y-2">
+                                              <label className="text-sm font-medium text-gray-700">Due Date</label>
+                                              <Input 
+                                                type="date"
+                                                placeholder="Select due date"
+                                                value={module.dueDate || ''}
+                                                onChange={(e) => updateModuleInMilestone(phaseIndex, milestoneIndex, moduleIndex, 'dueDate', e.target.value)}
+                                                className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
+                                              />
+                                            </div>
+                                          </div>
+
+                                          {/* Subtasks under this module */}
+                                          <div className="border-t border-green-200 pt-6">
+                                            <div className="flex items-center justify-between mb-4">
+                                              <div 
+                                                className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-all duration-200"
+                                                onClick={() => toggleModuleSubtasks(phaseIndex, moduleIndex)}
+                                              >
+                                                {areModuleSubtasksCollapsed(phaseIndex, moduleIndex) ? (
+                                                  <ChevronRight className="h-4 w-4 text-gray-500" />
+                                                ) : (
+                                                  <ChevronDown className="h-4 w-4 text-gray-500" />
+                                                )}
+                                                <h6 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                                                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                                  Subtasks ({(module.subtasks || []).length})
+                                                </h6>
+                                              </div>
+                                              <Button 
+                                                type="button" 
+                                                variant="outline" 
+                                                size="sm"
+                                                onClick={() => addSubtaskToModule(phaseIndex, milestoneIndex, moduleIndex)}
+                                                className="text-blue-600 border-blue-300 hover:bg-blue-50 hover:border-blue-400 transition-all duration-200"
+                                              >
+                                                <Plus className="h-4 w-4 mr-2" />
+                                                Add Subtask
+                                              </Button>
+                                            </div>
+
+                                            {!areModuleSubtasksCollapsed(phaseIndex, moduleIndex) && module.subtasks && module.subtasks.length > 0 ? (
+                                              <div className="space-y-3">
+                                                {module.subtasks.map((subtask: any, subtaskIndex: number) => (
+                                                  <div key={`subtask-${milestoneIndex}-${moduleIndex}-${subtaskIndex}`} className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
+                                                    <div className="flex items-center justify-between mb-3">
+                                                      <div className="flex items-center gap-2">
+                                                        <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                                        <span className="text-sm font-medium text-gray-800">Subtask {subtaskIndex + 1}</span>
+                                                      </div>
+                                                      <Button 
+                                                        type="button" 
+                                                        variant="ghost" 
+                                                        size="sm"
+                                                        onClick={() => removeSubtaskFromModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex)}
+                                                        className="text-red-600 hover:text-red-700 hover:bg-red-50 transition-all duration-200 h-6 w-6 p-0"
+                                                      >
+                                                        <X className="h-3 w-3" />
+                                                      </Button>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                                                      <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-gray-600">Subtask Name</label>
+                                                        <Input 
+                                                          placeholder="Enter subtask name"
+                                                          value={subtask.name} 
+                                                          onChange={(e) => updateSubtaskInModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex, 'name', e.target.value)}
+                                                          className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm"
+                                                        />
+                                                      </div>
+                                                      <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-gray-600">Priority</label>
+                                                        <Select
+                                                          value={subtask.priority}
+                                                          onValueChange={(value) => updateSubtaskInModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex, 'priority', value as any)}
+                                                        >
+                                                          <SelectTrigger className="border-purple-300 focus:border-purple-500 focus:ring-purple-500 text-sm transition-all duration-200">
+                                                            <SelectValue />
+                                                          </SelectTrigger>
+                                                          <SelectContent>
+                                                            <SelectItem value="low">Low</SelectItem>
+                                                            <SelectItem value="medium">Medium</SelectItem>
+                                                            <SelectItem value="high">High</SelectItem>
+                                                            <SelectItem value="critical">Critical</SelectItem>
+                                                          </SelectContent>
+                                                        </Select>
+                                                      </div>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                                                      <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-gray-600">Start Date</label>
+                                                        <Input 
+                                                          type="date"
+                                                          placeholder="Select start date"
+                                                          value={subtask.startDate || ''}
+                                                          min={milestone.startDate || ''}
+                                                          max={subtask.dueDate || milestone.endDate || ''}
+                                                          onChange={(e) => {
+                                                            const startDate = e.target.value;
+                                                            updateSubtaskInModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex, 'startDate', startDate);
+                                                            
+                                                            // Auto-calculate estimated days if both dates are set
+                                                            if (startDate && subtask.dueDate) {
+                                                              const start = new Date(startDate);
+                                                              const due = new Date(subtask.dueDate);
+                                                              const diffTime = due.getTime() - start.getTime();
+                                                              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                                              if (diffDays > 0) {
+                                                                updateSubtaskInModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex, 'estimatedDays', diffDays);
+                                                              }
+                                                            }
+                                                          }}
+                                                          className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm"
+                                                        />
+                                                      </div>
+                                                      <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-gray-600">Due Date</label>
+                                                        <Input 
+                                                          type="date"
+                                                          placeholder="Select due date"
+                                                          value={subtask.dueDate || ''}
+                                                          min={subtask.startDate || milestone.startDate || ''}
+                                                          max={milestone.endDate || ''}
+                                                          onChange={(e) => {
+                                                            const dueDate = e.target.value;
+                                                            updateSubtaskInModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex, 'dueDate', dueDate);
+                                                            
+                                                            // Auto-calculate estimated days if both dates are set
+                                                            if (subtask.startDate && dueDate) {
+                                                              const start = new Date(subtask.startDate);
+                                                              const due = new Date(dueDate);
+                                                              const diffTime = due.getTime() - start.getTime();
+                                                              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                                              if (diffDays > 0) {
+                                                                updateSubtaskInModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex, 'estimatedDays', diffDays);
+                                                              }
+                                                            }
+                                                          }}
+                                                          className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm"
+                                                        />
+                                                      </div>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                                                      <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-gray-600">Estimated Days</label>
+                                                        <Input 
+                                                          type="number"
+                                                          placeholder="Auto-calculated from dates"
+                                                          value={subtask.estimatedDays || ''}
+                                                          readOnly
+                                                          className="border-purple-300 bg-gray-50 text-gray-600 cursor-not-allowed text-sm"
+                                                        />
+                                                        <p className="text-xs text-gray-500 mt-1">
+                                                          Calculated from start and end dates
+                                                        </p>
+                                                      </div>
+
+                                                    </div>
+
+                                                    {/* Team Assignment Section */}
+                                                    <div className="border-t border-blue-200 pt-4">
+                                                      <h6 className="text-sm font-medium text-blue-700 mb-3 flex items-center gap-2">
+                                                        <User className="h-4 w-4" />
+                                                        Team Assignment
+                                                      </h6>
+                                                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                                        <div className="space-y-2">
+                                                          <label className="block text-xs font-medium text-blue-600">
+                                                            Developer
+                                                          </label>
+                                                          <Select 
+                                                            value={subtask.assignedDevId || 'unassigned'}
+                                                            onValueChange={(value) => updateSubtaskInModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex, 'assignedDevId', value === 'unassigned' ? undefined : value)}
+                                                          >
+                                                            <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 text-sm transition-all duration-200">
+                                                              <SelectValue placeholder="Select Developer" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                              <SelectItem value="unassigned">Unassigned</SelectItem>
+                                                              {developersOnly && developersOnly.length > 0
+                                                                ? developersOnly
+                                                                    .map((member: any) => (
+                                                                      <SelectItem key={member.id || `dev-${Math.random()}`} value={member.id}>
+                                                                        {member.firstName && member.lastName 
+                                                                          ? `${member.firstName} ${member.lastName}` 
+                                                                          : member.email || 'Unknown User'
+                                                                        } ({member.role || 'No Role'})
+                                                                        </SelectItem>
+                                                                    ))
+                                                                : <SelectItem value="no_devs" disabled>No developers available in team</SelectItem>
+                                                              }
+                                                            </SelectContent>
+                                                          </Select>
+                                                        </div>
+
+                                                        <div className="space-y-2">
+                                                          <label className="block text-xs font-medium text-blue-600">
+                                                            Functional Consultant
+                                                          </label>
+                                                          <Select 
+                                                            value={subtask.assignedConsultantId || 'unassigned'}
+                                                            onValueChange={(value) => updateSubtaskInModule(phaseIndex, milestoneIndex, moduleIndex, subtaskIndex, 'assignedConsultantId', value === 'unassigned' ? undefined : value)}
+                                                          >
+                                                            <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 text-sm transition-all duration-200">
+                                                              <SelectValue placeholder="Select FC" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                              <SelectItem value="unassigned">Unassigned</SelectItem>
+                                                              {consultantsOnly && consultantsOnly.length > 0
+                                                                ? consultantsOnly
+                                                                    .map((member: any) => (
+                                                                      <SelectItem key={member.id || `fc-${Math.random()}`} value={member.id}>
+                                                                        {member.firstName && member.lastName 
+                                                                          ? `${member.firstName} ${member.lastName}` 
+                                                                          : member.email || 'Unknown User'
+                                                                        } ({member.role || 'No Role'})
+                                                                        </SelectItem>
+                                                                    ))
+                                                                : <SelectItem value="no_consultants" disabled>No consultants available in team</SelectItem>
+                                                              }
+                                                            </SelectContent>
+                                                          </Select>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            ) : !areModuleSubtasksCollapsed(phaseIndex, moduleIndex) && (
+                                              <div className="text-center py-6 text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                                                <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-2">
+                                                  <Plus className="h-4 w-4 text-gray-400" />
+                                                </div>
+                                                <p className="text-xs font-medium text-gray-600">No subtasks added yet</p>
+                                                <p className="text-xs text-gray-500">Click "Add Subtask" to get started</p>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="text-center py-6 text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                                      <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-2">
+                                        <Plus className="h-4 w-4 text-gray-400" />
+                                      </div>
+                                      <p className="text-xs font-medium text-gray-600">No modules added yet</p>
+                                      <p className="text-xs text-gray-500">Click "Add Module" to get started</p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-center py-8 text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                              <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-3">
+                                <Plus className="h-6 w-6 text-gray-400" />
+                              </div>
+                              <p className="text-sm font-medium text-gray-600">No milestones added yet</p>
+                              <p className="text-xs text-gray-500 mt-1">Click "Add Milestone" to get started</p>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        /* Regular phases (1,2,4,5,6): Milestone → Subtask */
+                        (phase.milestones && phase.milestones.length > 0 ? phase.milestones : phase.modules).map((module: any, moduleIndex: number) => (
                         <div key={`module-${phase.id || phaseIndex}-${module.id || moduleIndex}`} className="bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl p-6 border border-gray-200 hover:border-blue-300 transition-all duration-200 shadow-sm">
                           {/* Module Header */}
                           <div className="flex items-center justify-between mb-5">
@@ -2086,7 +2836,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                 {moduleIndex + 1}
                               </div>
                               <div>
-                                <h5 className="text-lg font-semibold text-gray-800">Module {moduleIndex + 1}</h5>
+                                <h5 className="text-lg font-semibold text-gray-800">Milestone {moduleIndex + 1}</h5>
                                 <p className="text-sm text-gray-600">Priority: {module.priority}</p>
                               </div>
                               <Badge className={`px-3 py-1 text-xs font-medium ${getPriorityColor(module.priority)}`}>
@@ -2104,12 +2854,12 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                               </Button>
                             </div>
 
-                          {/* Module Fields */}
+                          {/* Milestone Fields */}
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
                             <div className="space-y-2">
-                              <label className="text-sm font-medium text-gray-700">Module Name</label>
+                              <label className="text-sm font-medium text-gray-700">Milestone Name</label>
                               <Input 
-                                placeholder="Enter module name"
+                                placeholder="Enter milestone name"
                               value={module.name}
                               onChange={(e) => updateModule(phaseIndex, moduleIndex, 'name', e.target.value)}
                                 className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
@@ -2132,6 +2882,65 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                 </SelectContent>
                               </Select>
                             </div>
+                            </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-gray-700">Fee Amount (KSH)</label>
+                              <Input
+                                type="text"
+                                placeholder="Enter amount in KSH"
+                                value={module.feeAmount || ''}
+                                onChange={(e) => {
+                                  const rawValue = e.target.value.replace(/[^\d.]/g, '');
+                                  let formattedValue = rawValue;
+                                  if (rawValue.includes('.')) {
+                                    const [whole, decimal] = rawValue.split('.');
+                                    formattedValue = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + decimal;
+                                  } else if (rawValue.length > 3) {
+                                    formattedValue = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                                  }
+                                  updateModule(phaseIndex, moduleIndex, 'feeAmount', formattedValue);
+                                }}
+                                className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-gray-700">Expected Invoice Date</label>
+                              <Input
+                                type="date"
+                                placeholder="Select invoice date"
+                                value={module.expectedInvoiceDate || ''}
+                                onChange={(e) => {
+                                  updateModule(phaseIndex, moduleIndex, 'expectedInvoiceDate', e.target.value);
+                                  // Auto-calculate expected collection date
+                                  if (e.target.value) {
+                                    const invoiceDate = new Date(e.target.value);
+                                    const collectionDate = new Date(invoiceDate);
+                                    collectionDate.setDate(collectionDate.getDate() + 30);
+                                    updateModule(phaseIndex, moduleIndex, 'expectedCollectionDate', collectionDate.toISOString().split('T')[0]);
+                                  }
+                                }}
+                                className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                              />
+                            </div>
+                            </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium text-gray-700">Expected Collection Date</label>
+                              <Input
+                                type="date"
+                                placeholder="Auto-calculated (30 days after invoice)"
+                                value={module.expectedCollectionDate || ''}
+                                readOnly
+                                className="border-gray-300 bg-gray-50 text-gray-600 cursor-not-allowed"
+                              />
+                              <p className="text-xs text-gray-500 mt-2">
+                                Automatically calculated as 30 days after invoice date
+                              </p>
+                            </div>
+                            <div></div>
                             </div>
 
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -2163,16 +2972,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                             </div>
                             </div>
 
-                          <div className="space-y-2 mb-6">
-                            <label className="text-sm font-medium text-gray-700">Description</label>
-                              <Textarea 
-                              placeholder="Enter module description (optional)"
-                            value={module.description || ''}
-                                                          onChange={(e) => updateModule(phaseIndex, moduleIndex, 'description', e.target.value)}
-                              className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
-                              rows={3}
-                            />
-                          </div>
+
 
                           {/* Subtasks Section - Collapsible */}
                           <div className="border-t border-gray-200 pt-6">
@@ -2344,16 +3144,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                         Calculated from start and end dates
                                       </p>
                                     </div>
-                                    <div className="space-y-2">
-                                      <label className="text-xs font-medium text-gray-600">Description</label>
-                                    <Textarea
-                                        placeholder="Enter subtask description (optional)"
-                                      value={subtask.description || ''}
-                                      onChange={(e) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'description', e.target.value)}
-                                        className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200 text-sm"
-                                      rows={2}
-                                            />
-                                    </div>
+
                                           </div>
 
                                   {/* Team Assignment Section */}
@@ -2367,59 +3158,65 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                         <label className="block text-xs font-medium text-blue-600">
                                           Developer
                                         </label>
-                                              <Select 
-                                          value={subtask.assignedDevId || 'unassigned'}
-                                          onValueChange={(value) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'assignedDevId', value === 'unassigned' ? undefined : value)}
-                                        >
-                                          <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 text-sm transition-all duration-200">
-                                            <SelectValue placeholder="Select Developer" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                                            {developersOnly && developersOnly.length > 0
-                                              ? developersOnly
-                                                  .map((member: any) => (
-                                                    <SelectItem key={member.id || `dev-${Math.random()}`} value={member.id}>
-                                                      {member.firstName && member.lastName 
-                                                        ? `${member.firstName} ${member.lastName}` 
-                                                        : member.email || 'Unknown User'
-                                                      } ({member.role || 'No Role'})
-                                                      </SelectItem>
-                                                  ))
-                                              : <SelectItem value="no_devs" disabled>No developers available in team</SelectItem>
-                                            }
-                                                </SelectContent>
-                                              </Select>
-                                          </div>
+                                        {/* Developer assignment available for all phases */}
+                                        {(
+                                          <Select 
+                                            value={subtask.assignedDevId || 'unassigned'}
+                                            onValueChange={(value) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'assignedDevId', value === 'unassigned' ? undefined : value)}
+                                          >
+                                            <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 text-sm transition-all duration-200">
+                                              <SelectValue placeholder="Select Developer" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="unassigned">Unassigned</SelectItem>
+                                              {developersOnly && developersOnly.length > 0
+                                                ? developersOnly
+                                                    .map((member: any) => (
+                                                      <SelectItem key={member.id || `dev-${Math.random()}`} value={member.id}>
+                                                        {member.firstName && member.lastName 
+                                                          ? `${member.firstName} ${member.lastName}` 
+                                                          : member.email || 'Unknown User'
+                                                        } ({member.role || 'No Role'})
+                                                        </SelectItem>
+                                                    ))
+                                                : <SelectItem value="no_devs" disabled>No developers available in team</SelectItem>
+                                              }
+                                            </SelectContent>
+                                          </Select>
+                                        )}
+                                      </div>
 
                                       <div className="space-y-2">
                                         <label className="block text-xs font-medium text-blue-600">
                                           Functional Consultant
                                         </label>
-                                              <Select 
-                                          value={subtask.assignedConsultantId || 'unassigned'}
-                                          onValueChange={(value) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'assignedConsultantId', value === 'unassigned' ? undefined : value)}
-                                        >
-                                          <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 text-sm transition-all duration-200">
-                                            <SelectValue placeholder="Select FC" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                            <SelectItem value="unassigned">Unassigned</SelectItem>
-                                            {consultantsOnly && consultantsOnly.length > 0
-                                              ? consultantsOnly
-                                                  .map((member: any) => (
-                                                    <SelectItem key={member.id || `fc-${Math.random()}`} value={member.id}>
-                                                      {member.firstName && member.lastName 
-                                                        ? `${member.firstName} ${member.lastName}` 
-                                                        : member.email || 'Unknown User'
-                                                      } ({member.role || 'No Role'})
-                                                      </SelectItem>
-                                                  ))
-                                              : <SelectItem value="no_consultants" disabled>No consultants available in team</SelectItem>
-                                            }
-                                                </SelectContent>
-                                              </Select>
-                                          </div>
+                                        {/* Consultant assignment available for all phases */}
+                                        {(
+                                          <Select 
+                                            value={subtask.assignedConsultantId || 'unassigned'}
+                                            onValueChange={(value) => updateSubtask(phaseIndex, moduleIndex, subtaskIndex, 'assignedConsultantId', value === 'unassigned' ? undefined : value)}
+                                          >
+                                            <SelectTrigger className="border-blue-300 focus:border-blue-500 focus:ring-blue-500 text-sm transition-all duration-200">
+                                              <SelectValue placeholder="Select FC" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="unassigned">Unassigned</SelectItem>
+                                              {consultantsOnly && consultantsOnly.length > 0
+                                                ? consultantsOnly
+                                                    .map((member: any) => (
+                                                      <SelectItem key={member.id || `fc-${Math.random()}`} value={member.id}>
+                                                        {member.firstName && member.lastName 
+                                                          ? `${member.firstName} ${member.lastName}` 
+                                                          : member.email || 'Unknown User'
+                                                        } ({member.role || 'No Role'})
+                                                        </SelectItem>
+                                                    ))
+                                                : <SelectItem value="no_consultants" disabled>No consultants available in team</SelectItem>
+                                              }
+                                            </SelectContent>
+                                          </Select>
+                                        )}
+                                      </div>
                                       </div>
                                   </div>
                               </div>
@@ -2438,13 +3235,14 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                             )}
                           </div>
                         </div>
-                      ))}
+                        ))
+                      )}
 
-                      {phase.modules.length === 0 && (
+                      {((phase.milestones && phase.milestones.length === 0) || (!phase.milestones && phase.modules.length === 0)) && (
                         <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
                           <FolderOpen className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-                          <p className="text-lg font-medium text-gray-600 mb-2">No modules added yet for this phase</p>
-                          <p className="text-sm text-gray-500">Click "Add Module" to get started</p>
+                          <p className="text-lg font-medium text-gray-600 mb-2">No milestones added yet for this phase</p>
+                          <p className="text-sm text-gray-500">Click "Add Milestone" to get started</p>
                         </div>
                       )}
                     </div>
@@ -2453,128 +3251,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
               </div>
             </div>
 
-            {/* Billing Milestones Section */}
-            <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-200">
-              <h3 className="text-2xl font-bold text-gray-900 mb-8 flex items-center gap-3">
-                <div className="p-3 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl">
-                  <DollarSign className="h-7 w-7 text-white" />
-                </div>
-                Billing Milestones
-                <Badge variant="secondary" className="ml-3 bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 border-green-200 px-4 py-2 text-sm font-medium">
-                  {milestones.length} milestones
-                </Badge>
-              </h3>
 
-              <div className="space-y-6">
-                {milestones.map((milestone, index) => (
-                  <div key={`milestone-${milestone.id || index}`} className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-6 border border-green-200 hover:border-green-300 transition-all duration-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg text-white font-semibold text-sm shadow-md">
-                          {index + 1}
-                        </div>
-                        <div>
-                          <h5 className="font-semibold text-gray-800 text-base">Milestone {index + 1}</h5>
-                          <p className="text-sm text-gray-600">Billing milestone</p>
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeMilestone(index)}
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50 transition-all duration-200"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700">Milestone Name</label>
-                        <Input
-                          placeholder="Enter milestone name"
-                          value={milestone.name}
-                          onChange={(e) => updateMilestone(index, 'name', e.target.value)}
-                          className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700">Fee Amount (KSH)</label>
-                        <Input
-                          type="text"
-                          placeholder="Enter amount in KSH"
-                          value={milestone.feeAmount || ''}
-                          onChange={(e) => {
-                            // Remove commas and non-numeric characters except decimal point
-                            const rawValue = e.target.value.replace(/[^\d.]/g, '');
-                            
-                            // Format with commas for thousands
-                            let formattedValue = rawValue;
-                            if (rawValue.includes('.')) {
-                              const [whole, decimal] = rawValue.split('.');
-                              formattedValue = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + decimal;
-                            } else if (rawValue.length > 3) {
-                              formattedValue = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-                            }
-                            
-                            updateMilestone(index, 'feeAmount', formattedValue);
-                          }}
-                          className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700">Expected Invoice Date</label>
-                        <Input
-                          type="date"
-                          placeholder="Select invoice date"
-                          value={milestone.expectedInvoiceDate || ''}
-                          onChange={(e) => updateMilestone(index, 'expectedInvoiceDate', e.target.value)}
-                          className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700">Expected Collection Date</label>
-                        <Input
-                          type="date"
-                          placeholder="Auto-calculated (30 days after invoice)"
-                          value={milestone.expectedCollectionDate || ''}
-                          readOnly
-                          className="border-green-300 bg-gray-50 text-gray-600 cursor-not-allowed"
-                        />
-                        <p className="text-xs text-gray-500 mt-2">
-                          Automatically calculated as 30 days after invoice date
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-gray-700">Description (Optional)</label>
-                      <Textarea
-                        placeholder="Enter milestone description"
-                        value={milestone.description || ''}
-                        onChange={(e) => updateMilestone(index, 'description', e.target.value)}
-                        className="border-green-300 focus:border-green-500 focus:ring-green-500 transition-all duration-200"
-                        rows={3}
-                      />
-                    </div>
-                  </div>
-                ))}
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={addMilestone}
-                  className="w-full border-2 border-dashed border-green-300 text-green-600 hover:bg-green-50 hover:border-green-400 transition-all duration-200 py-8 text-lg font-medium"
-                >
-                  <Plus className="h-6 w-6 mr-3" />
-                  Add Billing Milestone
-                </Button>
-              </div>
-            </div>
 
             {/* Progress indicator for milestone processing */}
             {isProcessingMilestones && (

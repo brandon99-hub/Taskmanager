@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -17,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Users, Plus, Mail, UserPlus, Calendar, BarChart3, Info } from "lucide-react";
+import { Users, Plus, Mail, UserPlus, Calendar, BarChart3, Info, User, Briefcase } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
 
@@ -46,10 +47,11 @@ export default function Team() {
   const auth = useAuth() as any;
   const { user, isAuthenticated, isLoading } = auth;
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
 
-  const [selectedTeam, setSelectedTeam] = useState<any>(null);
-  const [isTeamDetailOpen, setIsTeamDetailOpen] = useState(false);
+  const [segmentFilter, setSegmentFilter] = useState<string>('all');
+
   const [isSegmentLeaderModalOpen, setIsSegmentLeaderModalOpen] = useState(false);
   
   // Segment leader form state (now admin role management state)
@@ -204,25 +206,13 @@ export default function Team() {
     enabled: !!isAuthenticated,
   });
 
-  // Fetch team details when a team is selected
-  const { data: teamDetails, isLoading: teamDetailsLoading, error: teamDetailsError } = useQuery<any>({
-    queryKey: ['/api/teams', selectedTeam?.id, 'details'],
-    queryFn: async () => {
-      if (!selectedTeam?.id) return null;
-      const res = await fetch(`/api/teams/${selectedTeam.id}`, { 
-        credentials: 'include', 
-        cache: 'no-store' 
-      });
-      if (!res.ok) throw new Error('Failed to fetch team details');
-      return res.json();
-    },
-    enabled: !!selectedTeam?.id && isTeamDetailOpen,
-  });
+
 
   const handleTeamClick = (team: any) => {
-    setSelectedTeam(team);
-    setIsTeamDetailOpen(true);
+    setLocation(`/teams/${team.id}`);
   };
+
+
 
   const handleSaveAdminRoles = async () => {
     setIsSavingAdminRoles(true);
@@ -1431,7 +1421,24 @@ export default function Team() {
 
         {/* Teams Section */}
         <div className="mb-8">
-          <h3 className="text-xl font-medium text-gray-900 mb-4" data-testid="text-teams-section">Teams</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-medium text-gray-900" data-testid="text-teams-section">Teams</h3>
+            
+            {/* Segment Filter */}
+            <div className="flex items-center space-x-2">
+              <label className="text-sm font-medium text-gray-700">Filter by Segment:</label>
+              <select
+                value={segmentFilter}
+                onChange={(e) => setSegmentFilter(e.target.value)}
+                className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Segments</option>
+                <option value="academic">Academic</option>
+                <option value="parastals">Parastals</option>
+                <option value="private">Private</option>
+              </select>
+            </div>
+          </div>
           
           {teamsLoading ? (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1457,7 +1464,13 @@ export default function Team() {
             </Card>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {teams.map((team: any) => (
+              {teams
+                .filter((team: any) => {
+                  if (segmentFilter === 'all') return true;
+                  // Filter teams based on their projects' segments
+                  return team.projects?.some((project: any) => project.segment === segmentFilter);
+                })
+                .map((team: any) => (
                 <Card 
                   key={team.id} 
                   className="hover:shadow-md transition-shadow cursor-pointer" 
@@ -1629,264 +1642,11 @@ export default function Team() {
         )}
       </div>
 
-      {/* Team Detail Modal */}
-      <Dialog open={isTeamDetailOpen} onOpenChange={setIsTeamDetailOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader className="border-b border-gray-200 pb-4">
-            <DialogTitle className="flex items-center text-2xl font-bold text-gray-900">
-              <div className="p-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg mr-3">
-                <Users className="h-6 w-6 text-white" />
-              </div>
-              {selectedTeam?.name}
-            </DialogTitle>
-            <DialogDescription className="text-gray-600 text-base mt-2">
-              📊 Team Details & Performance Metrics • {selectedTeam?.segment} segment
-            </DialogDescription>
-          </DialogHeader>
-          
-          {teamDetailsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-            </div>
-          ) : teamDetailsError ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="text-center text-red-600">
-                <p className="font-medium">Failed to load team details</p>
-                <p className="text-sm">{teamDetailsError.message}</p>
-              </div>
-            </div>
-          ) : teamDetails ? (
-            <div className="space-y-6">
-              {/* Team Overview */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <BarChart3 className="h-5 w-5" />
-                    Team Overview
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border border-blue-200">
-                      <div className="text-3xl font-bold text-blue-700 mb-1">
-                        {teamDetails?.members?.length || 0}
-                      </div>
-                      <div className="text-sm text-blue-600 font-medium">Team Members</div>
-                      <div className="text-xs text-blue-500 mt-1">
-                        {teamDetails?.members?.filter((m: any) => m.totalTasks > 0).length || 0} active
-                      </div>
-                    </div>
-                    <div className="text-center p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-lg border border-green-200">
-                      <div className="text-3xl font-bold text-green-700 mb-1">
-                        {teamDetails?.projects?.length || 0}
-                      </div>
-                      <div className="text-sm text-green-600 font-medium">Active Projects</div>
-                      <div className="text-xs text-green-500 mt-1">
-                        {teamDetails?.projects?.filter((p: any) => p.status === 'active').length || 0} running
-                      </div>
-                    </div>
-                    <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg border border-purple-200">
-                      <div className="text-3xl font-bold text-purple-700 mb-1">
-                        {teamDetails?.totalTasks || 0}
-                      </div>
-                      <div className="text-sm text-purple-600 font-medium">Total Subtasks</div>
-                      <div className="text-xs text-purple-500 mt-1">
-                        {teamDetails?.members?.reduce((sum: number, m: any) => sum + (m.completedTasks || 0), 0) || 0} completed
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Team Role Summary */}
-                  {teamDetails?.members && teamDetails.members.length > 0 && (
-                    <div className="mt-6 p-4 bg-gradient-to-r from-slate-50 to-purple-50 rounded-lg border border-slate-200">
-                      <h4 className="text-sm font-semibold text-slate-700 mb-3">Team Role Distribution</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-purple-600">
-                            {teamDetails.members.filter((m: any) => m.role === 'BC Developer').length}
-                          </div>
-                          <div className="text-purple-600">BC Developers</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-green-600">
-                            {teamDetails.members.filter((m: any) => m.role === 'Functional Consultant').length}
-                          </div>
-                          <div className="text-green-600">Consultants</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-blue-600">
-                            {teamDetails.members.filter((m: any) => m.role === 'Portal Developer').length}
-                          </div>
-                          <div className="text-blue-600">Portal Devs</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-orange-600">
-                            {teamDetails.members.filter((m: any) => m.role === 'Account Manager').length}
-                          </div>
-                          <div className="text-orange-600">Account Mgrs</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-red-600">
-                            {teamDetails.members.filter((m: any) => m.role === 'Project Leader').length}
-                          </div>
-                          <div className="text-red-600">Project Leaders</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  
 
-                </CardContent>
-              </Card>
 
-              {/* Team Members */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Team Members</CardTitle>
-                  <CardDescription>Individual performance and workload</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {/* Role Information Note */}
-                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex items-center gap-2 text-sm text-blue-800">
-                      <Info className="h-4 w-4" />
-                      <span className="font-medium">Team Roles:</span>
-                      <span>💻 BC Dev • 📋 Consultant • 🌐 Portal Dev • 🎯 Account Mgr • 🚀 Project Lead</span>
-                    </div>
-                    <p className="text-xs text-blue-600 mt-1">
-                      Roles are assigned during team creation. Members without specific roles show as "👤 Member".
-                    </p>
-                  </div>
-                  
-                  {teamDetails.members && teamDetails.members.length > 0 ? (
-                    <div className="space-y-4">
-                      {teamDetails.members.map((member: any) => (
-                        <div 
-                          key={member.userId} 
-                          className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
-                        >
-                          <div className="flex items-center space-x-4">
-                            <Avatar>
-                              <AvatarImage src={member.user?.profileImageUrl} />
-                              <AvatarFallback>
-                                {getInitials(member.user?.firstName && member.user?.lastName 
-                                  ? `${member.user.firstName} ${member.user.lastName}`
-                                  : member.user?.email || 'U'
-                                )}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="font-medium">
-                                  {member.user?.firstName && member.user?.lastName 
-                                    ? `${member.user.firstName} ${member.user.lastName}`
-                                    : member.user?.email
-                                  }
-                                </p>
-                                {member.role && (
-                                  <span className={`text-xs px-2 py-1 rounded-full ${
-                                    member.role === 'BC Developer' ? 'bg-purple-100 text-purple-800' :
-                                    member.role === 'Functional Consultant' ? 'bg-green-100 text-green-800' :
-                                    member.role === 'Portal Developer' ? 'bg-blue-100 text-blue-800' :
-                                    member.role === 'Account Manager' ? 'bg-orange-100 text-orange-800' :
-                                    member.role === 'Project Leader' ? 'bg-red-100 text-red-800' :
-                                    'bg-gray-100 text-gray-800'
-                                  }`}>
-                                    {member.role === 'BC Developer' ? '💻 BC Dev' :
-                                     member.role === 'Functional Consultant' ? '📋 Consultant' :
-                                     member.role === 'Portal Developer' ? '🌐 Portal Dev' :
-                                     member.role === 'Account Manager' ? '🎯 Account Mgr' :
-                                     member.role === 'Project Leader' ? '🚀 Project Lead' :
-                                     member.role === 'member' ? '👤 Member' :
-                                     member.role}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                {member.user?.email && (
-                                  <span className="text-xs text-gray-500 flex items-center">
-                                    <Mail className="h-3 w-3 mr-1" />
-                                    {member.user.email}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center space-x-6">
-                            <div className="text-right">
-                              <p className="text-sm font-medium">
-                                {member.completedTasks || 0}/{member.totalTasks || 0} subtasks
-                              </p>
-                              <p className="text-xs text-gray-600">
-                                {member.workloadPercentage || 0}% completion rate
-                              </p>
-                            </div>
-                            
-                            <div className="w-24">
-                              <Progress 
-                                value={member.workloadPercentage || 0} 
-                                className="h-2"
-                              />
-                            </div>
-                            
-                            <Badge 
-                              variant={(() => {
-                                const totalTasks = member.totalTasks || 0;
-                                const percentage = member.workloadPercentage || 0;
-                                
-                                if (totalTasks <= 10) {
-                                  if (percentage >= 80) return "default"; // Excellent - blue
-                                  if (percentage >= 60) return "secondary"; // Good - gray
-                                  return "outline"; // Normal - outline
-                                } else if (totalTasks <= 30) {
-                                  if (percentage >= 80) return "destructive"; // Overloaded - red
-                                  return "secondary"; // High - gray
-                                } else {
-                                  return "destructive"; // Overloaded - red
-                                }
-                              })()}
-                            >
-                              {(() => {
-                                const percentage = member.workloadPercentage || 0;
-                                const totalTasks = member.totalTasks || 0;
-                                
-                                if (totalTasks <= 10) {
-                                  // Low task count - focus on completion rate
-                                  if (percentage >= 80) return "Excellent";
-                                  if (percentage >= 60) return "Good";
-                                  return "Normal";
-                                } else if (totalTasks <= 30) {
-                                  // Medium task count - minimum "High" workload
-                                  if (percentage >= 80) return "Overloaded";
-                                  if (percentage >= 60) return "High";
-                                  return "High"; // Minimum high for 11-30 tasks
-                                } else {
-                                  // High task count (31+) - minimum "Overloaded" workload
-                                  if (percentage >= 60) return "Overloaded";
-                                  return "Overloaded"; // Minimum overloaded for 31+ tasks
-                                }
-                              })()}
-                            </Badge>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-gray-500">
-                      No team members found
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-500">
-              Failed to load team details
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+
+
+
     </div>
   );
 }

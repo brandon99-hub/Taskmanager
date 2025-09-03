@@ -25,6 +25,7 @@ export const modules = pgTable("modules", {
 	phase: varchar("phase", { length: 100 }), // Added phase column for better tracking
 	assignedUserId: varchar("assigned_user_id"),
 	assignedTeamId: varchar("assigned_team_id"), // Auto-assigned from project team
+	milestoneId: varchar("milestone_id"), // Link to milestone for Phase 3 structure
 	createdById: varchar("created_by_id").notNull(),
 	completedAt: timestamp("completed_at", { mode: 'string' }),
 	progressPercent: integer("progress_percent").default(0).notNull(),
@@ -68,6 +69,9 @@ export const milestones = pgTable("milestones", {
 	id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
 	name: varchar({ length: 200 }).notNull(),
 	description: text(),
+	priority: taskPriority("priority").default('medium').notNull(),
+	startDate: timestamp("start_date", { mode: 'string' }),
+	endDate: timestamp("end_date", { mode: 'string' }),
 	feeAmount: numeric("fee_amount", { precision: 12, scale:  2 }),
 	billingStatus: billingStatus("billing_status").default('none').notNull(),
 	expectedInvoiceDate: timestamp("expected_invoice_date", { mode: 'string' }),

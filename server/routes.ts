@@ -57,6 +57,30 @@ async function hasAdminPrivileges(user: any): Promise<boolean> {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   try {
+    // Run initial automation checks on server startup
+    console.log('Running initial automation checks...');
+    try {
+      await storage.checkModuleDeadlines();
+      await storage.checkContractExpirations();
+      console.log('Initial automation checks completed successfully');
+    } catch (error) {
+      console.error('Error in initial automation checks:', error);
+    }
+
+    // Set up periodic automation checks (every 6 hours)
+    const automationInterval = setInterval(async () => {
+      try {
+        console.log('Running periodic automation checks...');
+        await storage.checkModuleDeadlines();
+        await storage.checkContractExpirations();
+        console.log('Periodic automation checks completed successfully');
+      } catch (error) {
+        console.error('Error in periodic automation checks:', error);
+      }
+    }, 6 * 60 * 60 * 1000); // 6 hours in milliseconds
+
+    // Store interval reference for cleanup if needed
+    (app as any).automationInterval = automationInterval;
     // Auth middleware
     await setupAuth(app);
   } catch (error) {
@@ -150,6 +174,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Overdue breakdown endpoint for employees
+  app.get('/api/dashboard/overdue-breakdown', isAuthenticated, async (req: any, res) => {
+    try {
+      if (req.user.role !== 'employee') {
+        return res.status(403).json({ message: 'This endpoint is only for employees' });
+      }
+      
+      const breakdown = await storage.getOverdueBreakdownForUser(req.user.id);
+      res.json(breakdown);
+    } catch (error) {
+      console.error("Error fetching overdue breakdown:", error);
+      res.status(500).json({ message: "Failed to fetch overdue breakdown" });
+    }
+  });
+
   // New enhanced kanban tasks endpoint
   app.get('/api/dashboard/kanban-tasks', isAuthenticated, async (req: any, res) => {
     try {
@@ -160,6 +199,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching kanban tasks:", error);
       res.status(500).json({ message: "Failed to fetch kanban tasks" });
+    }
+  });
+
+  // New kanban subtasks endpoint
+  app.get('/api/dashboard/kanban-subtasks', isAuthenticated, async (req: any, res) => {
+    try {
+      const subtasks = req.user.role === 'employee'
+        ? await storage.getDashboardKanbanSubtasksForUser(req.user.id)
+        : await storage.getDashboardKanbanSubtasks();
+      res.json(subtasks);
+    } catch (error) {
+      console.error("Error fetching kanban subtasks:", error);
+      res.status(500).json({ message: "Failed to fetch kanban subtasks" });
     }
   });
 
@@ -2776,14 +2828,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   });
   
-  // Run risk management automation daily (check module deadlines)
-  app.use('/api/subtasks', async (req, res, next) => {
-    // Run risk management check before processing subtask requests
+  // Run comprehensive automation system on various endpoints
+  const runAutomationChecks = async () => {
     try {
       await storage.checkModuleDeadlines();
+      await storage.checkContractExpirations();
+      console.log('Automation checks completed successfully');
     } catch (error) {
-      console.error('Error in risk management automation:', error);
+      console.error('Error in automation checks:', error);
     }
+  };
+
+  // Run automation on subtask requests
+  app.use('/api/subtasks', async (req, res, next) => {
+    await runAutomationChecks();
+    next();
+  });
+
+  // Run automation on dashboard requests
+  app.use('/api/dashboard', async (req, res, next) => {
+    await runAutomationChecks();
+    next();
+  });
+
+  // Run automation on project requests
+  app.use('/api/projects', async (req, res, next) => {
+    await runAutomationChecks();
     next();
   });
 
@@ -2811,6 +2881,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error checking module deadlines:', error);
       res.status(500).json({ message: 'Failed to check module deadlines' });
+    }
+  });
+
+  // Contract expiration check automation endpoint
+  app.post('/api/automation/check-contract-expirations', async (req, res) => {
+    try {
+      if (!(await hasAdminPrivileges((req as any).user))) {
+        return res.status(403).json({ message: 'Only managers and admins can trigger contract expiration checks' });
+      }
+      
+      await storage.checkContractExpirations();
+      res.json({ message: 'Contract expiration check completed successfully' });
+    } catch (error) {
+      console.error('Error checking contract expirations:', error);
+      res.status(500).json({ message: 'Failed to check contract expirations' });
+    }
+  });
+
+  // Comprehensive automation endpoint - runs all automation checks
+  app.post('/api/automation/run-all-checks', async (req, res) => {
+    try {
+      if (!(await hasAdminPrivileges((req as any).user))) {
+        return res.status(403).json({ message: 'Only managers and admins can trigger automation checks' });
+      }
+      
+      const results = {
+        moduleDeadlines: { success: false, message: '' },
+        contractExpirations: { success: false, message: '' },
+        invoiceStatuses: { success: false, message: '' }
+      };
+
+      // Run module deadline checks
+      try {
+        await storage.checkModuleDeadlines();
+        results.moduleDeadlines = { success: true, message: 'Module deadline checks completed' };
+      } catch (error) {
+        results.moduleDeadlines = { success: false, message: `Module deadline check failed: ${error}` };
+      }
+
+      // Run contract expiration checks
+      try {
+        await storage.checkContractExpirations();
+        results.contractExpirations = { success: true, message: 'Contract expiration checks completed' };
+      } catch (error) {
+        results.contractExpirations = { success: false, message: `Contract expiration check failed: ${error}` };
+      }
+
+      // Run invoice status updates
+      try {
+        await updateInvoiceStatusesAutomatically();
+        results.invoiceStatuses = { success: true, message: 'Invoice status updates completed' };
+      } catch (error) {
+        results.invoiceStatuses = { success: false, message: `Invoice status update failed: ${error}` };
+      }
+
+      const allSuccessful = Object.values(results).every(result => result.success);
+      
+      res.json({ 
+        message: allSuccessful ? 'All automation checks completed successfully' : 'Some automation checks failed',
+        results,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error running automation checks:', error);
+      res.status(500).json({ message: 'Failed to run automation checks' });
     }
   });
 

@@ -717,8 +717,10 @@ export default function InvoiceReport() {
                     <ComposedChart
                       data={data.monthlyTrend.map((month: any) => ({
                         ...month,
-                                              achievement: month.expected > 0 ? Math.round((month.paid / month.expected) * 100) : 0,
-                      gap: month.expected > 0 ? Math.max(0, month.expected - month.paid) : 0
+                        target: month.expected || 0, // Use expected as target
+                        actual: month.paid || 0,     // Use paid as actual
+                        achievement: month.expected > 0 ? Math.round((month.paid / month.expected) * 100) : 0,
+                        gap: month.expected > 0 ? Math.max(0, month.expected - month.paid) : 0
                       }))}
                       margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
                     >

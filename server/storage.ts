@@ -28,6 +28,8 @@ import {
   type InsertModule,
   type Milestone,
   type InsertMilestone,
+  type Subtask,
+  type InsertSubtask,
   type TeamMember,
   type InsertTeamMember,
   type ProjectAttachment,
@@ -68,7 +70,7 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
 
   // Team operations
-  getTeams(): Promise<Team[]>;
+  getTeams(): Promise<(Team & { projects: Project[] })[]>;
   getTeam(id: string): Promise<Team | undefined>;
   getTeamsForUser(userId: string): Promise<Team[]>;
   createTeam(team: InsertTeam): Promise<Team>;
@@ -201,9 +203,15 @@ export interface IStorage {
     onSupportProjects: number;
   }>;
   getDashboardMetricsForUser(userId: string): Promise<{
-    activeProjects: number;
+    totalTeamProjects: number;
+    activeTeamProjects: number;
+    assignedSubtasks: number;
+    completedSubtasks: number;
     completedModules: number;
+    totalModules: number;
     overdueModules: number;
+    overdueSubtasks: number;
+    totalOverdue: number;
     totalBudget: number;
     collectedAmount: number;
     pendingAmount: number;
@@ -262,6 +270,24 @@ export interface IStorage {
     review: (Module & { project: Project; assignedUser: User | null })[];
     recentlyDone: (Module & { project: Project; assignedUser: User | null })[];
     highPriorityTodo: (Module & { project: Project; assignedUser: User | null })[];
+  }>;
+  getDashboardKanbanSubtasks(): Promise<{
+    overdue: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    review: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    recentlyDone: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    highPriorityTodo: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    fcReview: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+  }>;
+  getDashboardKanbanSubtasksForUser(userId: string): Promise<{
+    overdue: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    review: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    recentlyDone: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    highPriorityTodo: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    fcReview: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+  }>;
+  getOverdueBreakdownForUser(userId: string): Promise<{
+    overdueModules: (Module & { project: Project; assignedUser: User | null })[];
+    overdueSubtasks: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
   }>;
 
   getBestPerformingTeam(): Promise<{
@@ -441,8 +467,33 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Team operations
-  async getTeams(): Promise<Team[]> {
-    return await db.select().from(teams).orderBy(asc(teams.name));
+  async getTeams(): Promise<(Team & { projects: Project[] })[]> {
+    const result = await db
+      .select({
+        team: teams,
+        project: projects,
+      })
+      .from(teams)
+      .leftJoin(projects, eq(teams.id, projects.teamId))
+      .orderBy(asc(teams.name));
+
+    // Group projects by team
+    const teamMap = new Map<string, Team & { projects: Project[] }>();
+    
+    result.forEach(row => {
+      if (!teamMap.has(row.team.id)) {
+        teamMap.set(row.team.id, {
+          ...row.team,
+          projects: []
+        });
+      }
+      
+      if (row.project) {
+        teamMap.get(row.team.id)!.projects.push(row.project);
+      }
+    });
+
+    return Array.from(teamMap.values());
   }
 
   async getTeam(id: string): Promise<Team | undefined> {
@@ -1545,64 +1596,115 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDashboardMetricsForUser(userId: string): Promise<{
-    activeProjects: number;
+    totalTeamProjects: number;
+    activeTeamProjects: number;
+    assignedSubtasks: number;
+    completedSubtasks: number;
     completedModules: number;
+    totalModules: number;
     overdueModules: number;
+    overdueSubtasks: number;
+    totalOverdue: number;
     totalBudget: number;
     collectedAmount: number;
     pendingAmount: number;
     milestonesCount: number;
   }> {
-    // Active projects associated via team membership or assigned tasks
-    const projectsByMembership = await db
-      .select({ id: projects.id, status: projects.status })
-      .from(projects)
-      .leftJoin(teamMembers, eq(projects.teamId, teamMembers.teamId))
-      .where(eq(teamMembers.userId, userId));
-
-    const projectsByAssignedModules = await db
-      .select({ id: projects.id, status: projects.status })
-      .from(modules)
-      .leftJoin(projects, eq(modules.projectId, projects.id))
-      .where(eq(modules.assignedUserId, userId));
-
-    const projectMap: Record<string, string> = {};
-    for (const p of projectsByMembership) if (p.id) projectMap[p.id] = p.status as any;
-    for (const p of projectsByAssignedModules) if (p.id) projectMap[p.id] = p.status as any;
-    const activeProjects = Object.values(projectMap).filter((s) => s === 'active').length;
-
-    const [completedModulesResult] = await db
-      .select({ count: count() })
-      .from(modules)
-      .where(and(eq(modules.assignedUserId, userId), eq(modules.status, 'done')));
-
-    const now = new Date();
-    const [overdueModulesResult] = await db
-      .select({ count: count() })
-      .from(modules)
-      .where(
-        and(
-          eq(modules.assignedUserId, userId),
-          sql`${modules.dueDate} < ${now}`,
-          sql`${modules.status} != 'done'`
-        )
-      );
-
-    // Team members across user's teams (distinct users)
+    // Get user's team IDs
     const memberships = await db
       .select({ teamId: teamMembers.teamId })
       .from(teamMembers)
       .where(eq(teamMembers.userId, userId));
     const teamIds = memberships.map((m) => m.teamId);
-    let teamMembersCount = 0;
+
+    // Calculate total and active team projects
+    let totalTeamProjects = 0;
+    let activeTeamProjects = 0;
+    
     if (teamIds.length > 0) {
-      const distinctMembers = await db
-        .select({ userId: teamMembers.userId })
-        .from(teamMembers)
-        .where(inArray(teamMembers.teamId, teamIds))
-        .groupBy(teamMembers.userId);
-      teamMembersCount = distinctMembers.length;
+      const teamProjects = await db
+        .select({ id: projects.id, status: projects.status })
+        .from(projects)
+        .where(inArray(projects.teamId, teamIds));
+      
+      totalTeamProjects = teamProjects.length;
+      activeTeamProjects = teamProjects.filter(p => p.status === 'active').length;
     }
+
+    // Calculate completed modules through user's completed subtasks
+    const [completedModulesResult] = await db
+      .select({ count: count() })
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .where(
+        and(
+          or(
+            eq(subtasks.assignedUserId, userId),
+            eq(subtasks.assignedDevId, userId),
+            eq(subtasks.assignedConsultantId, userId)
+          ),
+          eq(subtasks.status, 'completed')
+        )
+      );
+
+    // Calculate total unique modules through user's assigned subtasks
+    const [totalModulesResult] = await db
+      .select({ count: count() })
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .where(
+        or(
+          eq(subtasks.assignedUserId, userId),
+          eq(subtasks.assignedDevId, userId),
+          eq(subtasks.assignedConsultantId, userId)
+        )
+      );
+    
+    // Get unique module count (distinct modules)
+    const uniqueModulesResult = await db
+      .selectDistinct({ moduleId: subtasks.moduleId })
+      .from(subtasks)
+      .where(
+        or(
+          eq(subtasks.assignedUserId, userId),
+          eq(subtasks.assignedDevId, userId),
+          eq(subtasks.assignedConsultantId, userId)
+        )
+      );
+
+    const now = new Date();
+    // Calculate overdue modules through user's overdue subtasks
+    const [overdueModulesResult] = await db
+      .select({ count: count() })
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .where(
+        and(
+          or(
+            eq(subtasks.assignedUserId, userId),
+            eq(subtasks.assignedDevId, userId),
+            eq(subtasks.assignedConsultantId, userId)
+          ),
+          sql`${subtasks.dueDate} < ${now}`,
+          sql`${subtasks.status} != 'completed'`
+        )
+      );
+
+    // Calculate overdue subtasks
+    const [overdueSubtasksResult] = await db
+      .select({ count: count() })
+      .from(subtasks)
+      .where(
+        and(
+          or(
+            eq(subtasks.assignedUserId, userId),
+            eq(subtasks.assignedDevId, userId),
+            eq(subtasks.assignedConsultantId, userId)
+          ),
+          sql`${subtasks.dueDate} < ${now}`,
+          sql`${subtasks.status} != 'completed'`
+        )
+      );
 
     // Get milestones count for projects this user is associated with
     const [milestonesCountResult] = teamIds.length > 0 ?
@@ -1613,21 +1715,53 @@ export class DatabaseStorage implements IStorage {
         .where(inArray(projects.teamId, teamIds)) :
       [{ count: 0 }];
 
-    // Get on_support projects count for user's projects
-    const [onSupportProjectsResult] = teamIds.length > 0 ?
-      await db
-        .select({ count: count() })
-        .from(projects)
-        .where(and(
-          eq(projects.status, 'on_support'),
-          inArray(projects.teamId, teamIds)
-        )) :
-      [{ count: 0 }];
+    // Get subtask metrics for user
+    const [assignedSubtasksResult] = await db
+      .select({ count: count() })
+      .from(subtasks)
+      .where(
+        or(
+          eq(subtasks.assignedUserId, userId),
+          eq(subtasks.assignedDevId, userId),
+          eq(subtasks.assignedConsultantId, userId)
+        )
+      );
+
+    const [completedSubtasksResult] = await db
+      .select({ count: count() })
+      .from(subtasks)
+      .where(
+        and(
+          or(
+            eq(subtasks.assignedUserId, userId),
+            eq(subtasks.assignedDevId, userId),
+            eq(subtasks.assignedConsultantId, userId)
+          ),
+          eq(subtasks.status, 'completed')
+        )
+      );
+
+    const [totalSubtasksResult] = await db
+      .select({ count: count() })
+      .from(subtasks)
+      .where(
+        or(
+          eq(subtasks.assignedUserId, userId),
+          eq(subtasks.assignedDevId, userId),
+          eq(subtasks.assignedConsultantId, userId)
+        )
+      );
 
     return {
-      activeProjects,
+      totalTeamProjects,
+      activeTeamProjects,
+      assignedSubtasks: assignedSubtasksResult.count,
+      completedSubtasks: completedSubtasksResult.count,
       completedModules: completedModulesResult.count,
+      totalModules: uniqueModulesResult.length, // Use unique module count
       overdueModules: overdueModulesResult.count,
+      overdueSubtasks: overdueSubtasksResult.count,
+      totalOverdue: overdueModulesResult.count + overdueSubtasksResult.count,
       totalBudget: 0, // Placeholder
       collectedAmount: 0, // Placeholder
       pendingAmount: 0, // Placeholder
@@ -1851,13 +1985,18 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get client review modules
+    // Get client review modules (both QA and Client Review statuses)
     const review = await db
       .select()
       .from(modules)
       .innerJoin(projects, eq(modules.projectId, projects.id))
       .leftJoin(users, eq(modules.assignedUserId, users.id))
-      .where(eq(modules.status, 'client_review')) // Changed from 'review' to 'client_review'
+      .where(
+        or(
+          eq(modules.status, 'qa'),
+          eq(modules.status, 'client_review')
+        )
+      )
       .execute();
 
 
@@ -1918,13 +2057,24 @@ export class DatabaseStorage implements IStorage {
     
     const teamIds = userTeamIds.map(t => t.teamId);
 
-    // Base condition: modules assigned to user OR assigned to their teams
-    const userModuleCondition = teamIds.length > 0
-      ? or(
-          eq(modules.assignedUserId, userId),
-          inArray(modules.assignedUserId, teamIds)
+    // Get modules through user's assigned subtasks
+    const userSubtaskModules = await db
+      .select({ moduleId: subtasks.moduleId })
+      .from(subtasks)
+      .where(
+        or(
+          eq(subtasks.assignedUserId, userId),
+          eq(subtasks.assignedDevId, userId),
+          eq(subtasks.assignedConsultantId, userId)
         )
-      : eq(modules.assignedUserId, userId);
+      );
+    
+    const userModuleIds = userSubtaskModules.map(s => s.moduleId);
+    
+    // Base condition: modules that have subtasks assigned to user
+    const userModuleCondition = userModuleIds.length > 0
+      ? inArray(modules.id, userModuleIds)
+      : sql`1 = 0`; // No modules if no subtasks assigned
 
     // Get overdue modules
     const overdue = await db
@@ -1941,7 +2091,7 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get client review modules
+    // Get client review modules (both QA and Client Review statuses)
     const review = await db
       .select()
       .from(modules)
@@ -1949,7 +2099,10 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(modules.assignedUserId, users.id))
       .where(
         and(
-          eq(modules.status, 'client_review'),
+          or(
+            eq(modules.status, 'qa'),
+            eq(modules.status, 'client_review')
+          ),
           userModuleCondition
         )
       )
@@ -1992,6 +2145,207 @@ export class DatabaseStorage implements IStorage {
       review: review.map(row => ({ ...row.modules, project: row.projects, assignedUser: row.users })),
       recentlyDone: recentlyDone.map(row => ({ ...row.modules, project: row.projects, assignedUser: row.users })),
       highPriorityTodo: highPriorityTodo.map(row => ({ ...row.modules, project: row.projects, assignedUser: row.users })),
+    };
+  }
+
+  // Kanban subtasks methods
+  async getDashboardKanbanSubtasks(): Promise<{
+    overdue: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    review: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    recentlyDone: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    highPriorityTodo: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    fcReview: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+  }> {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    // Get overdue subtasks
+    const overdue = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          sql`${subtasks.dueDate} < ${now}`,
+          sql`${subtasks.status} != 'completed'`
+        )
+      )
+      .execute();
+
+    // Get client review subtasks
+    const review = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(eq(subtasks.status, 'client_review'))
+      .execute();
+
+    // Get FC review subtasks
+    const fcReview = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(eq(subtasks.status, 'fc_review'))
+      .execute();
+
+    // Get recently done subtasks (last 7 days)
+    const recentlyDone = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          eq(subtasks.status, 'completed'),
+          sql`${subtasks.updatedAt} >= ${sevenDaysAgo}`
+        )
+      )
+      .execute();
+
+    // Get high priority subtasks (regardless of status)
+    const highPriorityTodo = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        or(
+          eq(subtasks.priority, 'critical'),
+          eq(subtasks.priority, 'high')
+        )
+      )
+      .execute();
+
+    return {
+      overdue: overdue.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      review: review.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      fcReview: fcReview.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      recentlyDone: recentlyDone.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      highPriorityTodo: highPriorityTodo.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+    };
+  }
+
+  async getDashboardKanbanSubtasksForUser(userId: string): Promise<{
+    overdue: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    review: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    recentlyDone: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    highPriorityTodo: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+    fcReview: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+  }> {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    // Get user's team IDs to include team-assigned subtasks
+    const userTeamIds = await db
+      .select({ teamId: teamMembers.teamId })
+      .from(teamMembers)
+      .where(eq(teamMembers.userId, userId))
+      .execute();
+    
+    const teamIds = userTeamIds.map(t => t.teamId);
+
+    // User subtask condition: assigned to user OR assigned to user's teams
+    const userSubtaskCondition = or(
+      eq(subtasks.assignedUserId, userId),
+      eq(subtasks.assignedDevId, userId),
+      eq(subtasks.assignedConsultantId, userId),
+      teamIds.length > 0 ? sql`${modules.assignedTeamId} IN (${teamIds.join(',')})` : sql`false`
+    );
+
+    // Get overdue subtasks
+    const overdue = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          sql`${subtasks.dueDate} < ${now}`,
+          sql`${subtasks.status} != 'completed'`,
+          userSubtaskCondition
+        )
+      )
+      .execute();
+
+    // Get client review subtasks
+    const review = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          eq(subtasks.status, 'client_review'),
+          userSubtaskCondition
+        )
+      )
+      .execute();
+
+    // Get FC review subtasks
+    const fcReview = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          eq(subtasks.status, 'fc_review'),
+          userSubtaskCondition
+        )
+      )
+      .execute();
+
+    // Get recently done subtasks (last 7 days)
+    const recentlyDone = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          eq(subtasks.status, 'completed'),
+          sql`${subtasks.updatedAt} >= ${sevenDaysAgo}`,
+          userSubtaskCondition
+        )
+      )
+      .execute();
+
+    // Get high priority subtasks (regardless of status)
+    const highPriorityTodo = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          or(
+            eq(subtasks.priority, 'critical'),
+            eq(subtasks.priority, 'high')
+          ),
+          userSubtaskCondition
+        )
+      )
+      .execute();
+
+    return {
+      overdue: overdue.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      review: review.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      fcReview: fcReview.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      recentlyDone: recentlyDone.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      highPriorityTodo: highPriorityTodo.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
     };
   }
 
@@ -2734,6 +3088,126 @@ export class DatabaseStorage implements IStorage {
     return updatedContract;
   }
 
+  // Contract expiration monitoring
+  async checkContractExpirations(): Promise<void> {
+    try {
+      const now = new Date();
+      const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+      // Get contracts expiring in the next 30 days
+      const expiringContracts = await db
+        .select({
+          contract: contracts,
+          project: projects,
+          manager: users
+        })
+        .from(contracts)
+        .innerJoin(projects, eq(contracts.projectId, projects.id))
+        .innerJoin(users, eq(projects.managerId, users.id))
+        .where(
+          and(
+            eq(contracts.status, 'active'),
+            sql`${contracts.endDate} <= ${thirtyDaysFromNow}`,
+            sql`${contracts.endDate} > ${now}`
+          )
+        )
+        .execute();
+
+      // Get contracts expiring in the next 7 days
+      const urgentExpiringContracts = await db
+        .select({
+          contract: contracts,
+          project: projects,
+          manager: users
+        })
+        .from(contracts)
+        .innerJoin(projects, eq(contracts.projectId, projects.id))
+        .innerJoin(users, eq(projects.managerId, users.id))
+        .where(
+          and(
+            eq(contracts.status, 'active'),
+            sql`${contracts.endDate} <= ${sevenDaysFromNow}`,
+            sql`${contracts.endDate} > ${now}`
+          )
+        )
+        .execute();
+
+      // Send notifications for contracts expiring in 30 days
+      for (const row of expiringContracts) {
+        const contract = row.contract;
+        const project = row.project;
+        const manager = row.manager;
+        
+        if (contract && project && manager) {
+          const daysUntilExpiry = Math.ceil((new Date(contract.endDate!).getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+          
+          // Check if notification already exists for this contract
+          const existingNotification = await db
+            .select()
+            .from(notifications)
+            .where(
+              and(
+                eq(notifications.userId, manager.id),
+                eq(notifications.type, 'contract_expiring'),
+                eq(notifications.relatedId, contract.id),
+                sql`${notifications.createdAt} >= ${new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)}` // Within last 7 days
+              )
+            );
+
+          if (existingNotification.length === 0) {
+            await this.createNotification({
+              userId: manager.id,
+              type: 'contract_expiring',
+              title: `Contract Expiring Soon: ${contract.contractNumber}`,
+              message: `Contract "${contract.contractNumber}" for project "${project.name}" expires in ${daysUntilExpiry} days. Please review and take necessary action.`,
+              relatedId: contract.id
+            } as any);
+          }
+        }
+      }
+
+      // Send urgent notifications for contracts expiring in 7 days
+      for (const row of urgentExpiringContracts) {
+        const contract = row.contract;
+        const project = row.project;
+        const manager = row.manager;
+        
+        if (contract && project && manager) {
+          const daysUntilExpiry = Math.ceil((new Date(contract.endDate!).getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+          
+          // Check if urgent notification already exists for this contract
+          const existingUrgentNotification = await db
+            .select()
+            .from(notifications)
+            .where(
+              and(
+                eq(notifications.userId, manager.id),
+                eq(notifications.type, 'contract_expiring_urgent'),
+                eq(notifications.relatedId, contract.id),
+                sql`${notifications.createdAt} >= ${new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)}` // Within last 3 days
+              )
+            );
+
+          if (existingUrgentNotification.length === 0) {
+            await this.createNotification({
+              userId: manager.id,
+              type: 'contract_expiring_urgent',
+              title: `URGENT: Contract Expiring Soon: ${contract.contractNumber}`,
+              message: `URGENT: Contract "${contract.contractNumber}" for project "${project.name}" expires in ${daysUntilExpiry} days. Immediate action required!`,
+              relatedId: contract.id
+            } as any);
+          }
+        }
+      }
+
+      console.log(`Contract expiration check completed. Found ${expiringContracts.length} contracts expiring in 30 days, ${urgentExpiringContracts.length} expiring in 7 days.`);
+    } catch (error) {
+      console.error('Error checking contract expirations:', error);
+      throw error;
+    }
+  }
+
   // Module deadline and status operations
   async checkModuleDeadlines(): Promise<void> {
     try {
@@ -2971,7 +3445,7 @@ export class DatabaseStorage implements IStorage {
 
       // Auto-complete module when all subtasks are done (using 'completed' status)
       if (allFinished && currentModule.status !== 'completed') {
-        newStatus = 'completed';
+        newStatus = 'qa'; // Change to QA status instead of completed
       }
       // Auto-set module to in_progress when any subtask becomes in_progress
       else if (anyInProgress && currentModule.status === 'not_started') {
@@ -2988,6 +3462,30 @@ export class DatabaseStorage implements IStorage {
             updatedAt: new Date() as any
           } as any)
           .where(eq(modules.id, moduleId));
+
+        // Send notification when module moves to QA status
+        if (newStatus === 'qa' && currentModule.status !== 'qa') {
+          const [moduleWithProject] = await db
+            .select({
+              module: modules,
+              project: projects,
+              manager: users
+            })
+            .from(modules)
+            .innerJoin(projects, eq(modules.projectId, projects.id))
+            .innerJoin(users, eq(projects.managerId, users.id))
+            .where(eq(modules.id, moduleId));
+
+          if (moduleWithProject?.module && moduleWithProject?.project && moduleWithProject?.manager) {
+            await this.createNotification({
+              userId: moduleWithProject.manager.id,
+              type: 'module_completed',
+              title: `Module Ready for QA: ${moduleWithProject.module.name}`,
+              message: `Module "${moduleWithProject.module.name}" in project "${moduleWithProject.project.name}" has been completed and is ready for QA review. All subtasks have been finished.`,
+              relatedId: moduleId
+            } as any);
+          }
+        }
 
         // Update project progress after module status change
         const [module] = await db
@@ -3720,6 +4218,42 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
   }
 
   async updateModule(id: string, module: Partial<InsertModule>): Promise<Module> {
+    // Check if this is a milestone (by checking if it exists in milestones table)
+    const milestone = await db.select().from(milestones).where(eq(milestones.id, id)).limit(1);
+    
+    if (milestone.length > 0) {
+      // Update milestone
+      const [updatedMilestone] = await db
+        .update(milestones)
+        .set({ 
+          ...module, 
+          updatedAt: new Date() as any
+        } as any)
+        .where(eq(milestones.id, id))
+        .returning();
+
+      // Update project progress
+      await this.updateProjectProgress(updatedMilestone.projectId);
+      // Recalculate project budget when fees change
+      await this.recalculateProjectBudget(updatedMilestone.projectId);
+      // Auto-update project status based on milestone progress
+      await this.updateProjectStatusBasedOnMilestones(updatedMilestone.projectId);
+
+      // Return as module-like object
+      return {
+        ...updatedMilestone,
+        dueDate: updatedMilestone.endDate,
+        estimatedHours: null,
+        actualHours: 0,
+        weight: 2,
+        assignedUserId: null,
+        phaseNumber: 3,
+        phaseName: 'Development',
+        progressPercent: 0,
+        isMilestone: true
+      } as any;
+    } else {
+      // Update regular module
     const [updatedModule] = await db
       .update(modules)
       .set({ 
@@ -3743,24 +4277,153 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
     }
 
     return updatedModule;
+    }
   }
 
-  async getModulesByProject(projectId: string): Promise<(Module & { assignedUser: User | null; subtasks: any[] })[]> {
-    // First get all modules for the project
-    const projectModules = await db
+    async getModulesByProject(projectId: string): Promise<(Module & { assignedUser: User | null; subtasks: any[]; isMilestone?: boolean; feeAmount?: any; expectedInvoiceDate?: any; expectedCollectionDate?: any; modules?: any[] })[]> {
+    // Get milestones for Phase 3 to include them in the modules table
+    const projectMilestones = await db
+      .select()
+      .from(milestones)
+      .where(eq(milestones.projectId, projectId))
+      .orderBy(asc(milestones.createdAt));
+
+    // For each milestone, get its nested modules or direct subtasks
+    const milestonesWithModules = await Promise.all(
+      projectMilestones.map(async (milestone) => {
+        // Determine phase number based on milestone name
+        const getPhaseNumber = (milestoneName: string): number => {
+          const phaseMap: { [key: string]: number } = {
+            'Project Setup': 1,
+            'Contract Finalization': 1,
+            'System Architecture': 2,
+            'UI/UX Design': 2,
+            'Core System Development': 3,
+            'Financial System': 3,
+            'Academic Management': 3,
+            'System Testing': 4,
+            'User Acceptance Testing': 4,
+            'Production Deployment': 5,
+            'Go-Live Support': 5,
+            'Post-Launch Support': 6
+          };
+          return phaseMap[milestoneName] || 3; // Default to 3 if not found
+        };
+
+        const getPhaseName = (phaseNumber: number): string => {
+          const phaseNames: { [key: number]: string } = {
+            1: 'Initiation & Contracting',
+            2: 'Planning & Design',
+            3: 'Development',
+            4: 'Testing & Quality Assurance',
+            5: 'Deployment & Go-Live',
+            6: 'Support & Maintenance'
+          };
+          return phaseNames[phaseNumber] || 'Development';
+        };
+
+        const phaseNumber = getPhaseNumber(milestone.name);
+        const phaseName = getPhaseName(phaseNumber);
+
+        if (phaseNumber === 3) {
+          // Phase 3: Get modules that belong to this milestone
+        const milestoneModules = await db
+          .select()
+          .from(modules)
+          .leftJoin(users, eq(modules.assignedUserId, users.id))
+          .where(and(
+            eq(modules.projectId, projectId),
+            eq(modules.milestoneId, milestone.id)
+          ))
+          .orderBy(asc(modules.createdAt))
+          .then(rows => rows.map(row => ({
+            ...row.modules,
+            assignedUser: row.users
+          })));
+
+        // Get subtasks for each module under this milestone
+        const modulesWithSubtasks = await Promise.all(
+          milestoneModules.map(async (module) => {
+            const subtasksWithUsers = await db
+              .select({
+                subtask: subtasks,
+                assignedUser: users,
+              })
+              .from(subtasks)
+              .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+              .where(eq(subtasks.moduleId, module.id))
+              .orderBy(asc(subtasks.createdAt));
+
+            return {
+              ...module,
+              subtasks: subtasksWithUsers.map(row => ({
+                id: row.subtask.id,
+                name: row.subtask.name,
+                description: row.subtask.description,
+                status: row.subtask.status,
+                priority: row.subtask.priority,
+                startDate: row.subtask.startDate,
+                dueDate: row.subtask.dueDate,
+                estimatedHours: row.subtask.estimatedHours,
+                estimatedDays: row.subtask.estimatedDays,
+                actualHours: row.subtask.actualHours,
+                actualDays: row.subtask.actualDays,
+                progressPercent: row.subtask.progressPercent,
+                assignedUserId: row.subtask.assignedUserId,
+                assignedDevId: row.subtask.assignedDevId,
+                assignedConsultantId: row.subtask.assignedConsultantId,
+                assignedUser: row.assignedUser,
+                completedAt: row.subtask.completedAt
+              }))
+            };
+          })
+        );
+
+        // Convert milestone to module-like object with nested modules
+        return {
+          id: milestone.id,
+          name: milestone.name,
+          description: milestone.description,
+          priority: milestone.priority,
+          status: 'not_started', // Default status for milestones
+          billingStatus: milestone.billingStatus,
+          startDate: milestone.startDate,
+          dueDate: milestone.endDate,
+          estimatedHours: null,
+          actualHours: 0,
+          weight: 2,
+          assignedUserId: null,
+          assignedUser: null,
+          projectId: milestone.projectId,
+          phaseNumber: phaseNumber,
+          phaseName: phaseName,
+          progressPercent: 0,
+          createdAt: milestone.createdAt,
+          updatedAt: milestone.updatedAt,
+          subtasks: [],
+          // Milestone-specific fields
+          feeAmount: milestone.feeAmount,
+          expectedInvoiceDate: milestone.expectedInvoiceDate,
+          expectedCollectionDate: milestone.expectedCollectionDate,
+          isMilestone: true,
+          // Nested modules
+          modules: modulesWithSubtasks
+        } as any;
+        } else {
+          // Phase 1,2,4,5,6: Get subtasks directly under the milestone
+          // First, find the module that represents this milestone
+          const milestoneModule = await db
       .select()
       .from(modules)
-      .leftJoin(users, eq(modules.assignedUserId, users.id))
-      .where(eq(modules.projectId, projectId))
-      .orderBy(asc(modules.phaseNumber), asc(modules.createdAt))
-      .then(rows => rows.map(row => ({
-        ...row.modules,
-        assignedUser: row.users
-      })));
+      .where(and(
+        eq(modules.projectId, projectId),
+              eq(modules.name, milestone.name) // Match by name since these modules represent the milestones
+            ))
+            .limit(1);
 
-    // Then get subtasks for each module
-    const modulesWithSubtasks = await Promise.all(
-      projectModules.map(async (module) => {
+          let milestoneSubtasks: any[] = [];
+          if (milestoneModule.length > 0) {
+            // Get subtasks directly under this milestone's module
         const subtasksWithUsers = await db
           .select({
             subtask: subtasks,
@@ -3768,12 +4431,10 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           })
           .from(subtasks)
           .leftJoin(users, eq(subtasks.assignedUserId, users.id))
-          .where(eq(subtasks.moduleId, module.id))
+              .where(eq(subtasks.moduleId, milestoneModule[0].id))
           .orderBy(asc(subtasks.createdAt));
 
-        return {
-          ...module,
-          subtasks: subtasksWithUsers.map(row => ({
+            milestoneSubtasks = subtasksWithUsers.map(row => ({
             id: row.subtask.id,
             name: row.subtask.name,
             description: row.subtask.description,
@@ -3789,14 +4450,49 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
             assignedUserId: row.subtask.assignedUserId,
             assignedDevId: row.subtask.assignedDevId,
             assignedConsultantId: row.subtask.assignedConsultantId,
+              createdById: row.subtask.createdById,
             assignedUser: row.assignedUser,
             completedAt: row.subtask.completedAt
-          }))
-        };
+            }));
+          }
+
+          // Convert milestone to module-like object with direct subtasks
+          return {
+            id: milestone.id,
+            name: milestone.name,
+            description: milestone.description,
+            priority: milestone.priority,
+            status: 'not_started', // Default status for milestones
+            billingStatus: milestone.billingStatus,
+            startDate: milestone.startDate,
+            dueDate: milestone.endDate,
+            estimatedHours: null,
+            actualHours: 0,
+            weight: 2,
+            assignedUserId: null,
+            assignedUser: null,
+            projectId: milestone.projectId,
+            phaseNumber: phaseNumber,
+            phaseName: phaseName,
+            progressPercent: 0,
+            createdAt: milestone.createdAt,
+            updatedAt: milestone.updatedAt,
+            subtasks: milestoneSubtasks, // Direct subtasks
+            // Milestone-specific fields
+            feeAmount: milestone.feeAmount,
+            expectedInvoiceDate: milestone.expectedInvoiceDate,
+            expectedCollectionDate: milestone.expectedCollectionDate,
+            isMilestone: true,
+            // Empty modules array since these phases don't have modules
+            modules: []
+          } as any;
+        }
       })
     );
 
-    return modulesWithSubtasks;
+    // Get regular modules (not under milestones) for other phases
+    // Return all milestones (no regular modules needed since all milestones are handled above)
+    return milestonesWithModules;
   }
 
   async getModulesByUser(userId: string): Promise<(Module & { project: Project })[]> {
@@ -4356,6 +5052,58 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       console.error('Error updating user password:', error);
       throw error;
     }
+  }
+
+  async getOverdueBreakdownForUser(userId: string): Promise<{
+    overdueModules: (Module & { project: Project; assignedUser: User | null })[];
+    overdueSubtasks: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+  }> {
+    const now = new Date();
+
+    // Get overdue modules through user's overdue subtasks
+    const overdueModules = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          or(
+            eq(subtasks.assignedUserId, userId),
+            eq(subtasks.assignedDevId, userId),
+            eq(subtasks.assignedConsultantId, userId)
+          ),
+          sql`${subtasks.dueDate} < ${now}`,
+          sql`${subtasks.status} != 'completed'`
+        )
+      )
+      .execute();
+
+    // Get overdue subtasks
+    const overdueSubtasks = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          or(
+            eq(subtasks.assignedUserId, userId),
+            eq(subtasks.assignedDevId, userId),
+            eq(subtasks.assignedConsultantId, userId)
+          ),
+          sql`${subtasks.dueDate} < ${now}`,
+          sql`${subtasks.status} != 'completed'`
+        )
+      )
+      .execute();
+
+    return {
+      overdueModules: overdueModules.map(row => ({ ...row.modules, project: row.projects, assignedUser: row.users })),
+      overdueSubtasks: overdueSubtasks.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+    };
   }
 }
 

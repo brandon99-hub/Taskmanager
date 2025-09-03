@@ -71,6 +71,9 @@ export default function UpcomingDeadlines() {
     if (dashboardType === 'project_manager') {
       return 'Upcoming Module Deadlines';
     }
+    if (dashboardType === 'employee') {
+      return 'Upcoming Subtask Deadlines';
+    }
     return 'Upcoming Milestone Deadlines';
   };
 

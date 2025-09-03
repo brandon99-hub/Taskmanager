@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PriorityBadge from "@/components/ui/priority-badge";
 import { Filter, Search, ExternalLink, Briefcase, ClipboardList, Zap, Eye, CheckCircle, AlertTriangle, ChevronRight, Calendar, User, ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
@@ -24,19 +25,30 @@ export default function KanbanBoard() {
   const [, setLocation] = useLocation();
   const { isMobile, isTablet } = useScreenSize();
 
-  // Get terminology based on dashboard type
+  // View toggle state for modules vs subtasks
+  const [viewMode, setViewMode] = useState<'modules' | 'subtasks'>('modules');
+
+  // Get terminology based on dashboard type and view mode
   const getTaskTerminology = () => {
+    if (viewMode === 'subtasks') {
+      return { singular: 'subtask', plural: 'subtasks', title: 'Subtasks' };
+    }
+    
     switch (dashboardType) {
       case 'project_manager':
         return { singular: 'module', plural: 'modules', title: 'Modules' };
       case 'finance_head':
         return { singular: 'milestone', plural: 'milestones', title: 'Milestones' };
       default:
-        return { singular: 'task', plural: 'tasks', title: 'Tasks' };
+        return { singular: 'module', plural: 'modules', title: 'Modules' };
     }
   };
 
   const taskTerms = getTaskTerminology();
+
+  // Check if user is FC consultant
+  const isFCConsultant = currentUser?.role === 'employee' && 
+    (currentUser?.assignedConsultantId || currentUser?.assignedDevId);
 
   // Define status columns with dynamic terminology
   const statusColumns = [
@@ -54,9 +66,16 @@ export default function KanbanBoard() {
       color: 'bg-orange-50', 
       icon: Zap 
     },
+    ...(viewMode === 'subtasks' && isFCConsultant ? [{
+      id: 'fcReview',
+      title: 'FC Review',
+      mobileTitle: 'FC Review',
+      color: 'bg-purple-50',
+      icon: Eye
+    }] : []),
     { 
       id: 'review', 
-      title: 'Client Review', 
+      title: (viewMode === 'subtasks' && currentUser?.role === 'employee') ? 'FC Review' : 'Client Review', 
       mobileTitle: 'Review',
       color: 'bg-blue-50', 
       icon: Eye 
@@ -74,33 +93,44 @@ export default function KanbanBoard() {
   const [currentPages, setCurrentPages] = useState<Record<string, number>>({
     overdue: 0,
     highPriorityTodo: 0,
+    fcReview: 0,
     review: 0,
     recentlyDone: 0
   });
 
   const itemsPerPage = 3;
 
-  // Enhanced kanban task fetching
+  // Enhanced kanban task fetching with view mode support
   const { data: kanbanTasks, isLoading, error } = useQuery<{
     overdue: any[];
     review: any[];
     recentlyDone: any[];
     highPriorityTodo: any[];
+    fcReview?: any[];
   }>({
-    queryKey: ['/api/dashboard/kanban-tasks'],
+    queryKey: ['/api/dashboard/kanban-tasks', viewMode],
+    queryFn: async () => {
+      const endpoint = viewMode === 'subtasks' ? '/api/dashboard/kanban-subtasks' : '/api/dashboard/kanban-tasks';
+      const response = await fetch(endpoint, { credentials: 'include' });
+      if (!response.ok) throw new Error('Failed to fetch kanban data');
+      return response.json();
+    },
   });
 
 
 
   const updateTaskMutation = useMutation({
     mutationFn: async ({ taskId, status }: { taskId: string; status: string }) => {
-      const response = await apiRequest("PUT", `/api/tasks/${taskId}`, { status });
+      const endpoint = viewMode === 'subtasks' ? `/api/subtasks/${taskId}` : `/api/tasks/${taskId}`;
+      const response = await apiRequest("PUT", endpoint, { status });
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/subtasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/metrics"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kanban-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kanban-subtasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       toast({
         title: "Success",
@@ -132,6 +162,7 @@ export default function KanbanBoard() {
     const statusMapping: Record<string, string> = {
       'overdue': 'todo', // Overdue tasks are typically todo tasks that are past due
       'highPriorityTodo': 'todo',
+      'fcReview': 'fc_review', // FC review column
       'review': 'client_review', // Map review column to client_review status
       'recentlyDone': 'done'
     };
@@ -145,7 +176,14 @@ export default function KanbanBoard() {
   };
 
   const tasksByStatus = statusColumns.reduce((acc, column) => {
-    acc[column.id] = kanbanTasks?.[column.id as keyof typeof kanbanTasks] || [];
+    const tasks = kanbanTasks?.[column.id as keyof typeof kanbanTasks] || [];
+    // Sort by deadline proximity (closest deadline first)
+    const sortedTasks = tasks.sort((a, b) => {
+      const aDueDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const bDueDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      return aDueDate - bDueDate;
+    });
+    acc[column.id] = sortedTasks;
     return acc;
   }, {} as Record<string, any[]>);
 
@@ -235,6 +273,26 @@ export default function KanbanBoard() {
             )}
           </div>
           <div className="flex space-x-2">
+            {/* View Toggle for Modules vs Subtasks */}
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              <Button
+                variant={viewMode === 'modules' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setViewMode('modules')}
+                className="text-xs"
+              >
+                Modules
+              </Button>
+              <Button
+                variant={viewMode === 'subtasks' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setViewMode('subtasks')}
+                className="text-xs"
+              >
+                Subtasks
+              </Button>
+            </div>
+            
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button 
@@ -328,19 +386,30 @@ export default function KanbanBoard() {
                       onClick={() => setLocation(`/projects/${task.project.id}?task=${task.id}`)}
                     >
                       <CardContent className={`${isMobile ? 'p-3 space-y-2' : 'p-4 sm:p-5 space-y-3'}`}>
-                        {/* Project badge */}
-                        <div className="flex items-start justify-between mb-2">
-                          <Badge variant="outline" className={`text-xs flex items-center space-x-1 ${isMobile ? 'max-w-[140px]' : 'max-w-[200px]'} flex-wrap`}>
+                        {/* Project and Module hierarchy */}
+                        <div className="space-y-1 mb-3">
+                          {/* Project */}
+                          <div className="flex items-center space-x-1 text-xs text-blue-600">
                             <Briefcase className="h-3 w-3 flex-shrink-0" />
-                            <span className="break-words">{task.project?.name || 'No Project'}</span>
-                          </Badge>
-                          <PriorityBadge priority={task.priority} />
+                            <span className="font-medium truncate">{task.project?.name || 'No Project'}</span>
+                          </div>
+                          
+                          {/* Module (for subtasks) */}
+                          {viewMode === 'subtasks' && task.module && (
+                            <div className="flex items-center space-x-1 text-xs text-green-600 ml-2">
+                              <ClipboardList className="h-3 w-3 flex-shrink-0" />
+                              <span className="truncate">{task.module.name}</span>
+                            </div>
+                          )}
+                          
+                          {/* Task/Subtask */}
+                          <div className="flex items-center space-x-1 text-xs text-gray-700 ml-2">
+                            <span className="font-medium truncate">{task.name}</span>
+                          </div>
                         </div>
                         
-                        <div>
-                          <h5 className={`font-medium text-gray-900 ${isMobile ? 'text-sm' : 'text-sm'} mb-2 whitespace-pre-wrap leading-relaxed`} data-testid={`text-task-name-${task.id}`}>
-                            {task.name}
-                          </h5>
+                        <div className="flex items-start justify-between mb-2">
+                          <PriorityBadge priority={task.priority} />
                         </div>
                         
                         {task.description && (
@@ -407,55 +476,48 @@ export default function KanbanBoard() {
                           )}
                         </div>
                         
-                        {/* Status control: icons with tooltips */}
-                        <div className="pt-1 flex items-center gap-1.5">
-                          {statusColumns.map((status) => {
-                            // Map column IDs to actual database status values
-                            const statusMapping: Record<string, string> = {
-                              'overdue': 'todo',
-                              'highPriorityTodo': 'todo',
-                              'clientReview': 'client_review',
-                              'recentlyDone': 'done'
-                            };
-                            
-                            const actualStatus = statusMapping[status.id];
-                            const isActive = task.status === actualStatus;
-                            
-                            // Get the correct icon based on the actual status
-                            const Icon = actualStatus === 'todo' ? ClipboardList : 
-                                        actualStatus === 'in_progress' ? Zap : 
-                                        actualStatus === 'client_review' ? Eye : 
-                                        actualStatus === 'done' ? CheckCircle : ClipboardList;
-                            
-                            // Hide "done" status button for employees
-                            if (currentUser?.role === 'employee' && status.id === 'recentlyDone') {
-                              return null;
-                            }
-                            
-                            return (
-                              <Tooltip key={status.id}>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    size="sm"
-                                    variant={isActive ? 'default' : 'outline'}
-                                    className={`h-7 w-7 p-0 ${isActive ? '' : 'text-gray-600'}`}
-                                    aria-label={`Move to ${status.title}`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (!isActive) handleTaskStatusChange(task.id, status.id);
-                                    }}
-                                    disabled={updateTaskMutation.isPending}
-                                    data-testid={`button-status-${status.id}-${task.id}`}
-                                  >
-                                    <Icon className="h-3.5 w-3.5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Move to {status.title}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            );
-                          })}
+                        {/* Status control: dropdown */}
+                        <div className="pt-1">
+                          <Select
+                            value={task.status}
+                            disabled={updateTaskMutation.isPending}
+                            onValueChange={(value) => {
+                              handleTaskStatusChange(task.id, value);
+                            }}
+                          >
+                            <SelectTrigger className={`w-full h-8 text-xs ${
+                              updateTaskMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                            } ${
+                              task.status === 'completed' ? 'bg-green-50 border-green-200' : 
+                              task.status === 'client_review' || task.status === 'fc_review' ? 'bg-yellow-50 border-yellow-200' : 
+                              task.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : 
+                              'bg-gray-50 border-gray-200'
+                            }`}>
+                              {updateTaskMutation.isPending ? (
+                                <div className="flex items-center">
+                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600 mr-1"></div>
+                                  <span className="text-xs text-gray-500">Processing...</span>
+                                </div>
+                              ) : (
+                                <SelectValue />
+                              )}
+                            </SelectTrigger>
+                                                <SelectContent>
+                      <SelectItem value="not_started">Not Started</SelectItem>
+                      <SelectItem value="in_progress">In Progress</SelectItem>
+                      <SelectItem value="fc_review">FC Review</SelectItem>
+                      {viewMode === 'modules' && (
+                        <>
+                          <SelectItem value="qa">QA</SelectItem>
+                          <SelectItem value="client_review">Client Review</SelectItem>
+                        </>
+                      )}
+                      <SelectItem value="completed">Completed</SelectItem>
+                      <SelectItem value="overdue">Overdue</SelectItem>
+                      <SelectItem value="on_hold">On Hold</SelectItem>
+                      <SelectItem value="cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                          </Select>
                         </div>
                       </CardContent>
                     </Card>

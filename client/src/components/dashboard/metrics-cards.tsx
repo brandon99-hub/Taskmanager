@@ -2,21 +2,28 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useScreenSize } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
-import { BarChart3, CheckCircle, AlertTriangle, Eye, DollarSign, Building, GraduationCap, Clock } from "lucide-react";
+import { BarChart3, CheckCircle, AlertTriangle, Eye, DollarSign, Building, GraduationCap, Clock, ClipboardList } from "lucide-react";
 import MilestoneDetailModal from "./milestone-detail-modal";
 import React from "react"; // Added missing import
 
 // Define the metrics interface for better type safety
 interface DashboardMetrics {
-  activeProjects?: number;
-  projectsOnSupport?: number;
+  totalTeamProjects?: number;
+  activeTeamProjects?: number;
+  assignedSubtasks?: number;
+  completedSubtasks?: number;
   completedModules?: number;
   totalModules?: number;
-  milestonesCount?: number;
   overdueModules?: number;
+  overdueSubtasks?: number;
+  totalOverdue?: number;
+  activeProjects?: number;
+  projectsOnSupport?: number;
+  milestonesCount?: number;
   totalBudget?: number;
   collectedAmount?: number;
   pendingAmount?: number;
+  totalSubtasks?: number;
   onSupportProjects?: number;
 }
 
@@ -81,6 +88,28 @@ export default function MetricsCards() {
   // Generate role-based cards
   const getCardsForRole = () => {
     const baseCards = {
+      totalTeamProjects: {
+        title: "Total Projects",
+        value: metrics?.totalTeamProjects || 0,
+        icon: BarChart3,
+        color: "bg-primary",
+        change: "",
+        changeLabel: "",
+        detail: `${metrics?.activeTeamProjects || 0} active projects`,
+        detailColor: "text-blue-600",
+        testId: "card-total-projects"
+      },
+      subtasksSummary: {
+        title: "Subtasks",
+        value: metrics?.assignedSubtasks || 0,
+        icon: ClipboardList,
+        color: "bg-blue-500",
+        change: "",
+        changeLabel: "",
+        detail: `${metrics?.completedSubtasks || 0} completed`,
+        detailColor: "text-blue-600",
+        testId: "card-subtasks-summary"
+      },
       activeProjects: {
         title: "Active Projects",
         value: metrics?.activeProjects || 0,
@@ -93,13 +122,15 @@ export default function MetricsCards() {
         testId: "card-active-projects"
       },
       completedModules: {
-        title: dashboardType === 'project_manager' ? "Modules Completed" : "Milestones Completed",
+        title: dashboardType === 'employee' ? "Modules Completed" : (dashboardType === 'project_manager' ? "Modules Completed" : "Milestones Completed"),
         value: metrics?.completedModules || 0,
         icon: CheckCircle,
         color: "bg-success",
         change: "",
         changeLabel: "",
-        detail: dashboardType === 'project_manager' 
+        detail: dashboardType === 'employee' 
+          ? `${metrics?.totalModules || 0} total modules`
+          : dashboardType === 'project_manager' 
           ? `${metrics?.totalModules || 0} total modules` 
           : `${metrics?.milestonesCount || 0} total milestones`,
         detailColor: "text-green-600",
@@ -108,13 +139,13 @@ export default function MetricsCards() {
         modalType: "completed"
       },
       overdueModules: {
-        title: dashboardType === 'project_manager' ? "Overdue Modules" : "Overdue Milestones",
-        value: metrics?.overdueModules || 0,
+        title: dashboardType === 'employee' ? "Overdue Modules & Subtasks" : (dashboardType === 'project_manager' ? "Overdue Modules" : "Overdue Milestones"),
+        value: dashboardType === 'employee' ? (metrics?.totalOverdue || 0) : (metrics?.overdueModules || 0),
         icon: AlertTriangle,
         color: "bg-error",
-        change: `${metrics?.overdueModules || 0} overdue`,
+        change: dashboardType === 'employee' ? `${metrics?.totalOverdue || 0} overdue` : `${metrics?.overdueModules || 0} overdue`,
         changeLabel: "",
-        detail: "",
+        detail: dashboardType === 'employee' ? "Modules & Subtasks" : "",
         detailColor: "text-red-600",
         isNegative: true,
         testId: "card-overdue-tasks",
@@ -142,6 +173,28 @@ export default function MetricsCards() {
         detail: `${metrics?.activeProjects || 0} active projects`,
         detailColor: "text-indigo-600",
         testId: "card-on-support-projects"
+      },
+      assignedSubtasks: {
+        title: "Assigned Subtasks",
+        value: metrics?.assignedSubtasks || 0,
+        icon: ClipboardList,
+        color: "bg-primary",
+        change: "",
+        changeLabel: "",
+        detail: `${metrics?.totalSubtasks || 0} total subtasks`,
+        detailColor: "text-blue-600",
+        testId: "card-assigned-subtasks"
+      },
+      completedSubtasks: {
+        title: "Completed Subtasks",
+        value: metrics?.completedSubtasks || 0,
+        icon: CheckCircle,
+        color: "bg-success",
+        change: "",
+        changeLabel: "",
+        detail: `${metrics?.assignedSubtasks || 0} assigned subtasks`,
+        detailColor: "text-green-600",
+        testId: "card-completed-subtasks"
       },
       totalBudget: {
         title: "Total Contract Value",
@@ -221,6 +274,14 @@ export default function MetricsCards() {
           }
         ];
 
+      case 'employee':
+        return [
+          baseCards.totalTeamProjects,
+          baseCards.subtasksSummary,
+          baseCards.completedModules,
+          baseCards.overdueModules
+        ];
+
       default:
         return [
           baseCards.activeProjects,
@@ -242,6 +303,7 @@ export default function MetricsCards() {
     if (icon === Building) return <Building className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === GraduationCap) return <GraduationCap className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === Clock) return <Clock className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === ClipboardList) return <ClipboardList className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     return null;
   };
 

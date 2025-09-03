@@ -30,6 +30,10 @@ interface Project {
   id: string;
   name: string;
   status: string;
+  client: string;
+  contactPerson: string;
+  contactPhone: string;
+  contactEmail: string;
 }
 
 interface ContractFormData {
@@ -38,16 +42,12 @@ interface ContractFormData {
   clientName: string;
   clientEmail: string;
   clientPhone?: string;
-  clientAddress?: string;
   contractType: 'fixed_price' | 'time_materials' | 'milestone_based';
   totalValue: number;
   currency: string;
   startDate: string;
   endDate: string;
-  status: 'draft' | 'pending_approval' | 'approved' | 'active' | 'completed' | 'terminated';
-  projectScope: string;
-  deliverables: string[];
-  paymentTerms: string;
+  status: 'active' | 'expired_waiting_renewal' | 'expired_cancelled';
   specialClauses: string[];
   responsibilities: {
     client: string[];
@@ -75,16 +75,12 @@ export default function ContractForm() {
     clientName: '',
     clientEmail: '',
     clientPhone: '',
-    clientAddress: '',
     contractType: 'fixed_price',
     totalValue: 0,
     currency: 'KES',
     startDate: '',
     endDate: '',
-    status: 'draft',
-    projectScope: '',
-    deliverables: [''],
-    paymentTerms: '',
+    status: 'active',
     specialClauses: [''],
     responsibilities: {
       client: [''],
@@ -166,6 +162,25 @@ export default function ContractForm() {
       ...prev,
       [field]: value
     }));
+  };
+
+  // Handle project selection and auto-fill client details
+  const handleProjectChange = (projectId: string) => {
+    const selectedProject = projects.find(p => p.id === projectId);
+    if (selectedProject) {
+      setFormData(prev => ({
+        ...prev,
+        projectId,
+        clientName: selectedProject.client || prev.clientName,
+        clientEmail: selectedProject.contactEmail || prev.clientEmail,
+        clientPhone: selectedProject.contactPhone || prev.clientPhone,
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        projectId
+      }));
+    }
   };
 
   const handleArrayChange = (field: string, index: number, value: string) => {
@@ -272,7 +287,7 @@ export default function ContractForm() {
                     </div>
                     <div>
                       <Label htmlFor="projectId">Project *</Label>
-                      <Select value={formData.projectId} onValueChange={(value) => handleInputChange('projectId', value)}>
+                      <Select value={formData.projectId} onValueChange={handleProjectChange}>
                         <SelectTrigger>
                           <SelectValue placeholder="Select a project" />
                         </SelectTrigger>
@@ -305,12 +320,9 @@ export default function ContractForm() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="draft">Draft</SelectItem>
-                          <SelectItem value="pending_approval">Pending Approval</SelectItem>
-                          <SelectItem value="approved">Approved</SelectItem>
                           <SelectItem value="active">Active</SelectItem>
-                          <SelectItem value="completed">Completed</SelectItem>
-                          <SelectItem value="terminated">Terminated</SelectItem>
+                          <SelectItem value="expired_waiting_renewal">Expired - Waiting Renewal</SelectItem>
+                          <SelectItem value="expired_cancelled">Expired - Cancelled</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -353,15 +365,6 @@ export default function ContractForm() {
                         id="clientPhone"
                         value={formData.clientPhone || ''}
                         onChange={(e) => handleInputChange('clientPhone', e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="clientAddress">Client Address</Label>
-                      <Textarea
-                        id="clientAddress"
-                        value={formData.clientAddress || ''}
-                        onChange={(e) => handleInputChange('clientAddress', e.target.value)}
-                        rows={3}
                       />
                     </div>
                   </div>
@@ -427,76 +430,7 @@ export default function ContractForm() {
                 </CardContent>
               </Card>
 
-              {/* Project Scope */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <FileText className="h-5 w-5" />
-                    <span>Project Scope</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Textarea
-                    value={formData.projectScope}
-                    onChange={(e) => handleInputChange('projectScope', e.target.value)}
-                    placeholder="Describe the project scope and objectives..."
-                    rows={6}
-                  />
-                </CardContent>
-              </Card>
 
-              {/* Deliverables */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Deliverables</CardTitle>
-                  <CardDescription>List all project deliverables</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {formData.deliverables.map((deliverable, index) => (
-                    <div key={index} className="flex items-center space-x-2">
-                      <Input
-                        value={deliverable}
-                        onChange={(e) => handleArrayChange('deliverables', index, e.target.value)}
-                        placeholder="Enter deliverable"
-                      />
-                      {formData.deliverables.length > 1 && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => removeArrayItem('deliverables', index)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => addArrayItem('deliverables')}
-                    className="w-full"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Deliverable
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* Payment Terms */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Payment Terms</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Textarea
-                    value={formData.paymentTerms}
-                    onChange={(e) => handleInputChange('paymentTerms', e.target.value)}
-                    placeholder="Describe payment terms and schedule..."
-                    rows={4}
-                  />
-                </CardContent>
-              </Card>
             </div>
 
             {/* Sidebar */}

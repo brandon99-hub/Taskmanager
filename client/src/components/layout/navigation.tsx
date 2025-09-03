@@ -159,9 +159,9 @@ export default function Navigation() {
   const navigationItems = [
     { path: "/", label: "Dashboard", icon: BarChart3 },
     { path: "/projects", label: "Projects", icon: FolderOpen },
-    { path: "/tasks", label: getDashboardType() === 'project_manager' ? "Modules" : "Milestones", icon: CheckSquare },
+    { path: "/tasks", label: (getDashboardType() === 'project_manager' || getDashboardType() === 'employee') ? "Modules" : "Milestones", icon: CheckSquare },
     ...(user?.role !== 'employee' ? [{ path: "/reports", label: "Reports", icon: FileText }] : []),
-    { path: "/team", label: "Team", icon: Users },
+    { path: "/teams", label: "Team", icon: Users },
   ];
 
   const getInitials = (name: string) => {

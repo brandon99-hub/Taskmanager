@@ -260,9 +260,9 @@ export default function PhaseOverview({
                     </div>
                   )}
 
-                  {/* Modules Summary */}
+                  {/* Milestones Summary */}
                   <div className="text-sm text-gray-600">
-                    <span className="font-medium">Modules:</span>{' '}
+                    <span className="font-medium">Milestones:</span>{' '}
                     {completedModules} of {totalModules} completed
                   </div>
 
@@ -279,15 +279,15 @@ export default function PhaseOverview({
                     ) : null;
                   })()}
 
-                  {/* Quick Module Preview */}
+                  {/* Quick Milestone Preview */}
                   {modules && phaseModules.length > 0 && (
                     <div className="space-y-2">
                       <div className="text-sm font-medium text-gray-700">Quick Preview:</div>
                       <div className="text-sm text-gray-600">
-                        Click "View Details" to see all modules, subtasks, and phase information
+                        Click "View Details" to see all milestones, subtasks, and phase information
                       </div>
                       
-                      {/* Module Status Indicators */}
+                      {/* Milestone Status Indicators */}
                       <div className="flex flex-wrap gap-2 mt-2">
                         {phaseModules.map((module) => {
                           const statusColor = module.status === 'completed' ? 'bg-green-100 text-green-800' :

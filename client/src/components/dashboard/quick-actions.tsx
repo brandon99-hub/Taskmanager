@@ -173,7 +173,17 @@ export default function QuickActions() {
         ];
 
       default: // Employee
-        return baseActions;
+        return [
+          {
+            icon: FileText,
+            label: "View My Tasks",
+            tooltip: "View all your assigned subtasks and modules",
+            testId: "action-view-my-tasks",
+            onClick: () => setLocation('/tasks?view=my-tasks'),
+            allowedRoles: ['employee']
+          },
+          ...baseActions
+        ];
     }
   };
 

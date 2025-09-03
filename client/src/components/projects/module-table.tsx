@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Edit, Search, Filter, CalendarDays, DollarSign, User, Clock, AlertTriangle, UserCheck, CheckCircle, X, ChevronDown, ChevronRight, Bell } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
@@ -19,6 +20,7 @@ interface Module {
   description?: string;
   priority: 'low' | 'medium' | 'high' | 'critical';
   status: 'not_started' | 'in_progress' | 'fc_review' | 'qa' | 'client_review' | 'completed' | 'overdue' | 'on_hold' | 'cancelled';
+  billingStatus?: 'none' | 'to_send' | 'sent' | 'paid' | 'overdue' | 'processing';
   startDate?: string;
   dueDate?: string;
   estimatedHours?: number;
@@ -41,6 +43,13 @@ interface Module {
   createdAt: string;
   updatedAt: string;
   subtasks?: Subtask[];
+  // Phase 3 specific fields
+  milestoneId?: string; // For modules under milestones
+  feeAmount?: number; // For milestones (billing entities)
+  expectedInvoiceDate?: string; // For milestones
+  expectedCollectionDate?: string; // For milestones
+  isMilestone?: boolean; // Flag to identify if this is a milestone
+  modules?: Module[]; // Nested modules for milestones
 }
 
 interface Subtask {
@@ -178,10 +187,10 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
 
   // Status update mutation for modules
   const updateModuleStatusMutation = useMutation({
-    mutationFn: async ({ moduleId, status }: { moduleId: string; status: string }) => {
+    mutationFn: async ({ moduleId, status, billingStatus }: { moduleId: string; status?: string; billingStatus?: string }) => {
       // Find the current module to validate status transition
       const currentModule = modules.find(m => m.id === moduleId);
-      if (currentModule) {
+      if (currentModule && status) {
         // Allow moving backwards from 'completed' to other statuses, but prevent going back to 'not_started'
         if (currentModule.status === 'completed' && status === 'not_started') {
           throw new Error('Cannot move completed module back to "Not Started" status');
@@ -192,7 +201,11 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
         }
       }
       
-      const response = await apiRequest('PUT', `/api/modules/${moduleId}`, { status });
+      const updateData: any = {};
+      if (status) updateData.status = status;
+      if (billingStatus) updateData.billingStatus = billingStatus;
+      
+      const response = await apiRequest('PUT', `/api/modules/${moduleId}`, updateData);
       return response.json();
     },
     onSuccess: () => {
@@ -468,12 +481,12 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Modules</CardTitle>
+          <CardTitle>Milestones</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="text-center py-12 text-gray-500">
             <CheckCircle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p>No modules found for this project.</p>
+            <p>No milestones found for this project.</p>
           </div>
         </CardContent>
       </Card>
@@ -483,8 +496,8 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Modules</CardTitle>
-        <p className="text-sm text-gray-600">Track progress across all project modules</p>
+        <CardTitle>Milestones</CardTitle>
+        <p className="text-sm text-gray-600">Track progress across all project milestones</p>
       </CardHeader>
       <CardContent>
         {/* Filters and Search */}
@@ -493,7 +506,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
             <div className="relative lg:col-span-2">
               <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
               <Input
-                placeholder="Search modules..."
+                placeholder="Search milestones..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -534,7 +547,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
             <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center space-x-2">
                 <span className="text-sm font-medium text-blue-900">
-                  {selectedModules.length} module(s) selected
+                  {selectedModules.length} milestone(s) selected
                 </span>
               </div>
               <div className="flex items-center space-x-2">
@@ -546,10 +559,10 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                     bulkStatusUpdateMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
                   }`}>
                     {bulkStatusUpdateMutation.isPending ? (
-                      <div className="flex items-center">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600 mr-2"></div>
-                        <span className="text-sm text-gray-500">Updating {selectedModules.length} items...</span>
-                      </div>
+                                        <div className="flex items-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600 mr-2"></div>
+                    <span className="text-sm text-gray-500">Updating {selectedModules.length} milestone(s)...</span>
+                  </div>
                     ) : (
                       <SelectValue placeholder="Update status" />
                     )}
@@ -622,7 +635,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                   onClick={() => handleSort('name')}
                 >
                   <div className="flex items-center space-x-1">
-                    <span>Module</span>
+                    <span>Milestone</span>
                     {sortField === 'name' && (
                       <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                     )}
@@ -679,19 +692,23 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                 <th className="text-left p-3 w-28">Duration</th>
                 <th className="text-left p-3 w-32">Segment</th>
 
-                <th 
-                  className="text-left p-3 cursor-pointer hover:bg-gray-50 w-36"
-                  onClick={() => handleSort('status')}
-                >
-                  <div className="flex items-center space-x-1">
-                    <span>Status</span>
-                    {sortField === 'status' && (
-                      <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
-                    )}
-                  </div>
-                </th>
+                                 <th 
+                   className="text-left p-3 cursor-pointer hover:bg-gray-50 w-36"
+                   onClick={() => handleSort('status')}
+                 >
+                   <div className="flex items-center space-x-1">
+                     <span>Status</span>
+                     {sortField === 'status' && (
+                       <span className="text-xs">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                     )}
+                   </div>
+                 </th>
 
-                <th className="text-left p-3 w-28">Actions</th>
+                 <th className="text-left p-3 w-32">Amount</th>
+                 <th className="text-left p-3 w-36">Invoice Date</th>
+                 <th className="text-left p-3 w-36">Collection Date</th>
+
+                 <th className="text-left p-3 w-28">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -706,39 +723,46 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                         onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
                       />
                     </td>
-                    <td className="p-3">
-                      <div className="flex items-center space-x-2">
-                        {/* Expand/Collapse Button */}
-                        {module.subtasks && module.subtasks.length > 0 && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => toggleModuleExpansion(module.id)}
-                            className="h-6 w-6 p-0 hover:bg-gray-200"
-                          >
-                            {expandedModules.has(module.id) ? (
-                              <ChevronDown className="h-4 w-4" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4" />
-                            )}
-                          </Button>
-                        )}
-                        <div>
-                          <div className="font-medium text-gray-900">{module.name}</div>
-                          {module.description && (
-                            <div className="text-sm text-gray-500 truncate max-w-xs">
-                              {module.description}
-                            </div>
-                          )}
-                          {/* Subtask count indicator */}
-                          {module.subtasks && module.subtasks.length > 0 && (
-                            <div className="text-xs text-blue-600 mt-1">
-                              {module.subtasks.length} subtask{module.subtasks.length !== 1 ? 's' : ''}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
+                                         <td className="p-3">
+                       <div className="flex items-center space-x-2">
+                         {/* Expand/Collapse Button */}
+                         {(module.subtasks && module.subtasks.length > 0) || (module.isMilestone && module.modules && module.modules.length > 0) ? (
+                           <Button
+                             variant="ghost"
+                             size="sm"
+                             onClick={() => toggleModuleExpansion(module.id)}
+                             className="h-6 w-6 p-0 hover:bg-gray-200"
+                           >
+                             {expandedModules.has(module.id) ? (
+                               <ChevronDown className="h-4 w-4" />
+                             ) : (
+                               <ChevronRight className="h-4 w-4" />
+                             )}
+                           </Button>
+                         ) : null}
+                         <div>
+                           <div className="font-medium text-gray-900 flex items-center gap-2">
+                             {module.name}
+                           </div>
+                           {module.description && (
+                             <div className="text-sm text-gray-500 truncate max-w-xs">
+                               {module.description}
+                             </div>
+                           )}
+                           {/* Count indicators */}
+                           {module.isMilestone && module.modules && module.modules.length > 0 && (
+                             <div className="text-xs text-green-600 mt-1">
+                               {module.modules.length} module{module.modules.length !== 1 ? 's' : ''}
+                             </div>
+                           )}
+                           {module.subtasks && module.subtasks.length > 0 && (
+                             <div className="text-xs text-blue-600 mt-1">
+                               {module.subtasks.length} subtask{module.subtasks.length !== 1 ? 's' : ''}
+                             </div>
+                           )}
+                         </div>
+                       </div>
+                     </td>
                     <td className="p-3">
                       <Badge className={getPriorityColor(module.priority)}>
                         {module.priority.charAt(0).toUpperCase() + module.priority.slice(1)}
@@ -765,55 +789,495 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                     <td className="p-3 text-sm text-gray-600">
                       {projectSegment ? projectSegment.charAt(0).toUpperCase() + projectSegment.slice(1) : 'Private'}
                     </td>
-                    <td className="p-3">
-                      <Select
-                        value={module.status}
-                        disabled={updateModuleStatusMutation.isPending}
-                        onValueChange={(value) => updateModuleStatusMutation.mutate({
-                          moduleId: module.id,
-                          status: value
-                        })}
-                      >
-                        <SelectTrigger className={`w-32 relative ${
-                          updateModuleStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
-                        } ${module.status === 'completed' ? 'bg-green-50 border-green-200' : module.status === 'client_review' ? 'bg-yellow-50 border-yellow-200' : module.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
-                          {updateModuleStatusMutation.isPending ? (
-                            <div className="flex items-center">
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                              <span className="text-sm text-gray-500">Processing...</span>
-                            </div>
-                          ) : (
-                            <SelectValue />
-                          )}
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="not_started">Not Started</SelectItem>
-                          <SelectItem value="in_progress">In Progress</SelectItem>
-                          <SelectItem value="fc_review">FC Review</SelectItem>
-                          <SelectItem value="qa">QA</SelectItem>
-                          <SelectItem value="client_review">Client Review</SelectItem>
-                          <SelectItem value="completed">Completed</SelectItem>
-                          <SelectItem value="overdue">Overdue</SelectItem>
-                          <SelectItem value="on_hold">On Hold</SelectItem>
-                          <SelectItem value="cancelled">Cancelled</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </td>
+                                         <td className="p-3">
+                       {module.isMilestone ? (
+                         // For milestones, show billing status
+                         <Select
+                           value={module.billingStatus || 'none'}
+                           disabled={updateModuleStatusMutation.isPending}
+                           onValueChange={(value) => updateModuleStatusMutation.mutate({
+                             moduleId: module.id,
+                             billingStatus: value
+                           })}
+                         >
+                           <SelectTrigger className={`w-32 relative ${
+                             updateModuleStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                           } ${module.billingStatus === 'paid' ? 'bg-green-50 border-green-200' : module.billingStatus === 'sent' ? 'bg-blue-50 border-blue-200' : module.billingStatus === 'overdue' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                             {updateModuleStatusMutation.isPending ? (
+                               <div className="flex items-center">
+                                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                                 <span className="text-sm text-gray-500">Processing...</span>
+                               </div>
+                             ) : (
+                               <SelectValue />
+                             )}
+                           </SelectTrigger>
+                           <SelectContent>
+                             <SelectItem value="none">Not Sent</SelectItem>
+                             <SelectItem value="to_send">To Send</SelectItem>
+                             <SelectItem value="sent">Invoice Sent</SelectItem>
+                             <SelectItem value="processing">Processing</SelectItem>
+                             <SelectItem value="paid">Paid</SelectItem>
+                             <SelectItem value="overdue">Overdue</SelectItem>
+                           </SelectContent>
+                         </Select>
+                       ) : (
+                         // For modules, show regular status
+                         <Select
+                           value={module.status || 'not_started'}
+                           disabled={updateModuleStatusMutation.isPending}
+                           onValueChange={(value) => updateModuleStatusMutation.mutate({
+                             moduleId: module.id,
+                             status: value
+                           })}
+                         >
+                           <SelectTrigger className={`w-32 relative ${
+                             updateModuleStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                           } ${module.status === 'completed' ? 'bg-green-50 border-green-200' : module.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : module.status === 'overdue' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                             {updateModuleStatusMutation.isPending ? (
+                               <div className="flex items-center">
+                                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                                 <span className="text-sm text-gray-500">Processing...</span>
+                               </div>
+                             ) : (
+                               <SelectValue />
+                             )}
+                           </SelectTrigger>
+                           <SelectContent>
+                             <SelectItem value="not_started">Not Started</SelectItem>
+                             <SelectItem value="in_progress">In Progress</SelectItem>
+                             <SelectItem value="fc_review">FC Review</SelectItem>
+                             <SelectItem value="qa">QA</SelectItem>
+                             <SelectItem value="client_review">Client Review</SelectItem>
+                             <SelectItem value="completed">Completed</SelectItem>
+                             <SelectItem value="overdue">Overdue</SelectItem>
+                             <SelectItem value="on_hold">On Hold</SelectItem>
+                             <SelectItem value="cancelled">Cancelled</SelectItem>
+                           </SelectContent>
+                         </Select>
+                                              )}
+                     </td>
 
-                    <td className="p-3">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onEdit(module)}
-                      >
-                        <Edit className="h-4 w-4 mr-1" />
-                        Edit
-                      </Button>
-                    </td>
+                     <td className="p-3 text-sm text-gray-600">
+                       {module.isMilestone && module.feeAmount ? formatCurrency(module.feeAmount) : '-'}
+                     </td>
+                     <td className="p-3 text-sm text-gray-600">
+                       {module.isMilestone && module.expectedInvoiceDate ? formatDate(module.expectedInvoiceDate) : '-'}
+                     </td>
+                     <td className="p-3 text-sm text-gray-600">
+                       {module.isMilestone && module.expectedCollectionDate ? formatDate(module.expectedCollectionDate) : '-'}
+                     </td>
+
+                     <td className="p-3">
+                       <Button
+                         variant="outline"
+                         size="sm"
+                         onClick={() => onEdit(module)}
+                       >
+                         <Edit className="h-4 w-4 mr-1" />
+                         Edit
+                       </Button>
+                     </td>
                   </tr>
 
+                  {/* Nested Modules for expanded milestones */}
+                  {expandedModules.has(module.id) && module.isMilestone && module.modules && module.modules.length > 0 && (
+                    <tr className="border-b border-gray-100">
+                      <td colSpan={11} className="p-0">
+                        <div className="bg-green-50 border-t border-green-200">
+                          <table className="w-full border-collapse">
+                            <thead>
+                              <tr className="border-b border-green-200">
+                                <th className="text-left p-3 w-12">
+                                  <Checkbox
+                                    checked={selectedModules.includes(module.id)}
+                                    disabled={bulkStatusUpdateMutation.isPending}
+                                    onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
+                                  />
+                                </th>
+                                <th className="text-left p-3 w-72">Module</th>
+                                <th className="text-left p-3 w-32">Priority</th>
+                                <th className="text-left p-3 w-36">Start Date</th>
+                                <th className="text-left p-3 w-36">End Date</th>
+                                <th className="text-left p-3 w-28">Phase</th>
+                                <th className="text-left p-3 w-40">Assigned To</th>
+                                <th className="text-left p-3 w-28">Duration</th>
+                                <th className="text-left p-3 w-32">Segment</th>
+                                <th className="text-left p-3 w-36">Status</th>
+                                <th className="text-left p-3 w-28">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {module.modules.map((nestedModule) => (
+                                <React.Fragment key={nestedModule.id}>
+                                  <tr className="border-b border-green-100 hover:bg-green-50">
+                                    <td className="p-3">
+                                      <Checkbox
+                                        checked={selectedModules.includes(nestedModule.id)}
+                                        disabled={bulkStatusUpdateMutation.isPending}
+                                        onCheckedChange={(checked) => handleSelectModule(nestedModule.id, checked as boolean)}
+                                      />
+                                    </td>
+                                    <td className="p-3">
+                                      <div className="flex items-center space-x-2">
+                                        {nestedModule.subtasks && nestedModule.subtasks.length > 0 && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => toggleModuleExpansion(nestedModule.id)}
+                                            className="h-6 w-6 p-0 hover:bg-gray-200"
+                                          >
+                                            {expandedModules.has(nestedModule.id) ? (
+                                              <ChevronDown className="h-4 w-4" />
+                                            ) : (
+                                              <ChevronRight className="h-4 w-4" />
+                                            )}
+                                          </Button>
+                                        )}
+                                        <div>
+                                          <div className="font-medium text-gray-900">{nestedModule.name}</div>
+                                          {nestedModule.description && (
+                                            <div className="text-sm text-gray-500 truncate max-w-xs">
+                                              {nestedModule.description}
+                                            </div>
+                                          )}
+                                          {nestedModule.subtasks && nestedModule.subtasks.length > 0 && (
+                                            <div className="text-xs text-blue-600 mt-1">
+                                              {nestedModule.subtasks.length} subtask{nestedModule.subtasks.length !== 1 ? 's' : ''}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td className="p-3">
+                                      <Badge className={getPriorityColor(nestedModule.priority)}>
+                                        {nestedModule.priority.charAt(0).toUpperCase() + nestedModule.priority.slice(1)}
+                                      </Badge>
+                                    </td>
+                                    <td className="p-3 text-sm text-gray-600">
+                                      {formatDate(nestedModule.startDate)}
+                                    </td>
+                                    <td className="p-3 text-sm text-gray-600">
+                                      {formatDate(nestedModule.dueDate)}
+                                    </td>
+                                    <td className="p-3 text-sm text-gray-600">
+                                      {nestedModule.phaseNumber ? `Phase ${nestedModule.phaseNumber}` : 'Not assigned'}
+                                    </td>
+                                    <td className="p-3 text-sm text-gray-600">
+                                      {projectTeam?.name || 'Unassigned'}
+                                    </td>
+                                    <td className="p-3 text-sm text-gray-600">
+                                      {nestedModule.startDate && nestedModule.dueDate ? 
+                                        Math.ceil((new Date(nestedModule.dueDate).getTime() - new Date(nestedModule.startDate).getTime()) / (1000 * 60 * 60 * 24)) + ' days' : 
+                                        'Not set'
+                                      }
+                                    </td>
+                                    <td className="p-3 text-sm text-gray-600">
+                                      {projectSegment ? projectSegment.charAt(0).toUpperCase() + projectSegment.slice(1) : 'Private'}
+                                    </td>
+                                    <td className="p-3">
+                                      <Select
+                                        value={nestedModule.status || 'not_started'}
+                                        disabled={updateModuleStatusMutation.isPending}
+                                        onValueChange={(value) => updateModuleStatusMutation.mutate({
+                                          moduleId: nestedModule.id,
+                                          status: value
+                                        })}
+                                      >
+                                        <SelectTrigger className={`w-32 relative ${
+                                          updateModuleStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                                        } ${nestedModule.status === 'completed' ? 'bg-green-50 border-green-200' : nestedModule.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : nestedModule.status === 'overdue' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                                          {updateModuleStatusMutation.isPending ? (
+                                            <div className="flex items-center">
+                                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                                              <span className="text-sm text-gray-500">Processing...</span>
+                                            </div>
+                                          ) : (
+                                            <SelectValue />
+                                          )}
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="not_started">Not Started</SelectItem>
+                                          <SelectItem value="in_progress">In Progress</SelectItem>
+                                          <SelectItem value="fc_review">FC Review</SelectItem>
+                                          <SelectItem value="qa">QA</SelectItem>
+                                          <SelectItem value="client_review">Client Review</SelectItem>
+                                          <SelectItem value="completed">Completed</SelectItem>
+                                          <SelectItem value="overdue">Overdue</SelectItem>
+                                          <SelectItem value="on_hold">On Hold</SelectItem>
+                                          <SelectItem value="cancelled">Cancelled</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </td>
+                                    <td className="p-3">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => onEdit(nestedModule)}
+                                      >
+                                        <Edit className="h-4 w-4 mr-1" />
+                                        Edit
+                                      </Button>
+                                    </td>
+                                  </tr>
+
+                                  {/* Subtasks for nested modules */}
+                                  {expandedModules.has(nestedModule.id) && nestedModule.subtasks && nestedModule.subtasks.length > 0 && (
+                                    <tr className="border-b border-gray-100">
+                                      <td colSpan={14} className="p-0">
+                                        <div className="bg-blue-50 border-t border-blue-200">
+                                          <table className="w-full border-collapse">
+                                            <thead>
+                                              <tr className="border-b border-blue-200">
+                                                <th className="text-left p-3 w-12">
+                                                  <Checkbox
+                                                    checked={selectedModules.includes(nestedModule.id)}
+                                                    disabled={bulkStatusUpdateMutation.isPending}
+                                                    onCheckedChange={(checked) => handleSelectModule(nestedModule.id, checked as boolean)}
+                                                  />
+                                                </th>
+                                                <th className="text-left p-3 w-72">Subtask</th>
+                                                <th className="text-left p-3 w-32">Priority</th>
+                                                <th className="text-left p-3 w-36">Start Date</th>
+                                                <th className="text-left p-3 w-36">End Date</th>
+                                                <th className="text-left p-3">Estimated Days</th>
+                                                <th className="text-left p-3">Developer</th>
+                                                <th className="text-left p-3">Functional Consultant</th>
+                                                <th className="text-left p-3">Status</th>
+                                                <th className="text-left p-3">Actions</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {nestedModule.subtasks.map((subtask) => (
+                                                <tr key={subtask.id} className="border-b border-blue-100 hover:bg-blue-50">
+                                                  <td className="p-3">
+                                                    <Checkbox
+                                                      checked={selectedModules.includes(nestedModule.id)}
+                                                      disabled={bulkStatusUpdateMutation.isPending}
+                                                      onCheckedChange={(checked) => handleSelectModule(nestedModule.id, checked as boolean)}
+                                                    />
+                                                  </td>
+                                                  <td className="p-3">
+                                                    <div>
+                                                      <div className="font-medium text-gray-900">{subtask.name}</div>
+                                                      {subtask.description && (
+                                                        <div className="text-sm text-gray-500 truncate max-w-xs">
+                                                          {subtask.description}
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  </td>
+                                                  <td className="p-3">
+                                                    <Badge className={getPriorityColor(subtask.priority)}>
+                                                      {subtask.priority.charAt(0).toUpperCase() + subtask.priority.slice(1)}
+                                                    </Badge>
+                                                  </td>
+                                                  <td className="p-3 text-sm text-gray-600">
+                                                    {formatDate(subtask.startDate)}
+                                                  </td>
+                                                  <td className="p-3 text-sm text-gray-600">
+                                                    {formatDate(subtask.dueDate)}
+                                                  </td>
+                                                  <td className="p-3 text-sm text-gray-600">
+                                                    {subtask.estimatedDays || 'Not set'}
+                                                  </td>
+                                                  <td className="p-3 text-sm text-gray-600">
+                                                    {subtask.assignedDev ? `${subtask.assignedDev.firstName} ${subtask.assignedDev.lastName}` : 'Unassigned'}
+                                                  </td>
+                                                  <td className="p-3 text-sm text-gray-600">
+                                                    {subtask.assignedConsultantId ? 'Assigned' : 'Unassigned'}
+                                                  </td>
+                                                  <td className="p-3">
+                                                    <Select
+                                                      value={subtask.status || 'not_started'}
+                                                      disabled={updateSubtaskStatusMutation.isPending}
+                                                      onValueChange={(value) => updateSubtaskStatusMutation.mutate({
+                                                        subtaskId: subtask.id,
+                                                        status: value
+                                                      })}
+                                                    >
+                                                      <SelectTrigger className={`w-32 relative ${
+                                                        updateSubtaskStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                                                      } ${subtask.status === 'completed' ? 'bg-green-50 border-green-200' : subtask.status === 'in_progress' ? 'bg-blue-50 border-blue-200' : subtask.status === 'overdue' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                                                        {updateSubtaskStatusMutation.isPending ? (
+                                                          <div className="flex items-center">
+                                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                                                            <span className="text-sm text-gray-500">Processing...</span>
+                                                          </div>
+                                                        ) : (
+                                                          <SelectValue />
+                                                        )}
+                                                      </SelectTrigger>
+                                                      <SelectContent>
+                                                        <SelectItem value="not_started">Not Started</SelectItem>
+                                                        <SelectItem value="in_progress">In Progress</SelectItem>
+                                                        <SelectItem value="fc_review">FC Review</SelectItem>
+                                                        <SelectItem value="completed">Completed</SelectItem>
+                                                        <SelectItem value="overdue">Overdue</SelectItem>
+                                                        <SelectItem value="on_hold">On Hold</SelectItem>
+                                                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                                                      </SelectContent>
+                                                    </Select>
+                                                  </td>
+                                                  <td className="p-3">
+                                                    <Button
+                                                      variant="outline"
+                                                      size="sm"
+                                                      onClick={() => onEdit({ ...nestedModule, subtasks: nestedModule.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
+                                                    >
+                                                      <Edit className="h-4 w-4 mr-1" />
+                                                      Edit
+                                                    </Button>
+                                                  </td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+
+                  {/* Direct subtasks for milestones (Phase 1,2,4,5,6) */}
+                  {expandedModules.has(module.id) && module.isMilestone && module.subtasks && module.subtasks.length > 0 && (
+                    <tr className="border-b border-gray-100">
+                      <td colSpan={11} className="p-0">
+                        <div className="bg-blue-50 border-t border-blue-200">
+                          <table className="w-full border-collapse">
+                            <thead>
+                              <tr className="border-b border-blue-200">
+                                <th className="text-left p-3 w-12">
+                                  <Checkbox
+                                    checked={selectedModules.includes(module.id)}
+                                    disabled={bulkStatusUpdateMutation.isPending}
+                                    onCheckedChange={(checked) => handleSelectModule(module.id, checked as boolean)}
+                                  />
+                                </th>
+                                <th className="text-left p-3 w-72">Subtask</th>
+                                <th className="text-left p-3 w-32">Priority</th>
+                                <th className="text-left p-3 w-36">Start Date</th>
+                                <th className="text-left p-3 w-36">End Date</th>
+                                <th className="text-left p-3 w-28">Phase</th>
+                                <th className="text-left p-3 w-40">Assigned To</th>
+                                <th className="text-left p-3 w-28">Duration</th>
+                                <th className="text-left p-3 w-32">Segment</th>
+                                <th className="text-left p-3 w-36">Status</th>
+                                <th className="text-left p-3 w-28">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {module.subtasks.map((subtask) => (
+                                <tr key={subtask.id} className="border-b border-blue-100 hover:bg-blue-50">
+                                  <td className="p-3">
+                                    <Checkbox
+                                      checked={selectedModules.includes(subtask.id)}
+                                      disabled={bulkStatusUpdateMutation.isPending}
+                                      onCheckedChange={(checked) => handleSelectModule(subtask.id, checked as boolean)}
+                                    />
+                                  </td>
+                                  <td className="p-3">
+                                    <div className="font-medium text-gray-900">
+                                      {subtask.name}
+                                    </div>
+                                    {subtask.description && (
+                                      <div className="text-sm text-gray-500 truncate max-w-xs">
+                                        {subtask.description}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="p-3">
+                                    <Badge 
+                                      variant="outline" 
+                                      className={`text-xs ${
+                                        subtask.priority === 'critical' ? 'bg-red-50 text-red-700 border-red-200' :
+                                        subtask.priority === 'high' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                                        subtask.priority === 'medium' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                                        'bg-gray-50 text-gray-700 border-gray-200'
+                                      }`}
+                                    >
+                                      {subtask.priority}
+                                    </Badge>
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {subtask.startDate ? formatDate(subtask.startDate) : '-'}
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {subtask.dueDate ? formatDate(subtask.dueDate) : '-'}
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {module.phaseName || `Phase ${module.phaseNumber}`}
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {subtask.assignedUser ? (
+                                      <div className="flex items-center space-x-2">
+                                        <Avatar className="h-6 w-6">
+                                          <AvatarFallback className="text-xs">
+                                            {subtask.assignedUser.firstName?.[0]}{subtask.assignedUser.lastName?.[0]}
+                                          </AvatarFallback>
+                                        </Avatar>
+                                        <span className="text-sm">
+                                          {subtask.assignedUser.firstName} {subtask.assignedUser.lastName}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-400">Unassigned</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {subtask.estimatedDays ? `${subtask.estimatedDays} days` : '-'}
+                                  </td>
+                                  <td className="p-3 text-sm text-gray-600">
+                                    {projectSegment}
+                                  </td>
+                                  <td className="p-3">
+                                    <Select
+                                      value={subtask.status}
+                                      onValueChange={(value) => handleSubtaskStatusChange(subtask.id, value)}
+                                      disabled={bulkStatusUpdateMutation.isPending}
+                                    >
+                                      <SelectTrigger className="w-full">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="not_started">Not Started</SelectItem>
+                                        <SelectItem value="in_progress">In Progress</SelectItem>
+                                        <SelectItem value="fc_review">FC Review</SelectItem>
+                                        <SelectItem value="completed">Completed</SelectItem>
+                                        <SelectItem value="overdue">Overdue</SelectItem>
+                                        <SelectItem value="on_hold">On Hold</SelectItem>
+                                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </td>
+                                  <td className="p-3">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => onEdit({ ...module, subtasks: module.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
+                                    >
+                                      <Edit className="h-4 w-4 mr-1" />
+                                      Edit
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+
                   {/* Subtasks for expanded modules */}
-                  {expandedModules.has(module.id) && module.subtasks && module.subtasks.length > 0 && (
+                  {expandedModules.has(module.id) && !module.isMilestone && module.subtasks && module.subtasks.length > 0 && (
                     <tr className="border-b border-gray-100">
                       <td colSpan={11} className="p-0">
                         <div className="bg-blue-50 border-t border-blue-200">
@@ -1002,11 +1466,9 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                             {status.label}
                                           </SelectItem>
                                         ))}
-                                        {user && (user as any)?.role === 'employee' && ['qa', 'client_review', 'completed'].includes(subtask.status) ? (
+                                        {user && (user as any)?.role === 'employee' && ['completed'].includes(subtask.status) ? (
                                           <SelectItem value={subtask.status} disabled>
-                                            {subtask.status === 'qa' ? 'QA' :
-                                             subtask.status === 'client_review' ? 'Client Review' :
-                                             'Completed'} (Current)
+                                            Completed (Current)
                                           </SelectItem>
                                         ) : null}
                                       </SelectContent>
@@ -1046,7 +1508,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
         {/* Summary */}
         <div className="mt-6 flex items-center justify-between text-sm text-gray-600">
           <div>
-            Showing {filteredModules.length} of {modules.length} modules
+            Showing {filteredModules.length} of {modules.length} milestones
           </div>
         </div>
       </CardContent>

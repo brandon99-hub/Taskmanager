@@ -226,6 +226,7 @@ export const modules = pgTable("modules", {
   phase: varchar("phase", { length: 100 }), // Added phase column for better tracking
   assignedUserId: varchar("assigned_user_id").references(() => users.id),
   assignedTeamId: varchar("assigned_team_id").references(() => teams.id), // Auto-assigned from project team
+  milestoneId: varchar("milestone_id").references(() => milestones.id), // Link to milestone for Phase 3 structure
   createdById: varchar("created_by_id").references(() => users.id).notNull(),
   completedAt: timestamp("completed_at"),
   progressPercent: integer("progress_percent").notNull().default(0),
@@ -238,6 +239,10 @@ export const milestones = pgTable("milestones", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 200 }).notNull(),
   description: text("description"),
+  priority: taskPriorityEnum("priority").notNull().default("medium"),
+  // Date fields
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
   // Financials / billing fields moved here from modules
   feeAmount: decimal("fee_amount", { precision: 12, scale: 2 }),
   billingStatus: billingStatusEnum("billing_status").notNull().default("none"),
@@ -462,6 +467,10 @@ export const modulesRelations = relations(modules, ({ one, many }) => ({
     references: [users.id],
     relationName: "assignee",
   }),
+  milestone: one(milestones, {
+    fields: [modules.milestoneId],
+    references: [milestones.id],
+  }),
   createdBy: one(users, {
     fields: [modules.createdById],
     references: [users.id],
@@ -483,7 +492,7 @@ export const milestonesRelations = relations(milestones, ({ one, many }) => ({
     references: [users.id],
     relationName: "creator",
   }),
-  modules: many(moduleMilestones),
+  modules: many(modules),
 }));
 
 export const projectPhasesRelations = relations(projectPhases, ({ one, many }) => ({

@@ -26,13 +26,15 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
   const getApiEndpoint = () => {
     if (dashboardType === 'project_manager') {
       return type === "completed" ? '/api/dashboard/completed-modules' : '/api/dashboard/overdue-modules';
+    } else if (dashboardType === 'employee') {
+      return type === "completed" ? '/api/dashboard/completed-modules' : '/api/dashboard/overdue-breakdown';
     } else {
       return type === "completed" ? '/api/dashboard/completed-milestones' : '/api/dashboard/overdue-tasks';
     }
   };
 
   const getTerminology = () => {
-    if (dashboardType === 'project_manager') {
+    if (dashboardType === 'project_manager' || dashboardType === 'employee') {
       return { singular: 'module', plural: 'modules', title: 'Modules' };
     } else {
       return { singular: 'milestone', plural: 'milestones', title: 'Milestones' };
@@ -42,10 +44,13 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
   const terms = getTerminology();
   const isProjectManager = dashboardType === 'project_manager';
 
-  const { data: items = [], isLoading } = useQuery<any[]>({
+  const { data: data, isLoading } = useQuery<any>({
     queryKey: [getApiEndpoint()],
     enabled: isOpen && !!user,
   });
+
+  // Handle different response formats
+  const items = Array.isArray(data) ? data : (data?.overdueModules || data?.overdueSubtasks || []);
 
   const formatCurrency = (amount: string | number) => {
     const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;

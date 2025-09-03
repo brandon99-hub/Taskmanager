@@ -18,6 +18,7 @@ import Contracts from "@/pages/contracts";
 import ContractDetail from "@/pages/contract-detail";
 import ContractForm from "@/pages/contract-form";
 import Team from "@/pages/team";
+import TeamDetail from "@/pages/team-detail";
 import ExecutiveDashboard from "@/pages/executive-dashboard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
@@ -58,7 +59,8 @@ function Router() {
               <Route path="/executive-dashboard" component={ExecutiveDashboard} />
             </>
           )}
-          <Route path="/team" component={Team} />
+          <Route path="/teams" component={Team} />
+          <Route path="/teams/:teamId" component={TeamDetail} />
         </>
       )}
       <Route component={NotFound} />
