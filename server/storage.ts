@@ -3201,7 +3201,7 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      console.log(`Contract expiration check completed. Found ${expiringContracts.length} contracts expiring in 30 days, ${urgentExpiringContracts.length} expiring in 7 days.`);
+      // Contract expiration check completed
     } catch (error) {
       console.error('Error checking contract expirations:', error);
       throw error;
@@ -3406,7 +3406,7 @@ export class DatabaseStorage implements IStorage {
         await this.sendFinanceModuleDeadlineNotification(twoWeekNoticeModules, '2 weeks');
       }
 
-      console.log(`Module deadline check completed. Found ${overdueModules.length} overdue, ${dueSoonModules.length} due soon, ${upcomingModules.length} upcoming modules. Sent ${oneWeekNoticeModules.length} one-week and ${twoWeekNoticeModules.length} two-week finance notifications.`);
+      // Module deadline check completed
     } catch (error) {
       console.error('Error checking module deadlines:', error);
       throw error;
@@ -3431,9 +3431,13 @@ export class DatabaseStorage implements IStorage {
       // Check if any subtask is in progress
       const anyInProgress = moduleSubtasks.some(subtask => subtask.status === 'in_progress');
 
-      // Get current module status
+      // Get current module status and phase info
       const [currentModule] = await db
-        .select({ status: modules.status })
+        .select({ 
+          status: modules.status,
+          phaseNumber: modules.phaseNumber,
+          projectId: modules.projectId
+        })
         .from(modules)
         .where(eq(modules.id, moduleId));
 
@@ -3465,6 +3469,186 @@ export class DatabaseStorage implements IStorage {
 
         // Send notification when module moves to QA status
         if (newStatus === 'qa' && currentModule.status !== 'qa') {
+          await this.sendFinanceNotificationForModuleQA(moduleId);
+        }
+
+        // Handle Phase 3 specific logic: Update milestone status when module changes
+        if (currentModule.phaseNumber === 3) {
+          await this.updateMilestoneStatusFromModules(moduleId);
+        }
+
+        // Update project progress after module status change
+        await this.updateProjectProgress(currentModule.projectId);
+        await this.updateProjectStatusBasedOnMilestones(currentModule.projectId);
+        
+        // Update phase status based on module changes
+        if (currentModule.phaseNumber) {
+          await this.updatePhaseStatusFromModules(currentModule.projectId, currentModule.phaseNumber);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating module status from subtasks:', error);
+      throw error;
+    }
+  }
+
+  // New function to update milestone billing status for Phases 1,2,4,5,6
+  async updateMilestoneStatusFromSubtasks(subtaskId: string): Promise<void> {
+    try {
+      // Get the subtask and its module to determine phase
+      const [subtaskWithModule] = await db
+        .select({
+          subtask: subtasks,
+          module: modules
+        })
+        .from(subtasks)
+        .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+        .where(eq(subtasks.id, subtaskId));
+
+      if (!subtaskWithModule?.module) return;
+
+      const module = subtaskWithModule.module;
+      
+      // Only handle Phases 1,2,4,5,6 (not Phase 3)
+      if (module.phaseNumber === 3) return;
+
+      // Get all subtasks for this module
+      const moduleSubtasks = await db
+        .select({ status: subtasks.status })
+        .from(subtasks)
+        .where(eq(subtasks.moduleId, module.id));
+
+      if (moduleSubtasks.length === 0) return;
+
+      // Check if any subtask is in progress or all are completed
+      const anyInProgress = moduleSubtasks.some(subtask => 
+        ['in_progress', 'fc_review', 'qa', 'client_review'].includes(subtask.status)
+      );
+      const allCompleted = moduleSubtasks.every(subtask => 
+        ['completed', 'finished'].includes(subtask.status)
+      );
+
+      // Find the milestone for this module (for Phases 1,2,4,5,6, modules are milestones)
+      const [milestone] = await db
+        .select()
+        .from(milestones)
+        .where(and(
+          eq(milestones.projectId, module.projectId),
+          eq(milestones.name, module.name) // Assuming module name matches milestone name
+        ));
+
+      if (!milestone) return;
+
+      let newBillingStatus = milestone.billingStatus;
+
+      // Update milestone billing status based on subtask status
+      if (allCompleted && milestone.billingStatus === 'none') {
+        newBillingStatus = 'to_send';
+      } else if (anyInProgress && milestone.billingStatus === 'none') {
+        newBillingStatus = 'to_send';
+      }
+
+      // Update milestone billing status if it needs to change
+      if (newBillingStatus !== milestone.billingStatus) {
+        await db
+          .update(milestones)
+          .set({ 
+            billingStatus: newBillingStatus as any,
+            updatedAt: new Date() as any
+          } as any)
+          .where(eq(milestones.id, milestone.id));
+
+        // Update project progress after milestone status change
+        await this.updateProjectProgress(module.projectId);
+        await this.updateProjectStatusBasedOnMilestones(module.projectId);
+      }
+    } catch (error) {
+      console.error('Error updating milestone status from subtasks:', error);
+      throw error;
+    }
+  }
+
+  // New function to update milestone status from modules in Phase 3
+  async updateMilestoneStatusFromModules(moduleId: string): Promise<void> {
+    try {
+      // Get the module to find which milestone it belongs to
+      const [moduleInfo] = await db
+        .select({
+          moduleId: modules.id,
+          moduleStatus: modules.status,
+          projectId: modules.projectId,
+          milestoneId: moduleMilestones.milestoneId
+        })
+        .from(modules)
+        .leftJoin(moduleMilestones, eq(modules.id, moduleMilestones.moduleId))
+        .where(eq(modules.id, moduleId));
+
+      if (!moduleInfo?.milestoneId) {
+        return; // Module doesn't belong to a milestone
+      }
+
+      // Get all modules under this milestone
+      const milestoneModules = await db
+        .select({ status: modules.status })
+        .from(modules)
+        .innerJoin(moduleMilestones, eq(modules.id, moduleMilestones.moduleId))
+        .where(eq(moduleMilestones.milestoneId, moduleInfo.milestoneId));
+
+      if (milestoneModules.length === 0) {
+        return; // No modules under this milestone
+      }
+
+      // Check if all modules are completed (qa status)
+      const allCompleted = milestoneModules.every(module => module.status === 'qa');
+      
+      // Check if any module is in progress
+      const anyInProgress = milestoneModules.some(module => module.status === 'in_progress');
+
+      // Get current milestone billing status
+      const [currentMilestone] = await db
+        .select({ billingStatus: milestones.billingStatus })
+        .from(milestones)
+        .where(eq(milestones.id, moduleInfo.milestoneId));
+
+      if (!currentMilestone) {
+        return; // Milestone not found
+      }
+
+      let newBillingStatus = currentMilestone.billingStatus;
+
+      // Auto-set milestone to 'to_send' when all modules are in QA
+      if (allCompleted && currentMilestone.billingStatus === 'none') {
+        newBillingStatus = 'to_send';
+      }
+      // Auto-set milestone to 'to_send' when any module becomes in_progress (milestone starts)
+      else if (anyInProgress && currentMilestone.billingStatus === 'none') {
+        newBillingStatus = 'to_send';
+      }
+
+      // Update milestone billing status if it needs to change
+      if (newBillingStatus !== currentMilestone.billingStatus) {
+        await db
+          .update(milestones)
+          .set({ 
+            billingStatus: newBillingStatus as any,
+            updatedAt: new Date() as any
+          } as any)
+          .where(eq(milestones.id, moduleInfo.milestoneId));
+
+        // Update project progress after milestone status change
+        await this.updateProjectProgress(moduleInfo.projectId);
+        await this.updateProjectStatusBasedOnMilestones(moduleInfo.projectId);
+      }
+    } catch (error) {
+      console.error('Error updating milestone status from modules:', error);
+      throw error;
+    }
+  }
+
+  // New function to send finance notification when module goes to QA
+  async sendFinanceNotificationForModuleQA(moduleId: string): Promise<void> {
+    try {
+      // Get module and project info
           const [moduleWithProject] = await db
             .select({
               module: modules,
@@ -3476,7 +3660,11 @@ export class DatabaseStorage implements IStorage {
             .innerJoin(users, eq(projects.managerId, users.id))
             .where(eq(modules.id, moduleId));
 
-          if (moduleWithProject?.module && moduleWithProject?.project && moduleWithProject?.manager) {
+      if (!moduleWithProject?.module || !moduleWithProject?.project || !moduleWithProject?.manager) {
+        return;
+      }
+
+      // Send internal notification to project manager
             await this.createNotification({
               userId: moduleWithProject.manager.id,
               type: 'module_completed',
@@ -3484,39 +3672,114 @@ export class DatabaseStorage implements IStorage {
               message: `Module "${moduleWithProject.module.name}" in project "${moduleWithProject.project.name}" has been completed and is ready for QA review. All subtasks have been finished.`,
               relatedId: moduleId
             } as any);
-          }
-        }
 
-        // Update project progress after module status change
-        const [module] = await db
-          .select({ projectId: modules.projectId })
-          .from(modules)
-          .where(eq(modules.id, moduleId));
-        
-        if (module) {
-          await this.updateProjectProgress(module.projectId);
-          await this.updateProjectStatusBasedOnMilestones(module.projectId);
+      // Send email notification to finance team
+      const financeEmail = await this.getSystemConfig('financeEmail');
+      if (financeEmail) {
+        try {
+          const { emailService } = await import('./services/emailService');
           
-          // Update phase status based on module changes
-          const [moduleWithPhase] = await db
-            .select({ phaseNumber: modules.phaseNumber })
-            .from(modules)
-            .where(eq(modules.id, moduleId));
-          
-          if (moduleWithPhase?.phaseNumber) {
-            await this.updatePhaseStatusFromModules(module.projectId, moduleWithPhase.phaseNumber);
-          }
+          const emailContent = `
+Dear Finance Team,
+
+A module has been completed and is ready for QA review:
+
+Project: ${moduleWithProject.project.name}
+Module: ${moduleWithProject.module.name}
+Project Manager: ${moduleWithProject.manager.firstName} ${moduleWithProject.manager.lastName}
+Status: Ready for QA Review
+Completion Date: ${new Date().toLocaleDateString()}
+
+Please review the module and proceed with QA processes.
+
+Best regards,
+TaskFlow System
+          `;
+
+          await emailService.sendEmail({
+            to: financeEmail,
+            subject: `Module Ready for QA: ${moduleWithProject.module.name}`,
+            text: emailContent
+          });
+        } catch (emailError) {
+          console.error('Error sending finance email notification:', emailError);
         }
       }
     } catch (error) {
-      console.error('Error updating module status from subtasks:', error);
-      throw error;
+      console.error('Error sending finance notification for module QA:', error);
     }
   }
 
   async updatePhaseStatusFromModules(projectId: string, phaseNumber: number): Promise<void> {
     try {
-      // Get all modules in this phase
+      // For Phase 3, check milestone billing status instead of module status
+      if (phaseNumber === 3) {
+        // Get all milestones for this phase
+        const phaseMilestones = await db
+          .select({ billingStatus: milestones.billingStatus })
+          .from(milestones)
+          .where(eq(milestones.projectId, projectId));
+
+        if (phaseMilestones.length === 0) {
+          return; // No milestones in this phase
+        }
+
+        // Check milestone billing status distribution
+        // Phase is completed when all milestones are 'sent' or 'paid'
+        const allCompleted = phaseMilestones.every(milestone => 
+          ['sent', 'paid', 'processing'].includes(milestone.billingStatus)
+        );
+        // Phase is in progress when any milestone is 'to_send' or beyond
+        const anyInProgress = phaseMilestones.some(milestone => 
+          ['to_send', 'sent', 'paid', 'processing'].includes(milestone.billingStatus)
+        );
+
+        // Get current phase
+        const [currentPhase] = await db
+          .select({ status: projectPhases.status })
+          .from(projectPhases)
+          .where(
+            and(
+              eq(projectPhases.projectId, projectId),
+              eq(projectPhases.phaseNumber, phaseNumber)
+            )
+          );
+
+        if (!currentPhase) {
+          return; // Phase not found
+        }
+
+        let newStatus = currentPhase.status;
+
+        // Auto-complete phase when all milestones are sent/paid
+        if (allCompleted && currentPhase.status !== 'completed') {
+          newStatus = 'completed';
+        }
+        // Auto-set phase to in_progress when any milestone is to_send or beyond
+        else if (anyInProgress && currentPhase.status === 'not_started') {
+          newStatus = 'in_progress';
+        }
+
+        // Update phase status if it needs to change
+        if (newStatus !== currentPhase.status) {
+          await db
+            .update(projectPhases)
+            .set({ 
+              status: newStatus as any,
+              completedAt: newStatus === 'completed' ? new Date() : undefined,
+              updatedAt: new Date() as any
+            } as any)
+            .where(
+              and(
+                eq(projectPhases.projectId, projectId),
+                eq(projectPhases.phaseNumber, phaseNumber)
+              )
+            );
+        }
+        return;
+      }
+
+      // For other phases (1,2,4,5,6), check module status directly
       const phaseModules = await db
         .select({ status: modules.status })
         .from(modules)
@@ -3577,7 +3840,7 @@ export class DatabaseStorage implements IStorage {
             )
           );
 
-        console.log(`Phase ${phaseNumber} status updated to ${newStatus} for project ${projectId}`);
+        // Phase status updated
       }
     } catch (error) {
       console.error('Error updating phase status from modules:', error);
@@ -3600,12 +3863,35 @@ export class DatabaseStorage implements IStorage {
         .where(eq(projectPhases.id, phaseId));
 
       if (!phase) {
-        console.log(`Phase ${phaseId} not found`);
+        // Phase not found
         return;
       }
 
-      // Get all milestones (tasks) for this phase
+      let allCompleted = false;
+      let anyInProgress = false;
+
+      // For Phase 3, check milestone billing status
+      if (phase.phaseNumber === 3) {
       const phaseMilestones = await db
+          .select({ billingStatus: milestones.billingStatus })
+          .from(milestones)
+          .where(eq(milestones.projectId, phase.projectId));
+
+        if (phaseMilestones.length === 0) {
+          return; // No milestones in this phase
+        }
+
+        // Phase is completed when all milestones are 'sent' or 'paid'
+        allCompleted = phaseMilestones.every(milestone => 
+          ['sent', 'paid', 'processing'].includes(milestone.billingStatus)
+        );
+        // Phase is in progress when any milestone is 'to_send' or beyond
+        anyInProgress = phaseMilestones.some(milestone => 
+          ['to_send', 'sent', 'paid', 'processing'].includes(milestone.billingStatus)
+        );
+      } else {
+        // For other phases, check module status
+        const phaseModules = await db
         .select({ status: modules.status })
         .from(modules)
         .where(
@@ -3615,24 +3901,24 @@ export class DatabaseStorage implements IStorage {
           )
         );
 
-      if (phaseMilestones.length === 0) {
-        return; // No milestones in this phase
-      }
+        if (phaseModules.length === 0) {
+          return; // No modules in this phase
+        }
 
-      // Check milestone status distribution
-      const allCompleted = phaseMilestones.every(milestone => milestone.status === 'done');
-      // Check for modules that are in progress - using the actual status values from the system
-      const anyInProgress = phaseMilestones.some(milestone => 
-        ['in_progress', 'ongoing', 'started'].includes(milestone.status)
-      );
+        // Check module status distribution
+        allCompleted = phaseModules.every(module => module.status === 'completed');
+        anyInProgress = phaseModules.some(module => 
+          ['in_progress', 'ongoing', 'started'].includes(module.status)
+        );
+      }
 
       let newStatus = phase.status;
 
-      // Auto-complete phase when all milestones are done
+      // Auto-complete phase when all milestones/modules are done
       if (allCompleted && phase.status !== 'completed') {
         newStatus = 'completed';
       }
-      // Auto-set phase to in_progress when any milestone is in_progress
+      // Auto-set phase to in_progress when any milestone/module is in_progress
       else if (anyInProgress && phase.status === 'not_started') {
         newStatus = 'in_progress';
       }
@@ -3648,7 +3934,7 @@ export class DatabaseStorage implements IStorage {
           } as any)
           .where(eq(projectPhases.id, phaseId));
 
-        console.log(`Phase ${phaseId} status updated to ${newStatus}`);
+        // Phase status updated
       }
     } catch (error) {
       console.error('Error updating phase status from milestones:', error);
@@ -3720,7 +4006,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         text: emailContent
       });
 
-      console.log(`Finance notification sent for ${totalModules} modules due in ${timeframe} to ${financeEmail}`);
+      // Finance notification sent
 
     } catch (error) {
       console.error(`Error sending finance notification for modules due in ${timeframe}:`, error);
@@ -3831,7 +4117,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         .delete(milestones)
         .where(eq(milestones.id, id));
         
-      console.log(`Milestone ${id} deleted successfully`);
+      // Milestone deleted successfully
     } catch (error) {
       console.error('Error deleting milestone:', error);
       throw error;
@@ -3919,7 +4205,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           moduleId
         } as any);
 
-      console.log(`Module ${moduleId} added to milestone ${milestoneId}`);
+      // Module added to milestone
     } catch (error) {
       console.error('Error adding module to milestone:', error);
       throw error;
@@ -3943,7 +4229,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         throw new Error('Module-milestone relationship not found');
       }
 
-      console.log(`Module ${moduleId} removed from milestone ${milestoneId}`);
+      // Module removed from milestone
     } catch (error) {
       console.error('Error removing module from milestone:', error);
       throw error;
@@ -3994,10 +4280,13 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
     
     if (!result) return null;
     
-    return {
+    const subtask = {
       ...result.subtasks,
       assignedUser: result.users
     };
+    
+    
+    return subtask;
   }
 
   async getSubtasksByModule(moduleId: string): Promise<any[]> {
@@ -4038,15 +4327,52 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       .where(inArray(subtasks.moduleId, moduleIds))
       .orderBy(asc(subtasks.createdAt));
 
-    // Get dependencies for each subtask
+    // Get dependencies and populate assignments for each subtask
     const subtasksWithDeps = await Promise.all(
       result.map(async (row) => {
         const deps = await this.getSubtaskDependencies(row.subtask.id);
-        return {
+        
+        const subtask = {
           ...row.subtask,
           assignedUser: row.assignedUser,
           dependencies: deps.map(d => d.dependsOnSubtaskId)
         };
+
+        // Populate assignedDev
+        if (subtask.assignedDevId) {
+          try {
+            const assignedDev = await this.getUser(subtask.assignedDevId);
+            if (assignedDev) {
+              (subtask as any).assignedDev = {
+                id: assignedDev.id,
+                firstName: assignedDev.firstName,
+                lastName: assignedDev.lastName,
+                email: assignedDev.email
+              };
+            }
+          } catch (error) {
+            // Silently handle error
+          }
+        }
+
+        // Populate assignedConsultant
+        if (subtask.assignedConsultantId) {
+          try {
+            const assignedConsultant = await this.getUser(subtask.assignedConsultantId);
+            if (assignedConsultant) {
+              (subtask as any).assignedConsultant = {
+                id: assignedConsultant.id,
+                firstName: assignedConsultant.firstName,
+                lastName: assignedConsultant.lastName,
+                email: assignedConsultant.email
+              };
+            }
+          } catch (error) {
+            // Silently handle error
+          }
+        }
+
+        return subtask;
       })
     );
 
@@ -4108,6 +4434,16 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       await this.updateModuleProgressFromSubtasks(updatedSubtask.moduleId);
       // Trigger module status automation
       await this.updateModuleStatusFromSubtasks(updatedSubtask.moduleId);
+      
+      // For Phases 1,2,4,5,6, also update milestone billing status
+      const [module] = await db
+        .select({ phaseNumber: modules.phaseNumber })
+        .from(modules)
+        .where(eq(modules.id, updatedSubtask.moduleId));
+      
+      if (module && module.phaseNumber !== 3) {
+        await this.updateMilestoneStatusFromSubtasks(updatedSubtask.id);
+      }
     }
     
     return updatedSubtask;
@@ -4271,6 +4607,11 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
     // Auto-update project status based on milestone progress
     await this.updateProjectStatusBasedOnMilestones(updatedModule.projectId);
     
+    // Handle Phase 3 specific logic: Update milestone status when module changes
+    if (updatedModule.phaseNumber === 3) {
+      await this.updateMilestoneStatusFromModules(updatedModule.id);
+    }
+    
     // Update phase status based on module status changes
     if (updatedModule.phaseNumber) {
       await this.updatePhaseStatusFromModules(updatedModule.projectId, updatedModule.phaseNumber);
@@ -4354,9 +4695,10 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
               .where(eq(subtasks.moduleId, module.id))
               .orderBy(asc(subtasks.createdAt));
 
-            return {
-              ...module,
-              subtasks: subtasksWithUsers.map(row => ({
+            // Populate assignedDev and assignedConsultant for subtasks
+            const subtasksWithAssignments = await Promise.all(
+              subtasksWithUsers.map(async (row) => {
+                const subtask = {
                 id: row.subtask.id,
                 name: row.subtask.name,
                 description: row.subtask.description,
@@ -4374,7 +4716,49 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
                 assignedConsultantId: row.subtask.assignedConsultantId,
                 assignedUser: row.assignedUser,
                 completedAt: row.subtask.completedAt
-              }))
+                };
+
+                // Populate assignedDev
+                if (subtask.assignedDevId) {
+                  try {
+                    const assignedDev = await this.getUser(subtask.assignedDevId);
+                    if (assignedDev) {
+                      (subtask as any).assignedDev = {
+                        id: assignedDev.id,
+                        firstName: assignedDev.firstName,
+                        lastName: assignedDev.lastName,
+                        email: assignedDev.email
+                      };
+                    }
+                  } catch (error) {
+                    // Silently handle error
+                  }
+                }
+
+                // Populate assignedConsultant
+                if (subtask.assignedConsultantId) {
+                  try {
+                    const assignedConsultant = await this.getUser(subtask.assignedConsultantId);
+                    if (assignedConsultant) {
+                      (subtask as any).assignedConsultant = {
+                        id: assignedConsultant.id,
+                        firstName: assignedConsultant.firstName,
+                        lastName: assignedConsultant.lastName,
+                        email: assignedConsultant.email
+                      };
+                    }
+                  } catch (error) {
+                    // Silently handle error
+                  }
+                }
+
+                return subtask;
+              })
+            );
+
+            return {
+              ...module,
+              subtasks: subtasksWithAssignments
             };
           })
         );
@@ -4662,7 +5046,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         } as any)
         .returning();
 
-      console.log(`Task dependency created: ${dependency.moduleId} depends on ${dependency.dependsOnModuleId}`);
+      // Task dependency created
       return newDependency;
     } catch (error) {
       console.error('Error creating task dependency:', error);
@@ -4681,7 +5065,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         throw new Error('Task dependency not found');
       }
 
-      console.log(`Task dependency ${dependencyId} deleted successfully`);
+      // Task dependency deleted successfully
     } catch (error) {
       console.error('Error deleting task dependency:', error);
       throw error;
@@ -4815,7 +5199,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         .set(updateData)
         .where(eq(users.id, typedRoleData.userId));
 
-      console.log(`Admin role assigned: ${typedRoleData.roleType} to user ${typedRoleData.userId}`);
+      // Admin role assigned
       return newRole;
     } catch (error) {
       console.error('Error assigning admin role:', error);
@@ -4866,7 +5250,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         .set(updateData)
         .where(eq(users.id, userId));
 
-      console.log(`Admin role removed: ${roleType} from user ${userId}`);
+      // Admin role removed
     } catch (error) {
       console.error('Error removing admin role:', error);
       throw error;
@@ -5019,7 +5403,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         assignedBy: assignedBy,
       });
 
-      console.log(`User created with admin role: ${userData.email} (${userData.role})`);
+      // User created with admin role
       return { user: newUser, temporaryPassword };
     } catch (error) {
       console.error('Error creating user with credentials:', error);
@@ -5047,7 +5431,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         .set(updateData)
         .where(eq(users.id, userId));
 
-      console.log(`Password updated for user ${userId}`);
+      // Password updated
     } catch (error) {
       console.error('Error updating user password:', error);
       throw error;

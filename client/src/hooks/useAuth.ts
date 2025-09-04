@@ -68,14 +68,6 @@ export function useAuth() {
            !!dashboardRole?.assignedSegment ||
            ['admin', 'manager'].includes(dashboardRole?.role);
     
-    console.log('isAdminRole check:', {
-      dashboardRole,
-      isProjectManager: dashboardRole?.isProjectManager,
-      isFinanceHead: dashboardRole?.isFinanceHead,
-      assignedSegment: dashboardRole?.assignedSegment,
-      role: dashboardRole?.role,
-      isAdmin
-    });
     
     return isAdmin;
   };

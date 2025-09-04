@@ -87,6 +87,34 @@ const getPhaseStatusText = (status: Phase['status']) => {
   }
 };
 
+// Helper function to get assigned personnel for subtasks
+const getSubtaskAssignedPersonnel = (subtask: any) => {
+  const assigned = [];
+  
+  // Check for assigned user (legacy field)
+  if (subtask.assignedUser) {
+    const userName = `${subtask.assignedUser.firstName || ''} ${subtask.assignedUser.lastName || ''}`.trim();
+    assigned.push(userName || subtask.assignedUser.email);
+  }
+  
+  // Check for assigned developer
+  if (subtask.assignedDev) {
+    const devName = `${subtask.assignedDev.firstName || ''} ${subtask.assignedDev.lastName || ''}`.trim();
+    assigned.push(devName || subtask.assignedDev.email);
+  }
+  
+  // Check for assigned consultant
+  if (subtask.assignedConsultant) {
+    const consultantName = `${subtask.assignedConsultant.firstName || ''} ${subtask.assignedConsultant.lastName || ''}`.trim();
+    assigned.push(consultantName || subtask.assignedConsultant.email);
+  }
+  
+  // Remove duplicates
+  const uniqueAssigned = Array.from(new Set(assigned));
+  
+  return uniqueAssigned.length > 0 ? uniqueAssigned.join(', ') : 'Unassigned';
+};
+
 const getPriorityColor = (priority: string) => {
   switch (priority) {
     case 'critical':
@@ -111,6 +139,7 @@ export default function PhaseDetailModal({
   onPhaseUpdate 
 }: PhaseDetailModalProps) {
   const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
+  const [expandedMilestones, setExpandedMilestones] = useState<Set<string>>(new Set());
 
   if (!phase) return null;
 
@@ -119,6 +148,11 @@ export default function PhaseDetailModal({
   const totalModules = phaseModules.length;
   const phaseProgress = calculateWeightBasedProgress(phaseModules);
 
+  // For Phase 3, separate milestones from regular modules
+  const isPhase3 = phase.phaseNumber === 3;
+  const milestones = isPhase3 ? phaseModules.filter(m => m.isMilestone) : [];
+  const regularModules = isPhase3 ? phaseModules.filter(m => !m.isMilestone) : phaseModules;
+
   const toggleModuleExpansion = (moduleId: string) => {
     setExpandedModules(prev => {
       const newSet = new Set(prev);
@@ -126,6 +160,18 @@ export default function PhaseDetailModal({
         newSet.delete(moduleId);
       } else {
         newSet.add(moduleId);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleMilestoneExpansion = (milestoneId: string) => {
+    setExpandedMilestones(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(milestoneId)) {
+        newSet.delete(milestoneId);
+      } else {
+        newSet.add(milestoneId);
       }
       return newSet;
     });
@@ -225,7 +271,7 @@ export default function PhaseDetailModal({
                   <div className="bg-blue-50 p-3 rounded-lg">
                     <div className="flex items-center space-x-2">
                       <Target className="h-4 w-4 text-blue-600" />
-                      <span className="font-medium">Modules</span>
+                      <span className="font-medium">Milestones</span>
                     </div>
                     <p className="text-2xl font-bold text-blue-600">{totalModules}</p>
                     <p className="text-gray-600">Total</p>
@@ -253,17 +299,153 @@ export default function PhaseDetailModal({
             </CardContent>
           </Card>
 
-          {/* Modules Section */}
+          {/* Milestones Section */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <Target className="h-5 w-5" />
-                <span>Modules ({totalModules})</span>
+                <span>Milestones ({totalModules})</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {phaseModules.map((module) => {
+                {/* Phase 3: Show milestones first, then modules under each milestone */}
+                {isPhase3 ? (
+                  <>
+                    {milestones.map((milestone) => {
+                      const isMilestoneExpanded = expandedMilestones.has(milestone.id);
+                      const milestoneModules = milestone.modules || [];
+                      
+                      return (
+                        <div key={milestone.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                              <button
+                                onClick={() => toggleMilestoneExpansion(milestone.id)}
+                                className="text-gray-500 hover:text-gray-700"
+                              >
+                                {isMilestoneExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </button>
+                              <div>
+                                <h4 className="font-medium text-gray-900">{milestone.name}</h4>
+                                <p className="text-sm text-gray-600">{milestone.description}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Badge variant="outline" className={getPriorityColor(milestone.priority)}>
+                                {milestone.priority}
+                              </Badge>
+                              <Badge variant="outline">
+                                {milestone.status}
+                              </Badge>
+                            </div>
+                          </div>
+                          
+                          {/* Milestone Details */}
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm text-gray-600">
+                            <div className="flex items-center space-x-2">
+                              <CalendarDays className="h-4 w-4" />
+                              <span>Due: {milestone.dueDate ? new Date(milestone.dueDate).toLocaleDateString() : 'Not set'}</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <User className="h-4 w-4" />
+                              <span>Assigned: {projectTeam?.name || 'Unassigned'}</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Target className="h-4 w-4" />
+                              <span>Progress: {milestone.progressPercent}%</span>
+                            </div>
+                          </div>
+                          
+                          {/* Modules under this milestone */}
+                          {isMilestoneExpanded && milestoneModules.length > 0 && (
+                            <div className="mt-4 pl-6 border-l-2 border-gray-200">
+                              <h5 className="font-medium text-gray-700 mb-3">Modules ({milestoneModules.length})</h5>
+                              <div className="space-y-3">
+                                {milestoneModules.map((module: any) => {
+                                  const subtaskProgress = calculateSubtaskWeightBasedProgress(module.subtasks || []);
+                                  const isModuleExpanded = expandedModules.has(module.id);
+                                  
+                                  return (
+                                    <div key={module.id} className="bg-gray-50 rounded-md p-3">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center space-x-2">
+                                          <button
+                                            onClick={() => toggleModuleExpansion(module.id)}
+                                            className="text-gray-500 hover:text-gray-700"
+                                          >
+                                            {isModuleExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                          </button>
+                                          <div>
+                                            <div className="font-medium text-sm text-gray-800">{module.name}</div>
+                                            <div className="text-xs text-gray-600">{module.description}</div>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                          <Badge variant="outline" className={getPriorityColor(module.priority)}>
+                                            {module.priority}
+                                          </Badge>
+                                          <Badge variant="outline">
+                                            {module.status}
+                                          </Badge>
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Module Details */}
+                                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-500">
+                                        <div className="flex items-center space-x-1">
+                                          <CalendarDays className="h-3 w-3" />
+                                          <span>Due: {module.dueDate ? new Date(module.dueDate).toLocaleDateString() : 'Not set'}</span>
+                                        </div>
+                                        <div className="flex items-center space-x-1">
+                                          <Target className="h-3 w-3" />
+                                          <span>Progress: {subtaskProgress}%</span>
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Subtasks under this module */}
+                                      {isModuleExpanded && module.subtasks && module.subtasks.length > 0 && (
+                                        <div className="mt-3 pl-4 border-l-2 border-blue-200">
+                                          <h6 className="font-medium text-gray-600 mb-2 text-xs">Subtasks ({module.subtasks.length})</h6>
+                                          <div className="space-y-2">
+                                            {module.subtasks.map((subtask: any) => (
+                                              <div key={subtask.id} className="bg-blue-50 rounded p-2">
+                                                <div className="flex items-center justify-between">
+                                                  <div>
+                                                    <div className="font-medium text-xs text-gray-800">{subtask.name}</div>
+                                                    <div className="text-xs text-gray-600">{subtask.description}</div>
+                                                  </div>
+                                                  <div className="flex items-center space-x-1">
+                                                    <Badge variant="outline" className={getPriorityColor(subtask.priority)}>
+                                                      {subtask.priority}
+                                                    </Badge>
+                                                    <Badge variant="outline">
+                                                      {subtask.status}
+                                                    </Badge>
+                                                  </div>
+                                                </div>
+                                                <div className="mt-1 flex items-center justify-between text-xs text-gray-500">
+                                                  <span>Due: {subtask.dueDate ? new Date(subtask.dueDate).toLocaleDateString() : 'Not set'}</span>
+                                                  <span>Assigned: {getSubtaskAssignedPersonnel(subtask)}</span>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </>
+                ) : (
+                  /* Regular phases: Show milestones directly */
+                  regularModules.map((module) => {
                   const subtaskProgress = calculateSubtaskWeightBasedProgress(module.subtasks || []);
                   const isExpanded = expandedModules.has(module.id);
                   
@@ -331,7 +513,7 @@ export default function PhaseDetailModal({
                                 </div>
                                 <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
                                   <span>Due: {subtask.dueDate ? new Date(subtask.dueDate).toLocaleDateString() : 'Not set'}</span>
-                                  <span>Assigned: {subtask.assignedUser?.name || 'Unassigned'}</span>
+                                    <span>Assigned: {getSubtaskAssignedPersonnel(subtask)}</span>
                                 </div>
                               </div>
                             ))}
@@ -340,13 +522,14 @@ export default function PhaseDetailModal({
                       )}
                     </div>
                   );
-                })}
+                  })
+                )}
                 
                 {phaseModules.length === 0 && (
                   <div className="text-center py-8 text-gray-500">
                     <Target className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-                    <p>No modules found for this phase</p>
-                    <p className="text-sm">Modules will appear here when they are created</p>
+                    <p>No milestones found for this phase</p>
+                    <p className="text-sm">Milestones will appear here when they are created</p>
                   </div>
                 )}
               </div>

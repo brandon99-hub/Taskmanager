@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { formatCurrency, calculateWeightBasedProgress } from "@/lib/utils";
+import { formatCurrency, calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress } from "@/lib/utils";
 
 export default function ProjectDetail() {
   // Type definitions
@@ -704,54 +704,64 @@ export default function ProjectDetail() {
                 </p>
               </div>
 
-              {/* Module Summary */}
+              {/* Milestone Summary */}
               <div className="space-y-4">
                 <h4 className="font-medium text-gray-900">Milestone Progress</h4>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
-                    <span>Weight-Based Progress:</span>
+                    <span>Weight-based Progress:</span>
                     <span className="font-medium text-blue-600">{(() => {
-                      return calculateWeightBasedProgress(modules);
+                      if (!ganttData?.tasks || ganttData.tasks.length === 0) return 0;
+                      const totalProgress = ganttData.tasks.reduce((sum: number, task: any) => sum + (task.progress || 0), 0);
+                      return Math.round(totalProgress / ganttData.tasks.length);
                     })()}%</span>
                   </div>
                   <Progress 
                     value={(() => {
-                      return calculateWeightBasedProgress(modules);
+                      if (!ganttData?.tasks || ganttData.tasks.length === 0) return 0;
+                      const totalProgress = ganttData.tasks.reduce((sum: number, task: any) => sum + (task.progress || 0), 0);
+                      return Math.round(totalProgress / ganttData.tasks.length);
                     })()} 
                     className="h-2" 
                   />
                   <div className="text-xs text-gray-500 mb-3">
-                    Progress calculated by module priority weights and status progression (Critical=4, High=3, Medium=2, Low=1)
+                    Progress calculated by weight-based subtask completion
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Total:</span>
-                    <span className="font-medium">{modules.length}</span>
+                    <span className="font-medium">{ganttData?.tasks?.length || 0}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Completed:</span>
-                    <span className="font-medium text-green-600">{modules.filter((m: any) => m.status === 'completed').length}</span>
+                    <span className="font-medium text-green-600">{ganttData?.tasks?.filter((task: any) => 
+                      task.progress === 100
+                    ).length || 0}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>In Progress:</span>
-                    <span className="font-medium text-blue-600">{modules.filter((m: any) => m.status === 'in_progress' || m.status === 'fc_review' || m.status === 'qa' || m.status === 'client_review').length}</span>
+                    <span className="font-medium text-blue-600">{ganttData?.tasks?.filter((task: any) => 
+                      task.progress > 0 && task.progress < 100
+                    ).length || 0}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span>Pending:</span>
-                    <span className="font-medium">{modules.filter((m: any) => m.status === 'not_started' || m.status === 'on_hold').length}</span>
+                    <span>Not Started:</span>
+                    <span className="font-medium">{ganttData?.tasks?.filter((task: any) => 
+                      task.progress === 0
+                    ).length || 0}</span>
                   </div>
                 </div>
                 <Progress 
                   value={(() => {
-                    const total = modules.length;
-                    const done = modules.filter((m: any) => m.status === 'completed').length;
-                    return total > 0 ? (done / total) * 100 : 0;
+                    if (!ganttData?.tasks || ganttData.tasks.length === 0) return 0;
+                    const totalProgress = ganttData.tasks.reduce((sum: number, task: any) => sum + (task.progress || 0), 0);
+                    return Math.round(totalProgress / ganttData.tasks.length);
                   })()} 
                   className="h-2" 
                 />
-                <p className="text-xs text-gray-500">Count-based progress: {(() => {
-                  const total = modules.length;
-                  const done = modules.filter((m: any) => m.status === 'completed').length;
-                  return total > 0 ? Math.round((done / total) * 100) : 0;
+                <p className="text-xs text-gray-500">Weight-based progress: {(() => {
+                  if (!ganttData?.tasks || ganttData.tasks.length === 0) return 0;
+                  const totalProgress = ganttData.tasks.reduce((sum: number, task: any) => sum + (task.progress || 0), 0);
+                  return Math.round(totalProgress / ganttData.tasks.length);
                 })()}%</p>
               </div>
 

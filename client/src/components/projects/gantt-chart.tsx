@@ -43,12 +43,22 @@ interface GanttData {
     progress: number;
     priority: string;
     phaseNumber?: number;
+    assignedUser?: {
+      firstName?: string;
+      lastName?: string;
+      email: string;
+    };
     subtasks?: Array<{
       id: string;
       name: string;
       startDate: string | null;
       dueDate: string | null;
       status: string;
+      assignedUser?: {
+        firstName?: string;
+        lastName?: string;
+        email: string;
+      };
     }>;
   }>;
 }
@@ -91,6 +101,62 @@ const getPriorityColor = (priority: string) => {
     default:
       return 'border-indigo-500 bg-indigo-50 text-indigo-700';
   }
+};
+
+// Helper function to format dates for tooltip
+const formatDateForTooltip = (dateString: string | null) => {
+  if (!dateString) return 'Not set';
+  try {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  } catch {
+    return 'Invalid date';
+  }
+};
+
+// Helper function to get assigned personnel info
+const getAssignedPersonnelInfo = (task: GanttData['tasks'][0]) => {
+  const assigned = [];
+  
+  // Main assigned user
+  if (task.assignedUser) {
+    const name = `${task.assignedUser.firstName || ''} ${task.assignedUser.lastName || ''}`.trim();
+    assigned.push(name || task.assignedUser.email);
+  }
+  
+  // Check subtasks for assigned users
+  if (task.subtasks && task.subtasks.length > 0) {
+    const subtaskUsers = task.subtasks
+      .filter(subtask => subtask.assignedUser)
+      .map(subtask => {
+        const name = `${subtask.assignedUser?.firstName || ''} ${subtask.assignedUser?.lastName || ''}`.trim();
+        return name || subtask.assignedUser?.email;
+      })
+      .filter((name, index, arr) => arr.indexOf(name) === index); // Remove duplicates
+    
+    assigned.push(...subtaskUsers);
+  }
+  
+  return assigned.length > 0 ? assigned.join(', ') : 'Unassigned';
+};
+
+// Helper function to generate detailed tooltip content
+const generateTooltipContent = (task: GanttData['tasks'][0]) => {
+  const startDate = formatDateForTooltip(task.startDate);
+  const endDate = formatDateForTooltip(task.dueDate);
+  const assignedPersonnel = getAssignedPersonnelInfo(task);
+  const statusText = task.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+  
+  return `${task.name}
+Status: ${statusText}
+Progress: ${task.progress}%
+Start: ${startDate}
+End: ${endDate}
+Assigned: ${assignedPersonnel}`;
 };
 
 export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttChartProps) {
@@ -213,26 +279,47 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
       return null;
     }
 
-    const totalDays = Math.ceil((projectEnd.getTime() - projectStart.getTime()) / (1000 * 60 * 60 * 24));
+    // Find the earliest start date among all tasks to align timeline properly
+    const allStartDates: Date[] = [];
+    data.tasks.forEach(task => {
+      if (task.startDate) {
+        const date = new Date(task.startDate);
+        if (!isNaN(date.getTime())) {
+          allStartDates.push(date);
+        }
+      }
+    });
+    
+    const earliestStart = allStartDates.length > 0 
+      ? new Date(Math.min(...allStartDates.map(d => d.getTime())))
+      : projectStart;
+
+    // Start timeline from Monday of the week containing the earliest start date
+    const timelineStart = new Date(earliestStart);
+    const dayOfWeek = timelineStart.getDay();
+    const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Adjust to get to Monday
+    timelineStart.setDate(timelineStart.getDate() + daysToMonday);
+
+    const totalDays = Math.ceil((projectEnd.getTime() - timelineStart.getTime()) / (1000 * 60 * 60 * 24));
     const dayWidth = 40 * zoom; // Base width per day, adjustable with zoom
 
     return {
       projectStart,
       projectEnd,
+      timelineStart, // New: actual start of timeline (Monday)
       totalDays,
       dayWidth,
-      containerWidth: totalDays * dayWidth + 400 + (7 * dayWidth), // 400px for wider milestone labels + offset
+      containerWidth: totalDays * dayWidth + 400, // 400px for milestone labels
       weekWidth: 7 * dayWidth, // Width of each week column
-      timelineOffset: 7 * dayWidth // Offset to move Week 1 to where Week 2 currently is
     };
-  }, [data.project.startDate, data.project.endDate, zoom]) as {
+  }, [data.project.startDate, data.project.endDate, data.tasks, zoom]) as {
     projectStart: Date;
     projectEnd: Date;
+    timelineStart: Date;
     totalDays: number;
     dayWidth: number;
     containerWidth: number;
     weekWidth: number;
-    timelineOffset: number;
   } | null;
 
   // Filter tasks based on search and status
@@ -258,7 +345,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
     const targetDate = new Date(date);
     if (isNaN(targetDate.getTime())) return 0;
     
-    const daysDiff = Math.ceil((targetDate.getTime() - timelineData.projectStart.getTime()) / (1000 * 60 * 60 * 24));
+    const daysDiff = Math.ceil((targetDate.getTime() - timelineData.timelineStart.getTime()) / (1000 * 60 * 60 * 24));
     return Math.max(0, daysDiff * timelineData.dayWidth);
   };
 
@@ -308,13 +395,12 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
     const totalWeeks = Math.ceil(timelineData.totalDays / 7);
     
     for (let i = 0; i <= totalWeeks; i++) {
-      const weekStart = new Date(timelineData.projectStart);
+      const weekStart = new Date(timelineData.timelineStart);
       weekStart.setDate(weekStart.getDate() + (i * 7));
       markers.push({
         week: i + 1,
         date: weekStart,
-        // Week 1 starts at the offset position (where Week 2 currently is)
-        position: (i * 7 * timelineData.dayWidth) + timelineData.timelineOffset
+        position: i * 7 * timelineData.dayWidth // This aligns with daily markers at positions 0, 7, 14, etc.
       });
     }
     
@@ -330,22 +416,34 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
       date: Date;
       position: number;
       isWeekend: boolean;
+      dayLetter: string;
     }> = [];
     
     for (let i = 0; i <= timelineData.totalDays; i++) {
-      const dayDate = new Date(timelineData.projectStart);
+      const dayDate = new Date(timelineData.timelineStart);
       dayDate.setDate(dayDate.getDate() + i);
       
+      const dayLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+      const dayOfWeek = dayDate.getDay();
+      
       markers.push({
-        day: i + 1,
+        day: dayDate.getDate(),
         date: dayDate,
-        position: (i * timelineData.dayWidth) + timelineData.timelineOffset,
-        isWeekend: dayDate.getDay() === 0 || dayDate.getDay() === 6 // Sunday or Saturday
+        position: i * timelineData.dayWidth,
+        isWeekend: dayOfWeek === 0 || dayOfWeek === 6, // Sunday or Saturday
+        dayLetter: dayLetters[dayOfWeek]
       });
     }
     
     return markers;
   }, [timelineData]);
+
+  // Get current date position for indicator
+  const getCurrentDatePosition = () => {
+    if (!timelineData) return 0;
+    const today = new Date();
+    return getDatePosition(today.toISOString().split('T')[0]);
+  };
 
   if (!timelineData) {
     return (
@@ -485,15 +583,16 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                   {/* Timeline Grid - Starts exactly where milestone bars begin */}
                   <div className="flex-1 relative">
                     {/* Weekly Markers - Top row with week numbers and dates */}
-                    <div className="flex" style={{ height: '44px' }}>
+                    <div className="relative" style={{ height: '44px' }}>
                       {timelineMarkers.map((marker) => (
                         <div
                           key={marker.week}
-                          className="border-r border-gray-200 text-center text-xs text-gray-600 p-1 bg-gradient-to-b from-gray-50 to-white flex flex-col justify-center"
+                          className="absolute border-r border-gray-200 text-center text-xs text-gray-600 p-1 bg-gradient-to-b from-gray-50 to-white flex flex-col justify-center"
                           style={{ 
+                            left: marker.position,
                             width: 7 * timelineData.dayWidth,
                             minWidth: 7 * timelineData.dayWidth,
-                            position: 'relative'
+                            height: '44px'
                           }}
                         >
                           <div className="font-semibold text-gray-800">Week {marker.week}</div>
@@ -502,21 +601,51 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                       ))}
                     </div>
                     
+                    {/* Day Letters Row - M T W T F S S */}
+                    <div className="relative" style={{ height: '20px' }}>
+                      {dailyMarkers.map((marker, index) => (
+                        <div
+                          key={`day-letter-${index}`}
+                          className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${
+                            marker.isWeekend ? 'bg-gray-100 text-gray-500' : 'bg-white text-gray-600'
+                          }`}
+                          style={{ 
+                            left: marker.position,
+                            width: timelineData.dayWidth,
+                            minWidth: timelineData.dayWidth,
+                            height: '20px'
+                          }}
+                        >
+                          <div className="font-medium">{marker.dayLetter}</div>
+                        </div>
+                      ))}
+                    </div>
+                    
                     {/* Daily Markers - Bottom row with day numbers */}
-                    <div className="flex" style={{ height: '24px' }}>
+                    <div className="relative" style={{ height: '24px' }}>
+                      {/* Current Date Indicator */}
+                      <div
+                        className="absolute top-0 bottom-0 w-1 bg-red-600 z-20 shadow-lg"
+                        style={{ 
+                          left: getCurrentDatePosition(),
+                          boxShadow: '0 0 4px rgba(220, 38, 38, 0.5), 0 0 8px rgba(220, 38, 38, 0.3)'
+                        }}
+                      />
+                      
                       {dailyMarkers.map((marker) => (
                         <div
                           key={`day-${marker.day}`}
-                          className={`text-center text-xs border-r border-gray-100 flex items-center justify-center ${
+                          className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${
                             marker.isWeekend ? 'bg-gray-100 text-gray-500' : 'bg-white text-gray-700'
                           }`}
                           style={{ 
+                            left: marker.position,
                             width: timelineData.dayWidth,
                             minWidth: timelineData.dayWidth,
-                            position: 'relative'
+                            height: '24px'
                           }}
                         >
-                          <div className="font-medium">{marker.date.getDate()}</div>
+                          <div className="font-medium">{marker.day}</div>
                         </div>
                       ))}
                     </div>
@@ -525,7 +654,16 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
               </div>
 
               {/* Timeline Content */}
-              <div className="space-y-0">
+              <div className="space-y-0 relative">
+                {/* Current Date Indicator - spans across ALL milestone rows */}
+                <div
+                  className="absolute top-0 bottom-0 w-1 bg-red-600 z-20 shadow-lg"
+                  style={{ 
+                    left: getCurrentDatePosition() + 384, // 384px = width of milestone labels column (w-96)
+                    boxShadow: '0 0 4px rgba(220, 38, 38, 0.5), 0 0 8px rgba(220, 38, 38, 0.3)'
+                  }}
+                />
+                
                 {filteredTasks.map((task) => {
                   const x = getMilestoneStartPosition(task);
                   const width = getTaskWidth(task.startDate, task.dueDate);
@@ -584,7 +722,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                                 zIndex: 10,
                               }}
                               onClick={() => onTaskClick?.(task.id)}
-                              title={`${task.name} - ${task.status} (${task.progress}%)`}
+                              title={generateTooltipContent(task)}
                             />
                             
                             {/* Progress Overlay */}

@@ -77,6 +77,11 @@ interface Subtask {
     lastName?: string;
     email: string;
   };
+  assignedUser?: {
+    firstName?: string;
+    lastName?: string;
+    email: string;
+  };
   moduleId: string;
   createdAt: string;
   updatedAt: string;
@@ -124,11 +129,21 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
 
     // If user is an employee, check assignment and role restrictions
     if (user && (user as any)?.role === 'employee' && subtask) {
-      const isAssigned = subtask.assignedDevId === (user as any)?.id || 
-                        subtask.assignedConsultantId === (user as any)?.id;
+      const isAssigned = (subtask as any)?.assignedUserId === (user as any)?.id || 
+                        (subtask as any)?.assignedDevId === (user as any)?.id || 
+                        (subtask as any)?.assignedConsultantId === (user as any)?.id;
+      
+      console.log('Frontend assignment check:', {
+        userId: (user as any)?.id,
+        subtaskId: subtask.id,
+        assignedUserId: (subtask as any)?.assignedUserId,
+        assignedDevId: (subtask as any)?.assignedDevId,
+        assignedConsultantId: (subtask as any)?.assignedConsultantId,
+        isAssigned: isAssigned
+      });
       
       if (!isAssigned) {
-        // If not assigned, only show current status
+        // If not assigned, only show current status (read-only)
         return [{ value: currentStatus, label: currentStatus.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) }];
       }
       
@@ -205,7 +220,9 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
       if (status) updateData.status = status;
       if (billingStatus) updateData.billingStatus = billingStatus;
       
-      const response = await apiRequest('PUT', `/api/modules/${moduleId}`, updateData);
+      // Use different endpoints for milestones vs modules
+      const endpoint = currentModule?.isMilestone ? `/api/milestones/${moduleId}` : `/api/modules/${moduleId}`;
+      const response = await apiRequest('PUT', endpoint, updateData);
       return response.json();
     },
     onSuccess: () => {
@@ -230,6 +247,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/modules'] });
       toast({ title: 'Success', description: 'Subtask status updated' });
     },
     onError: (error: any) => {
@@ -345,6 +363,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     
     bulkStatusUpdateMutation.mutate({ moduleIds: selectedModules, status: newStatus });
   };
+
 
   // Utility functions
   const formatDate = (dateString?: string) => {
@@ -1082,15 +1101,37 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                                     {subtask.estimatedDays || 'Not set'}
                                                   </td>
                                                   <td className="p-3 text-sm text-gray-600">
-                                                    {subtask.assignedDev ? `${subtask.assignedDev.firstName} ${subtask.assignedDev.lastName}` : 'Unassigned'}
+                                                    {subtask.assignedDev ? `${subtask.assignedDev.firstName || ''} ${subtask.assignedDev.lastName || ''}`.trim() || subtask.assignedDev.email : 
+                                                     subtask.assignedUser ? `${subtask.assignedUser.firstName || ''} ${subtask.assignedUser.lastName || ''}`.trim() || subtask.assignedUser.email : 'Unassigned'}
                                                   </td>
                                                   <td className="p-3 text-sm text-gray-600">
-                                                    {subtask.assignedConsultantId ? 'Assigned' : 'Unassigned'}
+                                                    {subtask.assignedConsultant ? `${subtask.assignedConsultant.firstName || ''} ${subtask.assignedConsultant.lastName || ''}`.trim() || subtask.assignedConsultant.email : 'Unassigned'}
                                                   </td>
                                                   <td className="p-3">
                                                     <Select
                                                       value={subtask.status || 'not_started'}
-                                                      disabled={updateSubtaskStatusMutation.isPending}
+                                                      disabled={(() => {
+                                                        const isEmployee = user && (user as any)?.role === 'employee';
+                                                        const isAssigned = isEmployee ? (
+                                                          (subtask as any)?.assignedUserId === (user as any)?.id || 
+                                                          (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                                          (subtask as any)?.assignedConsultantId === (user as any)?.id
+                                                        ) : true;
+                                                        
+                                                        const shouldDisable = updateSubtaskStatusMutation.isPending || (isEmployee && !isAssigned);
+                                                        
+                                                        console.log('Phase 3 nested subtask assignment check:', {
+                                                          subtaskId: subtask.id,
+                                                          userId: (user as any)?.id,
+                                                          assignedUserId: (subtask as any)?.assignedUserId,
+                                                          assignedDevId: (subtask as any)?.assignedDevId,
+                                                          assignedConsultantId: (subtask as any)?.assignedConsultantId,
+                                                          isAssigned: isAssigned,
+                                                          shouldDisable: shouldDisable
+                                                        });
+                                                        
+                                                        return Boolean(shouldDisable);
+                                                      })()}
                                                       onValueChange={(value) => updateSubtaskStatusMutation.mutate({
                                                         subtaskId: subtask.id,
                                                         status: value
@@ -1102,7 +1143,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                                         {updateSubtaskStatusMutation.isPending ? (
                                                           <div className="flex items-center">
                                                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                                                            <span className="text-sm text-gray-500">Processing...</span>
+                                                            <span className="text-sm text-gray-500">Updating...</span>
                                                           </div>
                                                         ) : (
                                                           <SelectValue />
@@ -1118,11 +1159,22 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                                         <SelectItem value="cancelled">Cancelled</SelectItem>
                                                       </SelectContent>
                                                     </Select>
+                                                    {/* Show message when user can't modify this subtask */}
+                                                    {Boolean(user && (user as any)?.role === 'employee' && 
+                                                     !((subtask as any)?.assignedUserId === (user as any)?.id || 
+                                                       (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                                       (subtask as any)?.assignedConsultantId === (user as any)?.id)) && (
+                                                      <p className="text-xs text-gray-500 mt-1">Not assigned to you</p>
+                                                    )}
                                                   </td>
                                                   <td className="p-3">
                                                     <Button
                                                       variant="outline"
                                                       size="sm"
+                                                      disabled={Boolean(user && (user as any)?.role === 'employee' && 
+                                                        !((subtask as any)?.assignedUserId === (user as any)?.id || 
+                                                          (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                                          (subtask as any)?.assignedConsultantId === (user as any)?.id))}
                                                       onClick={() => onEdit({ ...nestedModule, subtasks: nestedModule.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
                                                     >
                                                       <Edit className="h-4 w-4 mr-1" />
@@ -1240,11 +1292,44 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                   <td className="p-3">
                                     <Select
                                       value={subtask.status}
-                                      onValueChange={(value) => handleSubtaskStatusChange(subtask.id, value)}
-                                      disabled={bulkStatusUpdateMutation.isPending}
+                                      onValueChange={(value) => updateSubtaskStatusMutation.mutate({
+                                        subtaskId: subtask.id,
+                                        status: value
+                                      })}
+                                      disabled={(() => {
+                                        const isEmployee = user && (user as any)?.role === 'employee';
+                                        const isAssigned = isEmployee ? (
+                                          (subtask as any)?.assignedUserId === (user as any)?.id || 
+                                          (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                          (subtask as any)?.assignedConsultantId === (user as any)?.id
+                                        ) : true;
+                                        
+                                        const shouldDisable = updateSubtaskStatusMutation.isPending || (isEmployee && !isAssigned);
+                                        
+                                        console.log('Direct subtask assignment check:', {
+                                          subtaskId: subtask.id,
+                                          userId: (user as any)?.id,
+                                          assignedUserId: (subtask as any)?.assignedUserId,
+                                          assignedDevId: (subtask as any)?.assignedDevId,
+                                          assignedConsultantId: (subtask as any)?.assignedConsultantId,
+                                          isAssigned: isAssigned,
+                                          shouldDisable: shouldDisable
+                                        });
+                                        
+                                        return Boolean(shouldDisable);
+                                      })()}
                                     >
-                                      <SelectTrigger className="w-full">
-                                        <SelectValue />
+                                      <SelectTrigger className={`w-full relative ${
+                                        updateSubtaskStatusMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''
+                                      }`}>
+                                        {updateSubtaskStatusMutation.isPending ? (
+                                          <div className="flex items-center">
+                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                                            <span className="text-sm text-gray-500">Updating...</span>
+                                          </div>
+                                        ) : (
+                                          <SelectValue />
+                                        )}
                                       </SelectTrigger>
                                       <SelectContent>
                                         <SelectItem value="not_started">Not Started</SelectItem>
@@ -1256,11 +1341,22 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                         <SelectItem value="cancelled">Cancelled</SelectItem>
                                       </SelectContent>
                                     </Select>
+                                    {/* Show message when user can't modify this subtask */}
+                                    {Boolean(user && (user as any)?.role === 'employee' && 
+                                     !((subtask as any)?.assignedUserId === (user as any)?.id || 
+                                       (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                       (subtask as any)?.assignedConsultantId === (user as any)?.id)) && (
+                                      <p className="text-xs text-gray-500 mt-1">Not assigned to you</p>
+                                    )}
                                   </td>
                                   <td className="p-3">
                                     <Button
                                       variant="outline"
                                       size="sm"
+                                      disabled={Boolean(user && (user as any)?.role === 'employee' && 
+                                        !((subtask as any)?.assignedUserId === (user as any)?.id || 
+                                          (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                          (subtask as any)?.assignedConsultantId === (user as any)?.id))}
                                       onClick={() => onEdit({ ...module, subtasks: module.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
                                     >
                                       <Edit className="h-4 w-4 mr-1" />
@@ -1439,10 +1535,30 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                   <td className="p-3">
                                     <Select
                                       value={subtask.status}
-                                      disabled={updateSubtaskStatusMutation.isPending || 
-                                        Boolean(user && (user as any)?.role === 'employee' && 
-                                         !(subtask.assignedDevId === (user as any)?.id || 
-                                           subtask.assignedConsultantId === (user as any)?.id))}
+                                      disabled={(() => {
+                                        const isEmployee = user && (user as any)?.role === 'employee';
+                                        const isAssigned = isEmployee ? (
+                                          (subtask as any)?.assignedUserId === (user as any)?.id || 
+                                          (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                          (subtask as any)?.assignedConsultantId === (user as any)?.id
+                                        ) : true;
+                                        
+                                        const shouldDisable = updateSubtaskStatusMutation.isPending || (isEmployee && !isAssigned);
+                                        
+                                        if (isEmployee) {
+                                          console.log('Select disabled check:', {
+                                            subtaskId: subtask.id,
+                                            userId: (user as any)?.id,
+                                            assignedUserId: (subtask as any)?.assignedUserId,
+                                            assignedDevId: (subtask as any)?.assignedDevId,
+                                            assignedConsultantId: (subtask as any)?.assignedConsultantId,
+                                            isAssigned: isAssigned,
+                                            shouldDisable: shouldDisable
+                                          });
+                                        }
+                                        
+                                        return Boolean(shouldDisable);
+                                      })()}
                                       onValueChange={(value) => updateSubtaskStatusMutation.mutate({
                                         subtaskId: subtask.id,
                                         status: value
@@ -1454,7 +1570,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                         {updateSubtaskStatusMutation.isPending ? (
                                           <div className="flex items-center">
                                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                                            <span className="text-sm text-gray-500">Processing...</span>
+                                            <span className="text-sm text-gray-500">Updating...</span>
                                           </div>
                                         ) : (
                                           <SelectValue />
@@ -1475,8 +1591,9 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                     </Select>
                                     {/* Show message when user can't modify this subtask */}
                                     {Boolean(user && (user as any)?.role === 'employee' && 
-                                     !(subtask.assignedDevId === (user as any)?.id || 
-                                       subtask.assignedConsultantId === (user as any)?.id)) && (
+                                     !((subtask as any)?.assignedUserId === (user as any)?.id || 
+                                       (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                       (subtask as any)?.assignedConsultantId === (user as any)?.id)) && (
                                       <p className="text-xs text-gray-500 mt-1">Not assigned to you</p>
                                     )}
                                   </td>
@@ -1485,6 +1602,10 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                     <Button
                                       variant="outline"
                                       size="sm"
+                                      disabled={Boolean(user && (user as any)?.role === 'employee' && 
+                                        !((subtask as any)?.assignedUserId === (user as any)?.id || 
+                                          (subtask as any)?.assignedDevId === (user as any)?.id || 
+                                          (subtask as any)?.assignedConsultantId === (user as any)?.id))}
                                       onClick={() => onEdit({ ...module, subtasks: module.subtasks?.map(s => s.id === subtask.id ? subtask : s) || [] })}
                                     >
                                       <Edit className="h-4 w-4 mr-1" />

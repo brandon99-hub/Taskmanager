@@ -127,7 +127,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           progress: 0,
           deliverables: [],
           reports: [],
-          modules: []
+          modules: [],
+          milestones: []
         },
         {
           id: '2',
@@ -138,7 +139,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           progress: 0,
           deliverables: [],
           reports: [],
-          modules: []
+          modules: [],
+          milestones: []
         },
         {
           id: '3',
@@ -149,7 +151,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           progress: 0,
           deliverables: [],
           reports: [],
-          modules: []
+          modules: [],
+          milestones: []
         },
         {
           id: '4',
@@ -160,7 +163,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           progress: 0,
           deliverables: [],
           reports: [],
-          modules: []
+          modules: [],
+          milestones: []
         },
         {
           id: '5',
@@ -171,7 +175,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           progress: 0,
           deliverables: [],
           reports: [],
-          modules: []
+          modules: [],
+          milestones: []
         },
         {
           id: '6',
@@ -182,7 +187,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           progress: 0,
           deliverables: [],
           reports: [],
-          modules: []
+          modules: [],
+          milestones: []
         }
       ];
       setPhases(initialPhases);
@@ -603,10 +609,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       console.log('Loaded existing modules:', existingModules);
     } else if (isEditMode && existingModules.length === 0) {
       console.log('No existing modules found for project:', project?.id);
-      // Keep existing phases but clear their modules
-      setPhases(prevPhases => 
-        prevPhases.map(phase => ({ ...phase, modules: [], milestones: [] }))
-      );
+      // Keep existing phases with their default structure - don't clear them
+      // This allows users to add new content to phases
+      console.log('Preserving phase structure for editing');
     }
   }, [isEditMode, existingModules, existingMilestones, project]);
 
@@ -617,6 +622,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       setModules(allModules);
     }
   }, [phases, isEditMode]);
+
+  // Debug phases state changes
+  useEffect(() => {
+    console.log('Phases state updated:', phases);
+    console.log('Phase 1 milestones:', phases[0]?.milestones?.length || 0);
+    console.log('Phase 1 modules:', phases[0]?.modules?.length || 0);
+  }, [phases]);
 
   // Fetch team members for the form's selected team (for new projects or when changing teams)
   const { data: teamMembers = [], isLoading: teamMembersLoading, error: teamMembersError } = useQuery<any[]>({
@@ -1575,11 +1587,28 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   };
 
   const updateModule = (phaseIndex: number, moduleIndex: number, field: string, value: any) => {
+    console.log('updateModule called:', { phaseIndex, moduleIndex, field, value });
+    console.log('Current phases state:', phases);
+    
     const newPhases = [...phases];
+    
+    // Ensure modules array exists
+    if (!newPhases[phaseIndex].modules) {
+      newPhases[phaseIndex].modules = [];
+    }
+    
+    // Ensure module exists
+    if (!newPhases[phaseIndex].modules[moduleIndex]) {
+      console.error('Module not found at index:', moduleIndex);
+      return;
+    }
+    
     newPhases[phaseIndex].modules[moduleIndex] = {
       ...newPhases[phaseIndex].modules[moduleIndex],
       [field]: value
     };
+    
+    console.log('Updated module:', newPhases[phaseIndex].modules[moduleIndex]);
     setPhases(newPhases);
   };
 
@@ -1610,11 +1639,28 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   };
 
   const updateMilestoneInPhase = (phaseIndex: number, milestoneIndex: number, field: string, value: any) => {
+    console.log('updateMilestoneInPhase called:', { phaseIndex, milestoneIndex, field, value });
+    console.log('Current phases state:', phases);
+    
     const newPhases = [...phases];
+    
+    // Ensure milestones array exists
+    if (!newPhases[phaseIndex].milestones) {
+      newPhases[phaseIndex].milestones = [];
+    }
+    
+    // Ensure milestone exists
+    if (!newPhases[phaseIndex].milestones[milestoneIndex]) {
+      console.error('Milestone not found at index:', milestoneIndex);
+      return;
+    }
+    
     newPhases[phaseIndex].milestones[milestoneIndex] = {
       ...newPhases[phaseIndex].milestones[milestoneIndex],
       [field]: value
     };
+    
+    console.log('Updated milestone:', newPhases[phaseIndex].milestones[milestoneIndex]);
     
     // Auto-calculate expected collection date when invoice date changes
     if (field === 'expectedInvoiceDate' && value) {
@@ -1725,7 +1771,21 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   };
 
   const updateSubtask = (phaseIndex: number, moduleIndex: number, subtaskIndex: number, field: string, value: any) => {
+    console.log('updateSubtask called:', { phaseIndex, moduleIndex, subtaskIndex, field, value });
+    
     const newPhases = [...phases];
+    
+    // Ensure subtasks array exists
+    if (!newPhases[phaseIndex].modules[moduleIndex].subtasks) {
+      newPhases[phaseIndex].modules[moduleIndex].subtasks = [];
+    }
+    
+    // Ensure subtask exists
+    if (!newPhases[phaseIndex].modules[moduleIndex].subtasks[subtaskIndex]) {
+      console.error('Subtask not found at index:', subtaskIndex);
+      return;
+    }
+    
     newPhases[phaseIndex].modules[moduleIndex].subtasks[subtaskIndex] = {
       ...newPhases[phaseIndex].modules[moduleIndex].subtasks[subtaskIndex],
       [field]: value
@@ -2500,7 +2560,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                                 {moduleIndex + 1}
                                               </div>
                                               <div>
-                                                <h6 className="font-semibold text-gray-800 text-base">Module {moduleIndex + 1}</h6>
+                                                <h6 className="font-semibold text-gray-800 text-base">Milestone {moduleIndex + 1}</h6>
                                                 <p className="text-sm text-gray-600">Priority: {module.priority}</p>
                                               </div>
                                               <Badge className={`px-3 py-1 text-xs font-medium ${getPriorityColor(module.priority)}`}>
@@ -2861,7 +2921,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                               <Input 
                                 placeholder="Enter milestone name"
                               value={module.name}
-                              onChange={(e) => updateModule(phaseIndex, moduleIndex, 'name', e.target.value)}
+                              onChange={(e) => updateMilestoneInPhase(phaseIndex, moduleIndex, 'name', e.target.value)}
                                 className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
                             />
                             </div>
@@ -2869,7 +2929,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                               <label className="text-sm font-medium text-gray-700">Priority Level</label>
                               <Select 
                               value={module.priority}
-                              onValueChange={(value) => updateModule(phaseIndex, moduleIndex, 'priority', value as any)}
+                              onValueChange={(value) => updateMilestoneInPhase(phaseIndex, moduleIndex, 'priority', value as any)}
                             >
                                 <SelectTrigger className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200">
                                 <SelectValue />
@@ -2900,7 +2960,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                   } else if (rawValue.length > 3) {
                                     formattedValue = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
                                   }
-                                  updateModule(phaseIndex, moduleIndex, 'feeAmount', formattedValue);
+                                  updateMilestoneInPhase(phaseIndex, moduleIndex, 'feeAmount', formattedValue);
                                 }}
                                 className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
                               />
@@ -2912,13 +2972,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                 placeholder="Select invoice date"
                                 value={module.expectedInvoiceDate || ''}
                                 onChange={(e) => {
-                                  updateModule(phaseIndex, moduleIndex, 'expectedInvoiceDate', e.target.value);
+                                  updateMilestoneInPhase(phaseIndex, moduleIndex, 'expectedInvoiceDate', e.target.value);
                                   // Auto-calculate expected collection date
                                   if (e.target.value) {
                                     const invoiceDate = new Date(e.target.value);
                                     const collectionDate = new Date(invoiceDate);
                                     collectionDate.setDate(collectionDate.getDate() + 30);
-                                    updateModule(phaseIndex, moduleIndex, 'expectedCollectionDate', collectionDate.toISOString().split('T')[0]);
+                                    updateMilestoneInPhase(phaseIndex, moduleIndex, 'expectedCollectionDate', collectionDate.toISOString().split('T')[0]);
                                   }
                                 }}
                                 className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
@@ -2950,7 +3010,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                 type="date"
                                 placeholder="Select start date"
                               value={module.startDate || ''}
-                              onChange={(e) => updateModule(phaseIndex, moduleIndex, 'startDate', e.target.value)}
+                              onChange={(e) => updateMilestoneInPhase(phaseIndex, moduleIndex, 'startDate', e.target.value)}
                                 className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
                               />
                               {module.errors?.startDate && (
@@ -2963,7 +3023,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                                 type="date"
                                 placeholder="Select due date"
                               value={module.dueDate || ''}
-                              onChange={(e) => updateModule(phaseIndex, moduleIndex, 'dueDate', e.target.value)}
+                              onChange={(e) => updateMilestoneInPhase(phaseIndex, moduleIndex, 'dueDate', e.target.value)}
                                 className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
                             />
                               {module.errors?.dueDate && (

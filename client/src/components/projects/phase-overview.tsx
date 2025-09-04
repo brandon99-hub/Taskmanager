@@ -194,6 +194,11 @@ export default function PhaseOverview({
           const completedModules = phaseModules.filter(m => m.status === 'done').length;
           const totalModules = phaseModules.length;
           const phaseProgress = getPhaseProgress(phase.phaseNumber);
+          
+          // For Phase 3, separate milestones from regular modules
+          const isPhase3 = phase.phaseNumber === 3;
+          const milestones = isPhase3 ? phaseModules.filter(m => m.isMilestone) : [];
+          const regularModules = isPhase3 ? phaseModules.filter(m => !m.isMilestone) : phaseModules;
 
           return (
             <Card key={phase.id} className="border-l-4 border-l-blue-500">
@@ -263,7 +268,18 @@ export default function PhaseOverview({
                   {/* Milestones Summary */}
                   <div className="text-sm text-gray-600">
                     <span className="font-medium">Milestones:</span>{' '}
-                    {completedModules} of {totalModules} completed
+                    {isPhase3 ? (
+                      <>
+                        {milestones.filter(m => m.status === 'done').length} of {milestones.length} milestones completed
+                        {milestones.length > 0 && (
+                          <div className="mt-1 text-xs text-gray-500">
+                            Modules: {regularModules.filter(m => m.status === 'done').length} of {regularModules.length} completed
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      `${completedModules} of ${totalModules} completed`
+                    )}
                   </div>
 
                   {/* Subtasks Summary */}
@@ -287,21 +303,62 @@ export default function PhaseOverview({
                         Click "View Details" to see all milestones, subtasks, and phase information
                       </div>
                       
-                      {/* Milestone Status Indicators */}
+                      {/* Status Indicators */}
                       <div className="flex flex-wrap gap-2 mt-2">
-                        {phaseModules.map((module) => {
-                          const statusColor = module.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                            module.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-                                            module.status === 'client_review' ? 'bg-yellow-100 text-yellow-800' :
-                                            'bg-gray-100 text-gray-800';
-                          return (
-                            <Badge key={module.id} variant="outline" className={`text-xs ${statusColor}`}>
-                              {module.name}: {module.status === 'completed' ? '✓' : 
-                                               module.status === 'in_progress' ? '▶' : 
-                                               module.status === 'client_review' ? '👁' : '○'}
-                            </Badge>
-                          );
-                        })}
+                        {isPhase3 ? (
+                          <>
+                            {/* Show milestones for Phase 3 */}
+                            {milestones.map((milestone) => {
+                              const statusColor = milestone.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                                milestone.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                                                milestone.status === 'client_review' ? 'bg-yellow-100 text-yellow-800' :
+                                                'bg-gray-100 text-gray-800';
+                              return (
+                                <Badge key={milestone.id} variant="outline" className={`text-xs ${statusColor}`}>
+                                  {milestone.name}: {milestone.status === 'completed' ? '✓' : 
+                                                   milestone.status === 'in_progress' ? '▶' : 
+                                                   milestone.status === 'client_review' ? '👁' : '○'}
+                                </Badge>
+                              );
+                            })}
+                            {/* Show modules under milestones if any */}
+                            {milestones.length > 0 && regularModules.length > 0 && (
+                              <div className="w-full mt-2">
+                                <div className="text-xs text-gray-500 mb-1">Modules:</div>
+                                <div className="flex flex-wrap gap-1">
+                                  {regularModules.map((module) => {
+                                    const statusColor = module.status === 'completed' ? 'bg-green-50 text-green-700' :
+                                                      module.status === 'in_progress' ? 'bg-blue-50 text-blue-700' :
+                                                      module.status === 'client_review' ? 'bg-yellow-50 text-yellow-700' :
+                                                      'bg-gray-50 text-gray-700';
+                                    return (
+                                      <Badge key={module.id} variant="outline" className={`text-xs ${statusColor}`}>
+                                        {module.name}: {module.status === 'completed' ? '✓' : 
+                                                       module.status === 'in_progress' ? '▶' : 
+                                                       module.status === 'client_review' ? '👁' : '○'}
+                                      </Badge>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          /* Regular phases: Show milestones directly */
+                          phaseModules.map((module) => {
+                            const statusColor = module.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                              module.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                                              module.status === 'client_review' ? 'bg-yellow-100 text-yellow-800' :
+                                              'bg-gray-100 text-gray-800';
+                            return (
+                              <Badge key={module.id} variant="outline" className={`text-xs ${statusColor}`}>
+                                {module.name}: {module.status === 'completed' ? '✓' : 
+                                                 module.status === 'in_progress' ? '▶' : 
+                                                 module.status === 'client_review' ? '👁' : '○'}
+                              </Badge>
+                            );
+                          })
+                        )}
                       </div>
                     </div>
                   )}
@@ -350,7 +407,7 @@ export default function PhaseOverview({
 
                     {phase.status === 'not_started' && (
                       <Badge variant="secondary" className="bg-gray-100 text-gray-600">
-                        Waiting for modules to start
+                        Waiting for milestones to start
                       </Badge>
                     )}
                   </div>

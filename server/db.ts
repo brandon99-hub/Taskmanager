@@ -1,19 +1,9 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-import { Pool, neonConfig } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-serverless';
-import * as ws from "ws";
+import { Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from "../shared/schema";
-
-// Fix WebSocket constructor for Neon
-neonConfig.webSocketConstructor = ws.WebSocket;
-
-// Debug: Log environment variables
-console.log('Environment check:');
-console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('DATABASE_URL exists:', !!process.env.DATABASE_URL);
-console.log('DATABASE_URL length:', process.env.DATABASE_URL?.length || 0);
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -23,8 +13,11 @@ if (!process.env.DATABASE_URL) {
 
 // Log the connection string (without password for security)
 const connectionString = process.env.DATABASE_URL;
-const sanitizedUrl = connectionString.replace(/\/\/[^:]+:[^@]+@/, '//***:***@');
+const sanitizedUrl = connectionString.replace(/\/\/[^:]+:[^@]+@/, '//:@');
 console.log('Connecting to database:', sanitizedUrl);
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-export const db = drizzle({ client: pool, schema });
+export const pool = new Pool({ 
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+export const db = drizzle(pool, { schema });

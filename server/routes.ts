@@ -14,6 +14,7 @@ import { z } from "zod";
 import { generateExcelBuffer } from "./utils/excelExport";
 import { notificationService } from "./services/notificationService";
 import { calendarService, GoogleCalendarService } from "./services/calendarService";
+import { calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress } from "../client/src/lib/utils";
 
 // Utility function for date validation and conversion
 function validateAndConvertDates(data: any, dateFields: string[]): { cleanedData: any; errors: string[] } {
@@ -1691,6 +1692,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Calculate progress for each task based on subtasks
+      const tasksWithCalculatedProgress = tasks.map(task => {
+        let calculatedProgress = task.progressPercent;
+        
+        // If task has subtasks, calculate progress based on subtask status
+        if (task.subtasks && task.subtasks.length > 0) {
+          calculatedProgress = calculateSubtaskWeightBasedProgress(task.subtasks);
+        }
+        
+        return {
+          ...task,
+          progress: calculatedProgress
+        };
+      });
+
       // Structure data for Gantt chart
       const ganttData = {
         project: {
@@ -1709,13 +1725,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           progress: phase.progress,
           deliverables: phase.deliverables,
         })),
-        tasks: tasks.map(task => ({
+        tasks: tasksWithCalculatedProgress.map(task => ({
           id: task.id,
           name: task.name,
           startDate: task.startDate,
           dueDate: task.dueDate,
           status: task.status,
-          progress: task.progressPercent,
+          progress: task.progress,
           assignedUser: task.assignedUser,
           priority: task.priority,
           phaseNumber: task.phaseNumber,
@@ -2177,6 +2193,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!currentSubtask) {
         return res.status(404).json({ message: "Subtask not found" });
       }
+
+
       
       // Handle basic fields
       if (req.body.name !== undefined) payload.name = String(req.body.name).trim();
@@ -2206,6 +2224,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Role-based status change restrictions - CHECK FIRST before workflow validation
+      if (payload.status !== undefined && req.user.role === 'employee') {
+        // Check if employee is assigned to this subtask
+        const isAssignedToSubtask = 
+          currentSubtask.assignedUserId === req.user.id ||
+          currentSubtask.assignedDevId === req.user.id ||
+          currentSubtask.assignedConsultantId === req.user.id;
+        
+        if (!isAssignedToSubtask) {
+          return res.status(403).json({ 
+            message: 'You can only modify subtasks assigned to you' 
+          });
+        }
+      }
+
       // Enhanced workflow enforcement
       if (payload.status !== undefined) {
         const currentStatus = currentSubtask.status;
@@ -2232,20 +2265,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
         
-        // Role-based status change restrictions
+        // Additional role-based restrictions for status changes
         if (req.user.role === 'employee') {
-          // Check if employee is assigned to this subtask
-          const isAssignedToSubtask = 
-            currentSubtask.assignedUserId === req.user.id ||
-            currentSubtask.assignedDevId === req.user.id ||
-            currentSubtask.assignedConsultantId === req.user.id;
-          
-          if (!isAssignedToSubtask) {
-            return res.status(403).json({ 
-              message: 'You can only modify subtasks assigned to you' 
-            });
-          }
-          
           // Employees can only set status to fc_review, not to qa, client_review, or completed
           if (['qa', 'client_review', 'finished'].includes(newStatus)) {
             return res.status(403).json({ 
@@ -2672,6 +2693,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Calculate progress for each task based on subtasks
+      const tasksWithCalculatedProgress = tasks.map(task => {
+        let calculatedProgress = task.progressPercent;
+        
+        // If task has subtasks, calculate progress based on subtask status
+        if (task.subtasks && task.subtasks.length > 0) {
+          calculatedProgress = calculateSubtaskWeightBasedProgress(task.subtasks);
+        }
+        
+        return {
+          ...task,
+          progress: calculatedProgress
+        };
+      });
+
       // Structure data for Gantt chart (same as project detail page)
       const ganttData = {
         project: {
@@ -2690,13 +2726,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           progress: phase.progress,
           deliverables: phase.deliverables,
         })),
-        tasks: tasks.map(task => ({
+        tasks: tasksWithCalculatedProgress.map(task => ({
           id: task.id,
           name: task.name,
           startDate: task.startDate,
           dueDate: task.dueDate,
           status: task.status,
-          progress: task.progressPercent,
+          progress: task.progress,
           assignedUser: task.assignedUser,
           priority: task.priority,
           phaseNumber: task.phaseNumber,
