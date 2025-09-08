@@ -1,4 +1,4 @@
-const { Pool } = require('@neondatabase/serverless');
+const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
@@ -9,7 +9,7 @@ async function cleanupDuplicatePhases() {
     process.exit(1);
   }
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
   
   try {
     console.log('🔍 Checking for duplicate phases...');
