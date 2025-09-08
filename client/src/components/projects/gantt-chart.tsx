@@ -159,6 +159,28 @@ End: ${endDate}
 Assigned: ${assignedPersonnel}`;
 };
 
+// Helper function to generate detailed tooltip for subtasks (aligns with milestone tooltip)
+const generateSubtaskTooltipContent = (
+  subtask: NonNullable<GanttData['tasks'][0]['subtasks']>[number],
+  parentTask: GanttData['tasks'][0],
+  phaseName: string
+) => {
+  const startDate = formatDateForTooltip(subtask.startDate);
+  const endDate = formatDateForTooltip(subtask.dueDate);
+  const statusText = (subtask.status || '').replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const assigned = subtask.assignedUser
+    ? `${(subtask.assignedUser.firstName || '')} ${(subtask.assignedUser.lastName || '')}`.trim() || subtask.assignedUser.email
+    : 'Unassigned';
+
+  return `${subtask.name}
+Status: ${statusText}
+Start: ${startDate}
+End: ${endDate}
+Assigned: ${assigned}
+Milestone: ${parentTask.name}
+Phase: ${phaseName}`;
+};
+
 export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttChartProps) {
   const { toast } = useToast();
   const [zoom, setZoom] = useState(0.5);
@@ -791,7 +813,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                                       minWidth: '20px',
                                       zIndex: 5,
                                     }}
-                                    title={`${subtask.name} - ${subtask.status}`}
+                                    title={generateSubtaskTooltipContent(subtask, task, getPhaseName(task.phaseNumber))}
                                   />
                                 </div>
                               </div>

@@ -433,6 +433,7 @@ export class DatabaseStorage implements IStorage {
 
   // Dashboard analytics
   async getDashboardMetrics(): Promise<{
+    totalProjects: number;
     activeProjects: number;
     completedModules: number;
     totalModules: number;
@@ -444,6 +445,7 @@ export class DatabaseStorage implements IStorage {
     projectsOnSupport: number;
     onSupportProjects: number;
   }> {
+    const allProjects = await db.select({ count: count() }).from(projects);
     const activeProjects = await db.select({ count: count() }).from(projects).where(eq(projects.status, "active"));
     const completedModules = await db.select({ count: count() }).from(modules).where(eq(modules.status, "completed"));
     const totalModules = await db.select({ count: count() }).from(modules);
@@ -459,6 +461,7 @@ export class DatabaseStorage implements IStorage {
     const onSupportProjects = await db.select({ count: count() }).from(projects).where(eq(projects.status, "on_support"));
 
     return {
+      totalProjects: allProjects[0]?.count || 0,
       activeProjects: activeProjects[0]?.count || 0,
       completedModules: completedModules[0]?.count || 0,
       totalModules: totalModules[0]?.count || 0,

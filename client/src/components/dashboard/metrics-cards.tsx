@@ -8,6 +8,7 @@ import React from "react"; // Added missing import
 
 // Define the metrics interface for better type safety
 interface DashboardMetrics {
+  totalProjects?: number;
   totalTeamProjects?: number;
   activeTeamProjects?: number;
   assignedSubtasks?: number;
@@ -117,7 +118,7 @@ export default function MetricsCards() {
         color: "bg-primary",
         change: "",
         changeLabel: "",
-        detail: `${(metrics?.activeProjects || 0) + (metrics?.projectsOnSupport || 0)} total projects`,
+        detail: `${metrics?.totalProjects ?? ((metrics?.activeProjects || 0) + (metrics?.projectsOnSupport || 0))} total projects`,
         detailColor: "text-blue-600",
         testId: "card-active-projects"
       },
