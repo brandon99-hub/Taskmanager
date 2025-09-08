@@ -31,39 +31,4 @@ CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
 CREATE INDEX IF NOT EXISTS idx_contracts_created_by ON contracts(created_by);
 CREATE INDEX IF NOT EXISTS idx_contracts_created_at ON contracts(created_at);
 
--- Add some sample data (optional)
-INSERT INTO contracts (
-    contract_number,
-    project_id,
-    client_name,
-    client_email,
-    contract_type,
-    total_value,
-    currency,
-    start_date,
-    end_date,
-    status,
-    created_by,
-    project_scope,
-    deliverables,
-    payment_terms,
-    special_clauses,
-    responsibilities
-) VALUES (
-    'CON-2025-0001',
-    (SELECT id FROM projects LIMIT 1),
-    'Sample Client Ltd',
-    'client@sample.com',
-    'fixed_price',
-    500000.00,
-    'KES',
-    '2025-01-01',
-    '2025-06-30',
-    'draft',
-    (SELECT id FROM users WHERE role = 'admin' LIMIT 1),
-    'Development of a comprehensive project management system with advanced features including task tracking, team collaboration, and reporting capabilities.',
-    '["System Requirements Document", "Technical Architecture", "Database Design", "Frontend Application", "Backend API", "User Documentation", "Deployment Guide"]',
-    'Payment to be made in 3 installments: 40% upon contract signing, 40% at project midpoint, and 20% upon completion and acceptance.',
-    '["All intellectual property rights remain with the client", "Confidentiality agreement applies to all project information", "Change requests require written approval"]',
-    '{"client": ["Provide business requirements", "Approve deliverables", "Provide access to systems", "Make timely payments"], "contractor": ["Deliver quality software", "Meet agreed timelines", "Provide technical support", "Maintain confidentiality"]}'
-) ON CONFLICT (contract_number) DO NOTHING;
+

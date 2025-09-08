@@ -1,12 +1,12 @@
 const bcrypt = require('bcryptjs');
-const { drizzle } = require('drizzle-orm/postgres-js');
-const postgres = require('postgres');
+const { Pool } = require('pg');
+const { drizzle } = require('drizzle-orm/node-postgres');
 require('dotenv').config();
 
 // Database connection
 const connectionString = process.env.DATABASE_URL;
-const client = postgres(connectionString);
-const db = drizzle(client);
+const pool = new Pool({ connectionString });
+const db = drizzle(pool);
 
 async function createAdminUser() {
   try {
@@ -45,7 +45,7 @@ async function createAdminUser() {
   } catch (error) {
     console.error('❌ Error creating admin user:', error);
   } finally {
-    await client.end();
+    await pool.end();
   }
 }
 
