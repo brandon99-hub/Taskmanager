@@ -150,6 +150,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // User assignments across all teams/projects
+  app.get('/api/users/:id/assignments', isAuthenticated, async (req: any, res) => {
+    try {
+      // Allow user to view own assignments or admins/managers
+      const canView = req.user.id === req.params.id || (await hasAdminPrivileges(req.user));
+      if (!canView) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const data = await storage.getUserAssignments(req.params.id);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching user assignments:', error);
+      res.status(500).json({ message: 'Failed to fetch user assignments' });
+    }
+  });
+
   app.get('/api/dashboard/upcoming-tasks', isAuthenticated, async (req: any, res) => {
     try {
       const days = parseInt(req.query.days as string) || 7;

@@ -290,6 +290,12 @@ export interface IStorage {
     overdueSubtasks: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
   }>;
 
+  // Aggregated assignments for a user across all teams/projects
+  getUserAssignments(userId: string): Promise<{
+    projects: Project[];
+    subtasks: (Subtask & { module: Module; project: Project })[];
+  }>;
+
   getBestPerformingTeam(): Promise<{
     teamId: string;
     team: Team;
@@ -678,30 +684,56 @@ export class DatabaseStorage implements IStorage {
     completedMilestoneCount: number;
     paidAmount: number;
   })[]> {
-    const result = await db
+    // Step 1: fetch base projects with manager and team
+    const baseRows = await db
       .select({
         project: projects,
         manager: users,
         team: teams,
-        milestoneCount: sql<number>`COUNT(${milestones.id})`,
-        completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
-        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'sent' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
       })
       .from(projects)
       .leftJoin(users, eq(projects.managerId, users.id))
       .leftJoin(teams, eq(projects.teamId, teams.id))
-      .leftJoin(milestones, eq(milestones.projectId, projects.id))
-      .groupBy(projects.id, users.id, teams.id)
       .orderBy(desc(projects.createdAt));
 
-    return result.map(r => ({
-      ...r.project,
-      manager: r.manager!,
-      team: r.team ?? null,
-      milestoneCount: Number(r.milestoneCount || 0),
-      completedMilestoneCount: Number(r.completedMilestoneCount || 0),
-      paidAmount: Number(r.paidAmount || 0),
-    }));
+    const projectIds = baseRows.map(r => r.project.id);
+    if (projectIds.length === 0) {
+      return [];
+    }
+
+    // Step 2: aggregate milestones per project
+    const aggRows = await db
+      .select({
+        projectId: milestones.projectId,
+        milestoneCount: count(milestones.id),
+        completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'sent' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
+      })
+      .from(milestones)
+      .where(inArray(milestones.projectId, projectIds))
+      .groupBy(milestones.projectId);
+
+    const projectIdToAgg: Record<string, { milestoneCount: number; completedMilestoneCount: number; paidAmount: number }> = {};
+    for (const row of aggRows) {
+      projectIdToAgg[row.projectId] = {
+        milestoneCount: Number(row.milestoneCount || 0),
+        completedMilestoneCount: Number(row.completedMilestoneCount || 0),
+        paidAmount: Number(row.paidAmount || 0),
+      };
+    }
+
+    // Step 3: merge
+    return baseRows.map(r => {
+      const agg = projectIdToAgg[r.project.id] || { milestoneCount: 0, completedMilestoneCount: 0, paidAmount: 0 };
+      return {
+        ...r.project,
+        manager: r.manager!,
+        team: r.team ?? null,
+        milestoneCount: agg.milestoneCount,
+        completedMilestoneCount: agg.completedMilestoneCount,
+        paidAmount: agg.paidAmount,
+      };
+    });
   }
 
   async getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number })[]> {
@@ -735,31 +767,55 @@ export class DatabaseStorage implements IStorage {
       return [];
     }
 
-    // Now fetch complete project data with milestone counts and payment data
-    const result = await db
+    // Now fetch complete project data
+    const baseRows = await db
       .select({
         project: projects,
         manager: users,
         team: teams,
-        milestoneCount: sql<number>`COUNT(${milestones.id})`,
-        completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
-        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
       })
       .from(projects)
       .leftJoin(users, eq(projects.managerId, users.id))
       .leftJoin(teams, eq(projects.teamId, teams.id))
-      .leftJoin(milestones, eq(milestones.projectId, projects.id))
-      .groupBy(projects.id, users.id, teams.id)
+      .where(inArray(projects.id, Array.from(userProjectIds)))
       .orderBy(desc(projects.createdAt));
 
-    return result.map(r => ({
-      ...r.project,
-      manager: r.manager!,
-      team: r.team ?? null,
-      milestoneCount: Number(r.milestoneCount || 0),
-      completedMilestoneCount: Number(r.completedMilestoneCount || 0),
-      paidAmount: Number(r.paidAmount || 0),
-    }));
+    if (baseRows.length === 0) {
+      return [];
+    }
+
+    const projectIds = baseRows.map(r => r.project.id);
+    const aggRows = await db
+      .select({
+        projectId: milestones.projectId,
+        milestoneCount: count(milestones.id),
+        completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'sent' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
+      })
+      .from(milestones)
+      .where(inArray(milestones.projectId, projectIds))
+      .groupBy(milestones.projectId);
+
+    const projectIdToAgg: Record<string, { milestoneCount: number; completedMilestoneCount: number; paidAmount: number }> = {};
+    for (const row of aggRows) {
+      projectIdToAgg[row.projectId] = {
+        milestoneCount: Number(row.milestoneCount || 0),
+        completedMilestoneCount: Number(row.completedMilestoneCount || 0),
+        paidAmount: Number(row.paidAmount || 0),
+      };
+    }
+
+    return baseRows.map(r => {
+      const agg = projectIdToAgg[r.project.id] || { milestoneCount: 0, completedMilestoneCount: 0, paidAmount: 0 };
+      return {
+        ...r.project,
+        manager: r.manager!,
+        team: r.team ?? null,
+        milestoneCount: agg.milestoneCount,
+        completedMilestoneCount: agg.completedMilestoneCount,
+        paidAmount: agg.paidAmount,
+      };
+    });
   }
 
   async getProject(id: string): Promise<(Project & { manager: User; team: Team | null; modules: Module[] }) | undefined> {
@@ -5488,6 +5544,57 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       overdueModules: overdueModules.map(row => ({ ...row.modules, project: row.projects, assignedUser: row.users })),
       overdueSubtasks: overdueSubtasks.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
     };
+  }
+
+  async getUserAssignments(userId: string): Promise<{
+    projects: Project[];
+    subtasks: (Subtask & { module: Module; project: Project })[];
+  }> {
+    // Projects via team membership
+    const teamProjectRows = await db
+      .select({ project: projects })
+      .from(projects)
+      .leftJoin(teams, eq(projects.teamId, teams.id))
+      .leftJoin(teamMembers, eq(teams.id, teamMembers.teamId))
+      .where(eq(teamMembers.userId, userId));
+
+    // Projects via user assigned to modules or subtasks
+    const moduleProjectRows = await db
+      .select({ project: projects })
+      .from(modules)
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .where(eq(modules.assignedUserId, userId));
+
+    const subtaskProjectRows = await db
+      .select({ project: projects })
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .where(or(eq(subtasks.assignedUserId, userId), eq(subtasks.assignedDevId, userId), eq(subtasks.assignedConsultantId, userId)));
+
+    const allProjects = [
+      ...teamProjectRows.map(r => r.project),
+      ...moduleProjectRows.map(r => r.project),
+      ...subtaskProjectRows.map(r => r.project),
+    ];
+    const projectMap: Record<string, Project> = {};
+    for (const p of allProjects) {
+      if (p) projectMap[p.id] = p;
+    }
+    const uniqueProjects = Object.values(projectMap);
+
+    // Subtasks assigned to user with module + project
+    const subtaskRows = await db
+      .select({ subtask: subtasks, module: modules, project: projects })
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .where(or(eq(subtasks.assignedUserId, userId), eq(subtasks.assignedDevId, userId), eq(subtasks.assignedConsultantId, userId)))
+      .orderBy(desc(subtasks.createdAt as any));
+
+    const userSubtasks = subtaskRows.map(r => ({ ...r.subtask, module: r.module, project: r.project }));
+
+    return { projects: uniqueProjects, subtasks: userSubtasks };
   }
 }
 

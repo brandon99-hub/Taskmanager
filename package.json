@@ -13,7 +13,9 @@
     "setup:admin": "node scripts/create-admin.js",
     "fix:passwords": "node scripts/hash-existing-passwords.js",
     "import:projects": "node scripts/import-projects-simple.js",
-    "test:excel": "node scripts/test-excel-data.js"
+    "test:excel": "node scripts/test-excel-data.js",
+    "clear:descriptions": "node scripts/clear-project-descriptions.js",
+    "wipe:projects": "node scripts/wipe-projects-and-teams.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

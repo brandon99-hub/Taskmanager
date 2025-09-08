@@ -47,16 +47,16 @@ export default function TeamDetail() {
   const [selectedMember, setSelectedMember] = useState<any>(null);
   const [isMemberDetailOpen, setIsMemberDetailOpen] = useState(false);
 
-  // Fetch member subtasks when a member is selected
-  const { data: memberSubtasks, isLoading: memberSubtasksLoading } = useQuery<any>({
-    queryKey: ['/api/dashboard/kanban-subtasks', selectedMember?.userId],
+  // Fetch member assignments (projects + subtasks across all teams)
+  const { data: memberAssignments, isLoading: memberAssignmentsLoading } = useQuery<any>({
+    queryKey: ['/api/users', selectedMember?.userId, 'assignments'],
     queryFn: async () => {
       if (!selectedMember?.userId) return null;
-      const res = await fetch('/api/dashboard/kanban-subtasks', { 
-        credentials: 'include', 
-        cache: 'no-store' 
+      const res = await fetch(`/api/users/${selectedMember.userId}/assignments`, {
+        credentials: 'include',
+        cache: 'no-store'
       });
-      if (!res.ok) throw new Error('Failed to fetch member subtasks');
+      if (!res.ok) throw new Error('Failed to fetch member assignments');
       return res.json();
     },
     enabled: !!selectedMember?.userId && isMemberDetailOpen,
@@ -143,6 +143,7 @@ export default function TeamDetail() {
   }
 
   const { team, members, projects, totalTasks } = teamDetails;
+  const allUserProjects = selectedMember && memberAssignments?.projects ? memberAssignments.projects : projects;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
@@ -646,26 +647,15 @@ export default function TeamDetail() {
                             <BarChart3 className="w-4 h-4 mr-2" />
                             Assigned Subtasks
                           </h5>
-                          {memberSubtasksLoading ? (
+                          {memberAssignmentsLoading ? (
                             <div className="flex items-center justify-center py-4">
                               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
                             </div>
-                          ) : memberSubtasks ? (
+                          ) : memberAssignments ? (
                             <div className="space-y-2">
-                              {/* Combine all subtasks from different categories */}
-                              {[
-                                ...(memberSubtasks.overdue || []),
-                                ...(memberSubtasks.review || []),
-                                ...(memberSubtasks.fcReview || []),
-                                ...(memberSubtasks.highPriorityTodo || []),
-                                ...(memberSubtasks.recentlyDone || [])
-                              ]
-                                .filter((subtask: any) => 
-                                  subtask.assignedUserId === selectedMember?.userId ||
-                                  subtask.assignedDevId === selectedMember?.userId ||
-                                  subtask.assignedConsultantId === selectedMember?.userId
-                                )
-                                .slice(0, 5) // Show max 5 subtasks
+                              {(memberAssignments.subtasks || [])
+                                .filter((subtask: any) => subtask.project?.id === project.id)
+                                .slice(0, 5)
                                 .map((subtask: any, index: number) => {
                                   const getStatusColor = (status: string) => {
                                     switch (status) {
@@ -724,17 +714,7 @@ export default function TeamDetail() {
                                     </div>
                                   );
                                 })}
-                              {[
-                                ...(memberSubtasks.overdue || []),
-                                ...(memberSubtasks.review || []),
-                                ...(memberSubtasks.fcReview || []),
-                                ...(memberSubtasks.highPriorityTodo || []),
-                                ...(memberSubtasks.recentlyDone || [])
-                              ].filter((subtask: any) => 
-                                subtask.assignedUserId === selectedMember?.userId ||
-                                subtask.assignedDevId === selectedMember?.userId ||
-                                subtask.assignedConsultantId === selectedMember?.userId
-                              ).length === 0 && (
+                              {(memberAssignments.subtasks || []).filter((subtask: any) => subtask.project?.id === project.id).length === 0 && (
                                 <div className="text-center py-4 text-gray-500">
                                   <p>No subtasks assigned to this member</p>
                                 </div>

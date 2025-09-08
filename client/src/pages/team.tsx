@@ -51,6 +51,7 @@ export default function Team() {
   const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
 
   const [segmentFilter, setSegmentFilter] = useState<string>('all');
+  const [teamQuery, setTeamQuery] = useState<string>("");
 
   const [isSegmentLeaderModalOpen, setIsSegmentLeaderModalOpen] = useState(false);
   
@@ -1424,19 +1425,29 @@ export default function Team() {
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xl font-medium text-gray-900" data-testid="text-teams-section">Teams</h3>
             
-            {/* Segment Filter */}
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700">Filter by Segment:</label>
-              <select
-                value={segmentFilter}
-                onChange={(e) => setSegmentFilter(e.target.value)}
-                className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Segments</option>
-                <option value="academic">Academic</option>
-                <option value="parastals">Parastals</option>
-                <option value="private">Private</option>
-              </select>
+            {/* Search + Segment Filter */}
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Input
+                  placeholder="Search teams..."
+                  value={teamQuery}
+                  onChange={(e) => setTeamQuery(e.target.value)}
+                  className="pl-3 h-9 w-56"
+                />
+              </div>
+              <div className="flex items-center space-x-2">
+                <label className="text-sm font-medium text-gray-700">Segment:</label>
+                <select
+                  value={segmentFilter}
+                  onChange={(e) => setSegmentFilter(e.target.value)}
+                  className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">All</option>
+                  <option value="academic">Academic</option>
+                  <option value="parastals">Parastals</option>
+                  <option value="private">Private</option>
+                </select>
+              </div>
             </div>
           </div>
           
@@ -1466,14 +1477,18 @@ export default function Team() {
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {teams
                 .filter((team: any) => {
-                  if (segmentFilter === 'all') return true;
-                  // Filter teams based on their projects' segments
-                  return team.projects?.some((project: any) => project.segment === segmentFilter);
+                  // Segment filter
+                  const matchesSegment = segmentFilter === 'all' || team.segment === segmentFilter || team.projects?.some((p: any) => p.segment === segmentFilter);
+                  if (!matchesSegment) return false;
+                  // Name search filter
+                  const q = teamQuery.trim().toLowerCase();
+                  if (!q) return true;
+                  return (team.name || '').toLowerCase().includes(q);
                 })
                 .map((team: any) => (
                 <Card 
                   key={team.id} 
-                  className="hover:shadow-md transition-shadow cursor-pointer" 
+                  className="hover:shadow-md transition-shadow cursor-pointer border rounded-lg" 
                   data-testid={`card-team-${team.id}`}
                   onClick={() => handleTeamClick(team)}
                 >
@@ -1483,15 +1498,23 @@ export default function Team() {
                       <span data-testid={`text-team-name-${team.id}`}>{team.name}</span>
                     </CardTitle>
                     {team.description && (
-                      <CardDescription data-testid={`text-team-description-${team.id}`}>
+                      <CardDescription data-testid={`text-team-description-${team.id}`} className="truncate">
                         {team.description}
                       </CardDescription>
                     )}
                   </CardHeader>
                   <CardContent>
-                    <div className="flex items-center text-sm text-gray-600">
-                      <Calendar className="h-4 w-4 mr-2" />
-                      Created {new Date(team.createdAt).toLocaleDateString()}
+                    <div className="flex items-center justify-between text-sm text-gray-700">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="capitalize">
+                          {(team.segment || team.projects?.[0]?.segment || 'private')}
+                        </Badge>
+                        <span className="text-gray-500">• {team.projects?.length || 0} projects</span>
+                      </div>
+                      <div className="flex items-center text-sm text-gray-600">
+                        <Calendar className="h-4 w-4 mr-2" />
+                        {new Date(team.createdAt).toLocaleDateString()}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
