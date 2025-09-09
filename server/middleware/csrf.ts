@@ -28,14 +28,13 @@ export function setupCSRFProtection(app: Express) {
   });
   
   // CSRF token endpoint (must be before CSRF protection)
-  app.get('/api/csrf-token', (req: Request, res: Response) => {
+  app.get('/api/csrf-token', csrfProtection, (req: Request, res: Response) => {
     // Set security headers for CSRF token endpoint
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     
-    // Generate CSRF token manually
-    const token = req.csrfToken ? req.csrfToken() : 'csrf-token-placeholder';
+    const token = req.csrfToken();
     
     // Set CSRF token in cookie for additional protection
     res.cookie('XSRF-TOKEN', token, {

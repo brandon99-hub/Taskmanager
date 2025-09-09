@@ -33,9 +33,6 @@ setupRateLimiting(app);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
-// CSRF protection (before routes)
-setupCSRFProtection(app);
-
 // Audit and timing middleware
 app.use(requestTimingMiddleware());
 app.use(auditMiddleware());
@@ -73,6 +70,9 @@ app.use((req, res, next) => {
 (async () => {
   try {
     const server = await registerRoutes(app);
+
+    // CSRF protection (after auth setup) - temporarily disabled for debugging
+    // setupCSRFProtection(app);
 
   // Enhanced error handler with security logging
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
