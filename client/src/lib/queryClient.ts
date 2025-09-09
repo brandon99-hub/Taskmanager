@@ -26,7 +26,9 @@ async function getCSRFToken(): Promise<string | null> {
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
+    // Clone the response to avoid consuming the body
+    const clonedRes = res.clone();
+    const text = (await clonedRes.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
 }
@@ -60,7 +62,8 @@ export async function apiRequest(
 
   // Handle CSRF token errors
   if (res.status === 403) {
-    const errorText = await res.text();
+    const clonedRes = res.clone();
+    const errorText = await clonedRes.text();
     if (errorText.includes('CSRF') || errorText.includes('csrf')) {
       // Clear cached token and retry once
       csrfToken = null;
