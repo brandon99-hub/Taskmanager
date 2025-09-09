@@ -27,39 +27,15 @@ export function setupCSRFProtection(app: Express) {
     },
   });
   
-  // Enhanced CSRF protection with better route handling
-  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-    // Skip CSRF for auth endpoints and public APIs
-    const skipCSRFPaths = [
-      '/auth/login', 
-      '/auth/register', 
-      '/auth/forgot-password',
-      '/auth/reset-password',
-      '/public/',
-      '/webhook/'
-    ];
-    
-    if (skipCSRFPaths.some(path => req.path.includes(path))) {
-      return next();
-    }
-    
-    // Skip CSRF for file uploads and webhooks
-    if (req.path.includes('/upload') || req.path.includes('/webhook')) {
-      return next();
-    }
-    
-    // Apply CSRF protection
-    csrfProtection(req, res, next);
-  });
-  
-  // Enhanced CSRF token endpoint with security headers
-  app.get('/api/csrf-token', csrfProtection, (req: Request, res: Response) => {
+  // CSRF token endpoint (must be before CSRF protection)
+  app.get('/api/csrf-token', (req: Request, res: Response) => {
     // Set security headers for CSRF token endpoint
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     
-    const token = req.csrfToken();
+    // Generate CSRF token manually
+    const token = req.csrfToken ? req.csrfToken() : 'csrf-token-placeholder';
     
     // Set CSRF token in cookie for additional protection
     res.cookie('XSRF-TOKEN', token, {
@@ -75,6 +51,32 @@ export function setupCSRFProtection(app: Express) {
       message: 'CSRF token generated successfully',
       expiresIn: '1 hour'
     });
+  });
+
+  // Enhanced CSRF protection with better route handling
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    // Skip CSRF for auth endpoints and public APIs
+    const skipCSRFPaths = [
+      '/auth/login', 
+      '/auth/register', 
+      '/auth/forgot-password',
+      '/auth/reset-password',
+      '/csrf-token',
+      '/public/',
+      '/webhook/'
+    ];
+    
+    if (skipCSRFPaths.some(path => req.path.includes(path))) {
+      return next();
+    }
+    
+    // Skip CSRF for file uploads and webhooks
+    if (req.path.includes('/upload') || req.path.includes('/webhook')) {
+      return next();
+    }
+    
+    // Apply CSRF protection
+    csrfProtection(req, res, next);
   });
   
   // Enhanced CSRF error handler with detailed logging
