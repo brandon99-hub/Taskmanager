@@ -53,8 +53,8 @@ export default function TeamDetail() {
     queryFn: async () => {
       if (!selectedMember?.userId) return null;
       const res = await fetch(`/api/users/${selectedMember.userId}/assignments`, {
-        credentials: 'include',
-        cache: 'no-store'
+        credentials: 'include', 
+        cache: 'no-store' 
       });
       if (!res.ok) throw new Error('Failed to fetch member assignments');
       return res.json();

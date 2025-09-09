@@ -542,10 +542,11 @@ export default function ProjectDetail() {
               <Button 
                 variant="outline" 
                 onClick={handleDeactivateProject}
-                className="text-red-600 hover:text-red-700"
+                disabled={project?.status === 'inactive'}
+                className="text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Deactivate
+                {project?.status === 'inactive' ? 'Inactive' : 'Deactivate'}
               </Button>
             </div>
           )}
@@ -729,25 +730,19 @@ export default function ProjectDetail() {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Total:</span>
-                    <span className="font-medium">{ganttData?.tasks?.length || 0}</span>
+                    <span className="font-medium">{milestones?.length || 0}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Completed:</span>
-                    <span className="font-medium text-green-600">{ganttData?.tasks?.filter((task: any) => 
-                      task.progress === 100
-                    ).length || 0}</span>
+                    <span className="font-medium text-green-600">{(milestones || []).filter((m: any) => m.billingStatus === 'paid').length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>In Progress:</span>
-                    <span className="font-medium text-blue-600">{ganttData?.tasks?.filter((task: any) => 
-                      task.progress > 0 && task.progress < 100
-                    ).length || 0}</span>
+                    <span className="font-medium text-blue-600">{(milestones || []).filter((m: any) => m.billingStatus === 'to_send' || m.billingStatus === 'sent').length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>Not Started:</span>
-                    <span className="font-medium">{ganttData?.tasks?.filter((task: any) => 
-                      task.progress === 0
-                    ).length || 0}</span>
+                    <span className="font-medium">{(milestones || []).filter((m: any) => (m.billingStatus || 'none') === 'none').length}</span>
                   </div>
                 </div>
                 <Progress 

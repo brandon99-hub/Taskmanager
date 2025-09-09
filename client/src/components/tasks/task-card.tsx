@@ -23,6 +23,7 @@ interface TaskCardProps {
     feeAmount?: string | number;
     billingStatus?: 'none' | 'to_send' | 'sent' | 'paid';
     estimatedHours?: number;
+    type?: 'milestone' | 'module' | 'subtask';
     project: {
       id: string;
       name: string;
@@ -45,7 +46,15 @@ export default function TaskCard({ task }: TaskCardProps) {
 
   const updateTaskMutation = useMutation({
     mutationFn: async ({ taskId, status }: { taskId: string; status: string }) => {
-      const response = await apiRequest("PUT", `/api/tasks/${taskId}`, { status });
+      // Route to correct endpoint based on task type
+      const normalized = (status || '').toLowerCase();
+      const mapped = normalized === 'qa' ? 'client_review' : normalized;
+      const endpoint = (task as any).type === 'subtask'
+        ? `/api/subtasks/${taskId}`
+        : (task as any).type === 'module'
+          ? `/api/modules/${taskId}`
+          : `/api/tasks/${taskId}`; // milestone
+      const response = await apiRequest("PUT", endpoint, { status: mapped });
       return response.json();
     },
     onSuccess: () => {
@@ -78,7 +87,8 @@ export default function TaskCard({ task }: TaskCardProps) {
 
   const updateBillingStatusMutation = useMutation({
     mutationFn: async ({ taskId, status }: { taskId: string; status: string }) => {
-      const response = await apiRequest('PUT', `/api/tasks/${taskId}/billing-status`, { billingStatus: status });
+      // Milestone billing is handled at milestones endpoint
+      const response = await apiRequest('PUT', `/api/milestones/${taskId}/billing-status`, { billingStatus: status });
       return response.json();
     },
     onSuccess: () => {
@@ -145,6 +155,9 @@ export default function TaskCard({ task }: TaskCardProps) {
   };
 
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'done';
+
+  const isMilestone = (task as any).type === 'milestone';
+  const billingLabel = (s?: string) => s === 'to_send' ? 'To Send' : s ? (s.charAt(0).toUpperCase() + s.slice(1)) : 'None';
 
   return (
     <Card 
@@ -221,12 +234,24 @@ export default function TaskCard({ task }: TaskCardProps) {
             </div>
           )}
 
-          <Badge 
-            className={`text-xs ${getStatusColor(task.status)} flex-shrink-0`}
-            data-testid={`badge-task-status-${task.id}`}
-          >
-            {getStatusLabel(task.status)}
-          </Badge>
+          {isMilestone ? (
+            <Badge 
+              className={`text-xs ${
+                task.billingStatus === 'paid' ? 'bg-green-100 text-green-800' :
+                task.billingStatus === 'sent' ? 'bg-indigo-100 text-indigo-800' :
+                task.billingStatus === 'to_send' ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-800'
+              } flex-shrink-0`}
+            >
+              {billingLabel(task.billingStatus)}
+            </Badge>
+          ) : (
+            <Badge 
+              className={`text-xs ${getStatusColor(task.status)} flex-shrink-0`}
+              data-testid={`badge-task-status-${task.id}`}
+            >
+              {getStatusLabel(task.status)}
+            </Badge>
+          )}
         </div>
 
         {/* Fee & Billing */}
@@ -243,7 +268,7 @@ export default function TaskCard({ task }: TaskCardProps) {
                   {task.billingStatus === 'to_send' ? 'To Send' : task.billingStatus.charAt(0).toUpperCase() + task.billingStatus.slice(1)}
                 </Badge>
               )}
-              {(user?.role === 'admin' || user?.role === 'manager') && (
+              {(user?.role === 'admin' || user?.role === 'manager') && isMilestone && (
                 <Select
                   value={task.billingStatus || 'none'}
                   onValueChange={(v) => updateBillingStatusMutation.mutate({ taskId: task.id, status: v as any })}
@@ -253,10 +278,12 @@ export default function TaskCard({ task }: TaskCardProps) {
                     <SelectValue placeholder="Billing" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="none">Not Sent</SelectItem>
                     <SelectItem value="to_send">To Send</SelectItem>
-                    <SelectItem value="sent">Sent</SelectItem>
+                    <SelectItem value="sent">Invoice Sent</SelectItem>
+                    <SelectItem value="processing">Processing</SelectItem>
                     <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="overdue">Overdue</SelectItem>
                   </SelectContent>
                 </Select>
               )}
@@ -264,17 +291,34 @@ export default function TaskCard({ task }: TaskCardProps) {
           </div>
         )}
 
+        {!isMilestone && (
         <div className="mt-3 space-y-2">
           <Select value={task.status} onValueChange={handleStatusChange} disabled={updateTaskMutation.isPending}>
             <SelectTrigger className="h-8 text-xs" data-testid={`select-task-status-${task.id}`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="todo">Not Started</SelectItem>
-              <SelectItem value="in_progress">In Progress</SelectItem>
-              <SelectItem value="client_review">Client Review</SelectItem>
-              {user?.role !== 'employee' && (
-                <SelectItem value="done">Done</SelectItem>
+              {(task as any).type === 'subtask' ? (
+                <>
+                  <SelectItem value="not_started">Not Started</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="fc_review">FC Review</SelectItem>
+                  <SelectItem value="on_hold">On Hold</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </>
+              ) : (
+                <>
+                  <SelectItem value="todo">Not Started</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="client_review">Client Review</SelectItem>
+                  <SelectItem value="fc_review">FC Review</SelectItem>
+                  <SelectItem value="qa">QA</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="overdue">Overdue</SelectItem>
+                  <SelectItem value="on_hold">On Hold</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </>
               )}
             </SelectContent>
           </Select>
@@ -293,6 +337,7 @@ export default function TaskCard({ task }: TaskCardProps) {
             </Button>
           )}
         </div>
+        )}
       </CardContent>
     </Card>
   );

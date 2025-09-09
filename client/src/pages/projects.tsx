@@ -533,10 +533,11 @@ export default function Projects() {
                             <Button
                               variant="outline"
                               size="sm"
+                              disabled={project.status === 'inactive'}
                               onClick={(e) => handleDeactivateProject(e, project)}
-                              className="text-red-600 hover:text-red-700"
+                              className="text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              Deactivate
+                              {project.status === 'inactive' ? 'Inactive' : 'Deactivate'}
                             </Button>
                           )}
                         </div>

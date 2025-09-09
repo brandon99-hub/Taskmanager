@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Deadline Approaching</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #333; }
+    .container { max-width: 700px; margin: 0 auto; padding: 20px; background: #fff; border-radius: 10px; border: 1px solid #eee; }
+    .header { background: #1f4e79; color: #fff; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { padding: 24px; }
+    .footer { padding: 16px; color: #666; font-size: 12px; text-align: center; }
+    .btn { display: inline-block; padding: 10px 18px; background: #1f4e79; color: #fff; text-decoration: none; border-radius: 6px; }
+    .card { background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #1f4e79; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Project Deadline Approaching</h1>
+    </div>
+    <div class="content">
+      <p>Hi {{userName}},</p>
+      <p>This is a reminder that the project <strong>{{projectName}}</strong> has a deadline on <strong>{{dueDate}}</strong>.</p>
+      <div class="card">
+        <p>Please review open tasks and ensure milestones are on track.</p>
+      </div>
+      {{#if updateUrl}}
+        <p style="margin-top:16px;">
+          <a class="btn" href="{{updateUrl}}">Open Project</a>
+        </p>
+      {{/if}}
+    </div>
+    <div class="footer">
+      <p>TaskFlow • Project Management</p>
+    </div>
+  </div>
+</body>
+</html>

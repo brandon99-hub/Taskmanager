@@ -49,9 +49,39 @@ export default function Tasks() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
+  // Add view mode: milestones | modules | subtasks
+  const [viewMode, setViewMode] = useState<'milestones' | 'modules' | 'subtasks'>('milestones');
+
   const { data: tasks = [], isLoading: tasksLoading, error } = useQuery<any[]>({
-    queryKey: ['/api/tasks'],
+    queryKey: ['/api/tasks', viewMode],
     enabled: !!isAuthenticated,
+    queryFn: async () => {
+      if (viewMode === 'milestones') {
+        const res = await fetch('/api/milestones', { credentials: 'include' });
+        if (!res.ok) throw new Error('Failed to fetch milestones');
+        const data = await res.json();
+        return Array.isArray(data) ? data.map((m: any) => ({ ...m, type: 'milestone' })) : [];
+      }
+      if (viewMode === 'modules') {
+        const res = await fetch('/api/tasks', { credentials: 'include' });
+        if (!res.ok) throw new Error('Failed to fetch modules');
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [];
+        // Only show Phase 3 modules
+        return list.filter((m: any) => m.phaseNumber === 3).map((m: any) => ({ ...m, type: 'module' }));
+      }
+      // subtasks view: flatten kanban subtasks groups
+      const res = await fetch('/api/dashboard/kanban-subtasks', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch subtasks');
+      const grouped = await res.json();
+      const keys = ['overdue', 'review', 'recentlyDone', 'highPriorityTodo', 'fcReview'];
+      const flat: any[] = [];
+      for (const k of keys) {
+        const arr = Array.isArray(grouped?.[k]) ? grouped[k] : [];
+        for (const item of arr) flat.push({ ...item, type: 'subtask' });
+      }
+      return flat;
+    }
   });
 
   const { data: projects = [] } = useQuery<any[]>({
@@ -94,9 +124,12 @@ export default function Tasks() {
                          task.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          task.project?.name.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesStatus = statusFilter === "all" || task.status === statusFilter;
+    const matchesStatus = statusFilter === "all" || task.status === statusFilter || (viewMode === 'milestones' && (task.billingStatus === statusFilter));
     const matchesPriority = priorityFilter === "all" || task.priority === priorityFilter;
-    const matchesProject = projectFilter === "all" || task.projectId === projectFilter;
+    const matchesProject = projectFilter === "all" 
+      || task.projectId === projectFilter 
+      || task.project?.id === projectFilter 
+      || task.module?.projectId === projectFilter;
     
     return matchesSearch && matchesStatus && matchesPriority && matchesProject;
   });
@@ -118,15 +151,43 @@ export default function Tasks() {
     setLocation('/tasks');
   };
 
-  // Group tasks by status
-  const tasksByStatus = {
-    todo: filteredTasks.filter((task: any) => task.status === 'todo'),
-    in_progress: filteredTasks.filter((task: any) => task.status === 'in_progress'),
-    client_review: filteredTasks.filter((task: any) => task.status === 'client_review'),
-    done: filteredTasks.filter((task: any) => task.status === 'done'),
+  // Group items based on view mode
+  const tasksByStatus = viewMode === 'milestones' ? {
+    none: filteredTasks.filter((m: any) => (m.billingStatus || 'none') === 'none'),
+    to_send: filteredTasks.filter((m: any) => (m.billingStatus || 'none') === 'to_send'),
+    sent: filteredTasks.filter((m: any) => (m.billingStatus || 'none') === 'sent'),
+    paid: filteredTasks.filter((m: any) => (m.billingStatus || 'none') === 'paid'),
+  } : viewMode === 'subtasks' ? {
+    todo: filteredTasks.filter((task: any) => task.status === 'todo' || task.status === 'not_started'),
+    in_progress: filteredTasks.filter((task: any) => task.status === 'in_progress' || task.status === 'ongoing'),
+    fc_review: filteredTasks.filter((task: any) => task.status === 'fc_review'),
+    done: filteredTasks.filter((task: any) => task.status === 'completed' || task.status === 'finished' || task.status === 'done'),
+  } : {
+    todo: filteredTasks.filter((task: any) => task.status === 'todo' || task.status === 'not_started'),
+    in_progress: filteredTasks.filter((task: any) => task.status === 'in_progress' || task.status === 'ongoing'),
+    client_review: filteredTasks.filter((task: any) => task.status === 'client_review' || task.status === 'qa'),
+    done: filteredTasks.filter((task: any) => task.status === 'done' || task.status === 'finished' || task.status === 'completed'),
   };
 
   const getStatusTitle = (status: string) => {
+    if (viewMode === 'milestones') {
+      switch (status) {
+        case 'to_send': return 'To Invoice';
+        case 'sent': return 'Invoice Sent';
+        case 'paid': return 'Paid';
+        case 'none': return 'Not Invoiced';
+        default: return status;
+      }
+    }
+    if (viewMode === 'subtasks') {
+      switch (status) {
+        case 'todo': return 'Not Started';
+        case 'in_progress': return 'In Progress';
+        case 'fc_review': return 'FC Review';
+        case 'done': return 'Completed';
+        default: return status;
+      }
+    }
     switch (status) {
       case 'todo': return 'Not Started';
       case 'in_progress': return 'In Progress';
@@ -137,6 +198,24 @@ export default function Tasks() {
   };
 
   const getStatusColor = (status: string) => {
+    if (viewMode === 'milestones') {
+      switch (status) {
+        case 'to_send': return 'bg-orange-50';
+        case 'sent': return 'bg-indigo-50';
+        case 'paid': return 'bg-green-50';
+        case 'none': return 'bg-gray-100';
+        default: return 'bg-gray-100';
+      }
+    }
+    if (viewMode === 'subtasks') {
+      switch (status) {
+        case 'todo': return 'bg-gray-100';
+        case 'in_progress': return 'bg-blue-50';
+        case 'fc_review': return 'bg-yellow-50';
+        case 'done': return 'bg-green-50';
+        default: return 'bg-gray-100';
+      }
+    }
     switch (status) {
       case 'todo': return 'bg-gray-100';
       case 'in_progress': return 'bg-blue-50';
@@ -156,7 +235,7 @@ export default function Tasks() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
           <div>
             <h2 className="text-3xl font-medium text-gray-900 mb-2" data-testid="text-title">
-              {user?.role === 'employee' ? 'My Milestones' : 'All Milestones'}
+              {viewMode === 'milestones' ? (user?.role === 'employee' ? 'My Milestones' : 'All Milestones') : viewMode === 'modules' ? 'Modules' : 'Subtasks'}
             </h2>
             <p className="text-gray-600" data-testid="text-subtitle">
               {user?.role === 'employee' 
@@ -180,7 +259,14 @@ export default function Tasks() {
         {/* Filters */}
         <Card className="mb-8">
           <CardHeader>
-            <CardTitle className="text-lg">Filters & Search</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">Filters & Search</CardTitle>
+              <div className="flex items-center gap-2">
+                <Button variant={viewMode === 'milestones' ? 'default' : 'ghost'} size="sm" onClick={() => setViewMode('milestones')}>Milestones</Button>
+                <Button variant={viewMode === 'modules' ? 'default' : 'ghost'} size="sm" onClick={() => setViewMode('modules')}>Modules</Button>
+                <Button variant={viewMode === 'subtasks' ? 'default' : 'ghost'} size="sm" onClick={() => setViewMode('subtasks')}>Subtasks</Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -238,7 +324,7 @@ export default function Tasks() {
                 
                 <div className="flex items-center justify-between">
                   <Badge variant="outline" data-testid="badge-task-count">
-                    {filteredTasks.length} milestones
+                    {filteredTasks.length} {viewMode === 'milestones' ? 'milestones' : viewMode}
                   </Badge>
                   {projectFilter !== "all" && (
                     <Badge variant="secondary" className="text-xs">

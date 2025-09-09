@@ -2128,11 +2128,11 @@ export class DatabaseStorage implements IStorage {
         )
       );
     
-    const userModuleIds = userSubtaskModules.map(s => s.moduleId);
+    const userModuleIds = userSubtaskModules.map(s => s.moduleId).filter(Boolean) as string[];
     
     // Base condition: modules that have subtasks assigned to user
     const userModuleCondition = userModuleIds.length > 0
-      ? inArray(modules.id, userModuleIds)
+      ? inArray(modules.id, userModuleIds as any)
       : sql`1 = 0`; // No modules if no subtasks assigned
 
     // Get overdue modules
@@ -4183,7 +4183,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
     }
   }
 
-  async getMilestonesByProject(projectId: string): Promise<(Milestone & { modules: Module[] })[]> {
+  async getMilestonesByProject(projectId: string): Promise<(Milestone & { modules: Module[]; subtasks?: any[] })[]> {
     try {
       // Get all milestones for the project
       const projectMilestones = await db
@@ -4204,6 +4204,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           const moduleIds = milestoneModuleIds.map(m => m.moduleId);
 
           let milestoneModules: Module[] = [];
+          let flattenedSubtasks: any[] = [];
           if (moduleIds.length > 0) {
             // Get the actual module data
             milestoneModules = await db
@@ -4211,11 +4212,46 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
               .from(modules)
               .where(inArray(modules.id, moduleIds))
               .orderBy(asc(modules.createdAt));
+
+            // Collect subtasks per module
+            const subtasksPerModule = await Promise.all(
+              milestoneModules.map(async (module) => {
+                const subtasksWithUsers = await db
+                  .select({ subtask: subtasks, assignedUser: users })
+                  .from(subtasks)
+                  .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+                  .where(eq(subtasks.moduleId, module.id))
+                  .orderBy(asc(subtasks.createdAt));
+                return subtasksWithUsers.map(row => ({
+                  id: row.subtask.id,
+                  name: row.subtask.name,
+                  description: row.subtask.description,
+                  status: row.subtask.status,
+                  priority: row.subtask.priority,
+                  startDate: row.subtask.startDate,
+                  dueDate: row.subtask.dueDate,
+                  estimatedHours: row.subtask.estimatedHours,
+                  estimatedDays: row.subtask.estimatedDays,
+                  actualHours: row.subtask.actualHours,
+                  actualDays: row.subtask.actualDays,
+                  progressPercent: row.subtask.progressPercent,
+                  assignedUserId: row.subtask.assignedUserId,
+                  assignedDevId: row.subtask.assignedDevId,
+                  assignedConsultantId: row.subtask.assignedConsultantId,
+                  createdById: row.subtask.createdById,
+                  assignedUser: row.assignedUser,
+                  completedAt: row.subtask.completedAt
+                }));
+              })
+            );
+            flattenedSubtasks = subtasksPerModule.flat();
           }
 
           return {
             ...milestone,
-            modules: milestoneModules
+            modules: milestoneModules,
+            // Flatten subtasks under milestone for client convenience as well
+            subtasks: flattenedSubtasks
           };
         })
       );
@@ -4453,7 +4489,8 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         actualHours: subtask.actualHours || 0,
         actualDays: subtask.actualDays || 0,
         progressPercent: subtask.progressPercent || 0,
-        moduleId: subtask.moduleId,
+        moduleId: subtask.moduleId || null,
+        milestoneId: subtask.milestoneId || null,
         assignedUserId: subtask.assignedUserId || null,
         assignedDevId: subtask.assignedDevId || null,
         assignedConsultantId: subtask.assignedConsultantId || null,
@@ -4691,7 +4728,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
     // For each milestone, get its nested modules or direct subtasks
     const milestonesWithModules = await Promise.all(
       projectMilestones.map(async (milestone) => {
-        // Determine phase number based on milestone name
+        // Determine phase number based on milestone name (fallback only)
         const getPhaseNumber = (milestoneName: string): number => {
           const phaseMap: { [key: string]: number } = {
             'Project Setup': 1,
@@ -4707,23 +4744,24 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
             'Go-Live Support': 5,
             'Post-Launch Support': 6
           };
-          return phaseMap[milestoneName] || 3; // Default to 3 if not found
+          return phaseMap[milestoneName] || 3; // Fallback only
         };
 
         const getPhaseName = (phaseNumber: number): string => {
           const phaseNames: { [key: number]: string } = {
             1: 'Initiation & Contracting',
-            2: 'Planning & Design',
-            3: 'Development',
-            4: 'Testing & Quality Assurance',
+            2: 'Requirements Gathering & Design',
+            3: 'System Customization & Development',
+            4: 'Testing & Validation',
             5: 'Deployment & Go-Live',
-            6: 'Support & Maintenance'
+            6: 'Transition & Closure'
           };
           return phaseNames[phaseNumber] || 'Development';
         };
 
-        const phaseNumber = getPhaseNumber(milestone.name);
-        const phaseName = getPhaseName(phaseNumber);
+        // Use stored phase info when present; otherwise fallback
+        const phaseNumber = (milestone as any).phaseNumber ?? getPhaseNumber(milestone.name);
+        const phaseName = (milestone as any).phaseName ?? getPhaseName(phaseNumber);
 
         if (phaseNumber === 3) {
           // Phase 3: Get modules that belong to this milestone
@@ -4853,20 +4891,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           modules: modulesWithSubtasks
         } as any;
         } else {
-          // Phase 1,2,4,5,6: Get subtasks directly under the milestone
-          // First, find the module that represents this milestone
-          const milestoneModule = await db
-      .select()
-      .from(modules)
-      .where(and(
-        eq(modules.projectId, projectId),
-              eq(modules.name, milestone.name) // Match by name since these modules represent the milestones
-            ))
-            .limit(1);
-
-          let milestoneSubtasks: any[] = [];
-          if (milestoneModule.length > 0) {
-            // Get subtasks directly under this milestone's module
+          // Phase 1,2,4,5,6: Subtasks belong directly to the milestone (no modules)
         const subtasksWithUsers = await db
           .select({
             subtask: subtasks,
@@ -4874,10 +4899,10 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           })
           .from(subtasks)
           .leftJoin(users, eq(subtasks.assignedUserId, users.id))
-              .where(eq(subtasks.moduleId, milestoneModule[0].id))
+            .where(eq(subtasks.milestoneId, milestone.id))
           .orderBy(asc(subtasks.createdAt));
 
-            milestoneSubtasks = subtasksWithUsers.map(row => ({
+          const milestoneSubtasks = subtasksWithUsers.map(row => ({
             id: row.subtask.id,
             name: row.subtask.name,
             description: row.subtask.description,
@@ -4897,7 +4922,6 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
             assignedUser: row.assignedUser,
             completedAt: row.subtask.completedAt
             }));
-          }
 
           // Convert milestone to module-like object with direct subtasks
           return {
@@ -4917,6 +4941,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
             projectId: milestone.projectId,
             phaseNumber: phaseNumber,
             phaseName: phaseName,
+            milestoneId: milestone.id,
             progressPercent: 0,
             createdAt: milestone.createdAt,
             updatedAt: milestone.updatedAt,
@@ -4927,7 +4952,9 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
             expectedCollectionDate: milestone.expectedCollectionDate,
             isMilestone: true,
             // Empty modules array since these phases don't have modules
-            modules: []
+            modules: [],
+            // Also expose direct subtasks here for milestone editing UIs
+            milestoneSubtasks: milestoneSubtasks
           } as any;
         }
       })

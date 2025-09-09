@@ -5,11 +5,21 @@ const { pgTable, varchar, text, timestamp, integer, decimal, boolean } = require
 require('dotenv').config();
 
 // Database connection
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/taskflow';
+let connectionString = process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/taskflow';
+try {
+  const u = new URL(connectionString);
+  if (u.searchParams.has('schema')) u.searchParams.delete('schema');
+  connectionString = u.toString();
+} catch {}
 const postgresClient = postgres(connectionString);
 const db = drizzle(postgresClient);
 
 // Define schema tables inline (copied from working populate script)
+const users = pgTable('users', {
+  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
+  email: varchar('email').notNull(),
+  role: varchar('role', { length: 20 }).notNull().default('employee'),
+});
 const projects = pgTable('projects', {
   id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
   name: varchar('name', { length: 200 }).notNull(),
@@ -78,6 +88,25 @@ async function fixPhase3MilestoneAssociations() {
     const allProjects = await db.select().from(projects);
     console.log(`📊 Found ${allProjects.length} projects`);
     
+    // Resolve a valid creator user for default milestones
+    let defaultCreatorId = null;
+    try {
+      const fc = await db.select().from(users).where(eq(users.email, 'laxusnobody457@gmail.com'));
+      if (fc.length > 0) {
+        defaultCreatorId = fc[0].id;
+      } else {
+        const admins = await db.select().from(users).where(eq(users.role, 'admin'));
+        if (admins.length > 0) defaultCreatorId = admins[0].id;
+      }
+      if (!defaultCreatorId) {
+        const anyUser = await db.select().from(users).limit(1);
+        if (anyUser.length > 0) defaultCreatorId = anyUser[0].id;
+      }
+    } catch {}
+    if (!defaultCreatorId) {
+      throw new Error('No valid user found to set as created_by_id for default milestones');
+    }
+    
     for (const project of allProjects) {
       console.log(`\n🏗️  Processing project: ${project.name} (${project.id})`);
       
@@ -94,9 +123,6 @@ async function fixPhase3MilestoneAssociations() {
         console.log('   ⚠️  No milestones found for this project!');
         console.log('   🔧 Creating default Phase 3 milestones...');
         
-        // Use a default user ID for createdById (you can change this to a real user ID)
-        const createdById = 'system-user-id';
-        
         // Create default Phase 3 milestones if none exist
         const defaultMilestones = [
           {
@@ -109,7 +135,7 @@ async function fixPhase3MilestoneAssociations() {
             expectedInvoiceDate: new Date('2026-03-20'),
             expectedCollectionDate: new Date('2026-04-19'),
             projectId: project.id,
-            createdById: createdById
+            createdById: defaultCreatorId
           },
           {
             name: 'Financial System',
@@ -121,7 +147,7 @@ async function fixPhase3MilestoneAssociations() {
             expectedInvoiceDate: new Date('2026-06-20'),
             expectedCollectionDate: new Date('2026-07-19'),
             projectId: project.id,
-            createdById: createdById
+            createdById: defaultCreatorId
           },
           {
             name: 'Academic Management',
@@ -133,7 +159,7 @@ async function fixPhase3MilestoneAssociations() {
             expectedInvoiceDate: new Date('2026-08-20'),
             expectedCollectionDate: new Date('2026-09-19'),
             projectId: project.id,
-            createdById: createdById
+            createdById: defaultCreatorId
           }
         ];
         

@@ -125,9 +125,44 @@ const milestones = pgTable('milestones', {
 });
 
 // Database connection
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/taskflow';
+let connectionString = process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/taskflow';
+try {
+  const u = new URL(connectionString);
+  // Remove unsupported GUC param used by Neon URLs
+  if (u.searchParams.has('schema')) u.searchParams.delete('schema');
+  connectionString = u.toString();
+} catch {}
 const client = postgres(connectionString);
 const db = drizzle(client);
+
+// Neon team snapshot to replicate locally
+const neonTeamSpec = {
+  name: 'Full Stack Devs 2',
+  segment: 'academic',
+  description: 'Deploy',
+  members: [
+    { email: 'nobodylaxus@gmail.com', firstName: 'Muchangi', lastName: 'mwenja', teamRole: 'BC Developer', userRole: 'employee' },
+    { email: 'laxusnobody457@gmail.com', firstName: 'Matthew', lastName: 'muchangi', teamRole: 'Functional Consultant', userRole: 'employee' },
+    { email: 'brandmwenja@gmail.com', firstName: 'Project', lastName: 'Manager', teamRole: 'Functional Consultant', userRole: 'project_manager' },
+    { email: 'forcursor7@gmail.com', firstName: 'nobody', lastName: 'laxus', teamRole: 'Portal Developer', userRole: 'employee' },
+    { email: 'sheisjeniffer@gmail.com', firstName: 'Academic', lastName: 'Leader', teamRole: 'Account Manager', userRole: 'segment_leader' },
+  ],
+};
+
+async function createOrGetUserByEmail(email, firstName, lastName, role) {
+  const existing = await db.select().from(users).where(eq(users.email, email));
+  if (existing.length > 0) return existing[0];
+  const [created] = await db.insert(users).values({
+    email,
+    password: 'temp123',
+    firstName: firstName || null,
+    lastName: lastName || null,
+    role: role || 'employee',
+    isActive: true,
+  }).returning();
+  console.log(`   👤 Created user ${email}`);
+  return created;
+}
 
 // Helper function to add days to a date
 function addDays(date, days) {
@@ -660,29 +695,56 @@ async function populateDatabase() {
   console.log('🚀 Starting Maseno University ERP System Project Population...');
 
   try {
-    // Step 1: Find existing FC user
+    // Step 1: Ensure FC user exists (from Neon team snapshot)
     console.log('👤 Finding FC user...');
-    const fcUsers = await db.select().from(users).where(eq(users.email, 'laxusnobody457@gmail.com'));
-    
-    if (fcUsers.length === 0) {
-      throw new Error('FC user (laxusnobody457@gmail.com) not found. Please create this user first.');
-    }
-    
-    const fcUser = fcUsers[0];
+    const fcEmail = 'laxusnobody457@gmail.com';
+    const fcSeed = neonTeamSpec.members.find(m => m.email === fcEmail) || { firstName: null, lastName: null, userRole: 'employee' };
+    const fcUser = await createOrGetUserByEmail(fcEmail, fcSeed.firstName, fcSeed.lastName, fcSeed.userRole);
     console.log(`✅ Found FC user: ${fcUser.firstName} ${fcUser.lastName}`);
 
-    // Step 2: Find existing academic team "Full Stack Devs 2"
-    console.log('🏗️ Finding academic team...');
-    const academicTeams = await db.select().from(teams).where(
-      and(eq(teams.name, 'Full Stack Devs 2'), eq(teams.segment, 'academic'))
-    );
-    
-    if (academicTeams.length === 0) {
-      throw new Error('Academic team "Full Stack Devs 2" not found. Please create this team first.');
+    // Step 2: Ensure academic team exists (replicate Neon team exactly)
+    console.log('🏗️ Ensuring academic team exists...');
+
+    // Find or create the team
+    let academicTeam;
+    {
+      const found = await db.select().from(teams).where(
+        and(eq(teams.name, neonTeamSpec.name), eq(teams.segment, neonTeamSpec.segment))
+      );
+      if (found.length === 0) {
+        const [createdTeam] = await db.insert(teams).values({
+          name: neonTeamSpec.name,
+          description: neonTeamSpec.description,
+          segment: neonTeamSpec.segment,
+        }).returning();
+        academicTeam = createdTeam;
+        console.log(`✅ Created academic team: ${academicTeam.name}`);
+      } else {
+        academicTeam = found[0];
+        // Update description if differs
+        if (academicTeam.description !== neonTeamSpec.description) {
+          await db.update(teams).set({ description: neonTeamSpec.description }).where(eq(teams.id, academicTeam.id));
+          academicTeam.description = neonTeamSpec.description;
+        }
+        console.log(`✅ Found academic team: ${academicTeam.name}`);
+      }
     }
-    
-    const academicTeam = academicTeams[0];
-    console.log(`✅ Found academic team: ${academicTeam.name}`);
+
+    // Ensure exact membership exists (idempotent)
+    for (const m of neonTeamSpec.members) {
+      const user = await createOrGetUserByEmail(m.email, m.firstName, m.lastName, m.userRole);
+      const existingMember = await db
+        .select()
+        .from(teamMembers)
+        .where(and(eq(teamMembers.teamId, academicTeam.id), eq(teamMembers.userId, user.id)));
+      if (existingMember.length === 0) {
+        await db.insert(teamMembers).values({ teamId: academicTeam.id, userId: user.id, role: m.teamRole });
+        console.log(`   👥 Added ${m.email} as ${m.teamRole}`);
+      } else if (existingMember[0].role !== m.teamRole) {
+        await db.update(teamMembers).set({ role: m.teamRole }).where(and(eq(teamMembers.teamId, academicTeam.id), eq(teamMembers.userId, user.id)));
+        console.log(`   🔄 Updated role for ${m.email} to ${m.teamRole}`);
+      }
+    }
 
     // Step 3: Get team members (developers)
     console.log('👥 Finding team developers...');

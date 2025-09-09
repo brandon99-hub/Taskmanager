@@ -411,7 +411,8 @@ export const subtasks = pgTable("subtasks", {
 	actualHours: integer("actual_hours").default(0),
 	actualDays: integer("actual_days").default(0),
 	progressPercent: integer("progress_percent").default(0).notNull(),
-	moduleId: varchar("module_id").notNull(),
+	moduleId: varchar("module_id"),
+	milestoneId: varchar("milestone_id"),
 	assignedUserId: varchar("assigned_user_id"),
 	assignedDevId: varchar("assigned_dev_id"),
 	assignedConsultantId: varchar("assigned_consultant_id"),
@@ -424,6 +425,11 @@ export const subtasks = pgTable("subtasks", {
 			columns: [table.moduleId],
 			foreignColumns: [modules.id],
 			name: "subtasks_module_id_modules_id_fk"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.milestoneId],
+			foreignColumns: [milestones.id],
+			name: "subtasks_milestone_id_milestones_id_fk"
 		}).onDelete("cascade"),
 	foreignKey({
 			columns: [table.assignedUserId],

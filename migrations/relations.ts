@@ -208,6 +208,10 @@ export const subtasksRelations = relations(subtasks, ({one, many}) => ({
 		fields: [subtasks.moduleId],
 		references: [modules.id]
 	}),
+	milestone: one(milestones, {
+		fields: [subtasks.milestoneId],
+		references: [milestones.id]
+	}),
 	user_assignedUserId: one(users, {
 		fields: [subtasks.assignedUserId],
 		references: [users.id],

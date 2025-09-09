@@ -243,6 +243,9 @@ export const milestones = pgTable("milestones", {
   // Date fields
   startDate: timestamp("start_date"),
   endDate: timestamp("end_date"),
+  // Phase attribution (user-controlled)
+  phaseNumber: integer("phase_number"),
+  phaseName: varchar("phase_name", { length: 100 }),
   // Financials / billing fields moved here from modules
   feeAmount: decimal("fee_amount", { precision: 12, scale: 2 }),
   billingStatus: billingStatusEnum("billing_status").notNull().default("none"),
@@ -329,7 +332,8 @@ export const subtasks = pgTable("subtasks", {
   actualHours: integer("actual_hours").default(0),
   actualDays: integer("actual_days").default(0),
   progressPercent: integer("progress_percent").notNull().default(0),
-  moduleId: varchar("module_id").references(() => modules.id, { onDelete: 'cascade' }).notNull(),
+  moduleId: varchar("module_id").references(() => modules.id, { onDelete: 'cascade' }),
+  milestoneId: varchar("milestone_id").references(() => milestones.id, { onDelete: 'cascade' }),
   assignedUserId: varchar("assigned_user_id").references(() => users.id),
   assignedDevId: varchar("assigned_dev_id").references(() => users.id), // Developer assigned to subtask
   assignedConsultantId: varchar("assigned_consultant_id").references(() => users.id), // Functional consultant assigned to subtask

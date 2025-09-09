@@ -11,7 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PriorityBadge from "@/components/ui/priority-badge";
-import { Filter, Search, ExternalLink, Briefcase, ClipboardList, Zap, Eye, CheckCircle, AlertTriangle, ChevronRight, Calendar, User, ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
+import { Filter, Search, ExternalLink, Briefcase, ClipboardList, Zap, Eye, CheckCircle, AlertTriangle, ChevronRight, Calendar, User, ChevronLeft, ChevronRight as ChevronRightIcon, List as ListIcon, LayoutGrid as LayoutGridIcon } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useLocation } from "wouter";
 import { useState } from "react";
@@ -26,12 +26,17 @@ export default function KanbanBoard() {
   const { isMobile, isTablet } = useScreenSize();
 
   // View toggle state for modules vs subtasks
-  const [viewMode, setViewMode] = useState<'modules' | 'subtasks'>('modules');
+  const [viewMode, setViewMode] = useState<'milestones' | 'modules' | 'subtasks'>('modules');
+  // Layout toggle state for Kanban vs List
+  const [layoutMode, setLayoutMode] = useState<'kanban' | 'list'>('kanban');
 
   // Get terminology based on dashboard type and view mode
   const getTaskTerminology = () => {
     if (viewMode === 'subtasks') {
       return { singular: 'subtask', plural: 'subtasks', title: 'Subtasks' };
+    }
+    if (viewMode === 'milestones') {
+      return { singular: 'milestone', plural: 'milestones', title: 'Milestones' };
     }
     
     switch (dashboardType) {
@@ -75,14 +80,18 @@ export default function KanbanBoard() {
     }] : []),
     { 
       id: 'review', 
-      title: (viewMode === 'subtasks' && currentUser?.role === 'employee') ? 'FC Review' : 'Client Review', 
+      title: (viewMode === 'milestones') 
+        ? 'Sent' 
+        : (viewMode === 'subtasks') 
+          ? 'FC Review' 
+          : 'Client Review', 
       mobileTitle: 'Review',
       color: 'bg-blue-50', 
       icon: Eye 
     },
     { 
       id: 'recentlyDone', 
-      title: 'Recently Done', 
+      title: viewMode === 'milestones' ? 'Paid' : 'Recently Done', 
       mobileTitle: 'Done',
       color: 'bg-green-50', 
       icon: CheckCircle 
@@ -100,24 +109,33 @@ export default function KanbanBoard() {
 
   const itemsPerPage = 3;
 
-  // Enhanced kanban task fetching with view mode support
-  const { data: kanbanTasks, isLoading, error } = useQuery<{
-    overdue: any[];
-    review: any[];
-    recentlyDone: any[];
-    highPriorityTodo: any[];
-    fcReview?: any[];
-  }>({
-    queryKey: ['/api/dashboard/kanban-tasks', viewMode],
+  // Fetch milestones/modules/subtasks feeds for the critical board
+  const { data: milestonesKanban, isLoading: milestonesLoading } = useQuery<any>({
+    queryKey: ['/api/milestones', 'kanban'],
     queryFn: async () => {
-      const endpoint = viewMode === 'subtasks' ? '/api/dashboard/kanban-subtasks' : '/api/dashboard/kanban-tasks';
-      const response = await fetch(endpoint, { credentials: 'include' });
-      if (!response.ok) throw new Error('Failed to fetch kanban data');
-      return response.json();
-    },
+      const res = await fetch('/api/milestones', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed milestones');
+      return res.json(); // array of milestones
+    }
+  });
+  const { data: modulesKanban, isLoading: modulesLoading } = useQuery<any>({
+    queryKey: ['/api/dashboard/kanban-tasks'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard/kanban-tasks', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed modules');
+      return res.json();
+    }
+  });
+  const { data: subtasksKanban, isLoading: subtasksLoading } = useQuery<any>({
+    queryKey: ['/api/dashboard/kanban-subtasks'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard/kanban-subtasks', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed subtasks');
+      return res.json();
+    }
   });
 
-
+  const isLoading = Boolean(milestonesLoading || modulesLoading || (currentUser?.role === 'employee' && subtasksLoading));
 
   const updateTaskMutation = useMutation({
     mutationFn: async ({ taskId, status }: { taskId: string; status: string }) => {
@@ -157,6 +175,26 @@ export default function KanbanBoard() {
     },
   });
 
+  const updateMilestoneBillingMutation = useMutation({
+    mutationFn: async ({ milestoneId, billingStatus }: { milestoneId: string; billingStatus: string }) => {
+      const response = await apiRequest('PUT', `/api/milestones/${milestoneId}/billing-status`, { billingStatus });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/milestones'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/dashboard/kanban-milestones'] });
+      toast({ title: 'Success', description: 'Milestone billing status updated' });
+    },
+    onError: (error) => {
+      if (isUnauthorizedError(error)) {
+        toast({ title: 'Unauthorized', description: 'You are logged out. Logging in again...', variant: 'destructive' });
+        setTimeout(() => { window.location.href = '/login'; }, 500);
+        return;
+      }
+      toast({ title: 'Error', description: 'Failed to update milestone status', variant: 'destructive' });
+    }
+  });
+
   const handleTaskStatusChange = (taskId: string, newStatus: string) => {
     // Map column IDs to actual database status values
     const statusMapping: Record<string, string> = {
@@ -175,19 +213,54 @@ export default function KanbanBoard() {
     return name.split(' ').map(n => n[0]).join('').toUpperCase();
   };
 
-  const tasksByStatus = statusColumns.reduce((acc, column) => {
-    const tasks = kanbanTasks?.[column.id as keyof typeof kanbanTasks] || [];
-    // Sort by deadline proximity (closest deadline first)
-    const sortedTasks = tasks.sort((a, b) => {
-      const aDueDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const bDueDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      return aDueDate - bDueDate;
+  const mergeColumn = (id: string) => {
+    const out: any[] = [];
+    if (viewMode === 'milestones') {
+      const list: any[] = Array.isArray(milestonesKanban) ? milestonesKanban : [];
+      const today = new Date();
+      const withinDays = (d?: any, n = 7) => {
+        if (!d) return false; const dt = new Date(d); const diff = (dt.getTime() - today.getTime()) / 86400000; return diff >= 0 && diff <= n;
+      };
+      const filterByColumn = (m: any) => {
+        const status = (m.billingStatus || 'none');
+        if (id === 'overdue') return status !== 'paid' && m.expectedCollectionDate && new Date(m.expectedCollectionDate) < today;
+        if (id === 'highPriorityTodo') return (m.priority === 'high' || m.priority === 'critical') || withinDays(m.endDate, 7);
+        if (id === 'review') return status === 'sent' || status === 'processing';
+        if (id === 'recentlyDone') return status === 'paid';
+        return false;
+      };
+      out.push(...list.filter(filterByColumn).map(x => ({ ...x, _type: 'milestone' })));
+    } else if (viewMode === 'modules') {
+      if (modulesKanban?.[id]) {
+        const list = modulesKanban[id]
+          .filter((x: any) => (x.isMilestone !== true) && (x.billingStatus === undefined) && (x.phaseNumber === 3))
+          .map((x: any) => ({ ...x, _type: 'module' }));
+        // Strictly exclude subtasks from modules feed
+        out.push(...list.filter((x: any) => !x.assignedUser && !x.parentSubtaskId));
+      }
+    } else if (viewMode === 'subtasks') {
+      if (subtasksKanban?.[id]) {
+        // Ensure every item is typed as subtask and exclude anything that has billingStatus or isMilestone
+        const list = subtasksKanban[id]
+          .filter((x: any) => !x.isMilestone && x.billingStatus === undefined)
+          .map((x: any) => ({ ...x, _type: 'subtask' }));
+        out.push(...list);
+      }
+    }
+    // due date for sort
+    return out.sort((a, b) => {
+      const ad = a.dueDate || a.expectedCollectionDate || a.expectedInvoiceDate;
+      const bd = b.dueDate || b.expectedCollectionDate || b.expectedInvoiceDate;
+      const at = ad ? new Date(ad).getTime() : Infinity;
+      const bt = bd ? new Date(bd).getTime() : Infinity;
+      return at - bt;
     });
-    acc[column.id] = sortedTasks;
+  };
+
+  const tasksByStatus = statusColumns.reduce((acc, column) => {
+    acc[column.id] = mergeColumn(column.id);
     return acc;
   }, {} as Record<string, any[]>);
-
-
 
   // Get board title based on user role
   const getBoardTitle = () => {
@@ -273,62 +346,64 @@ export default function KanbanBoard() {
             )}
           </div>
           <div className="flex space-x-2">
-            {/* View Toggle for Modules vs Subtasks */}
-            <div className="flex bg-gray-100 rounded-lg p-1">
+            {/* View Toggle for Milestones / Modules / Subtasks */}
+            <div className="flex bg-gray-100 rounded-full p-1 border border-gray-200 shadow-inner">
+              <Button
+                variant={viewMode === 'milestones' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setViewMode('milestones')}
+                className={`text-xs px-3 h-8 rounded-full flex items-center space-x-1 ${viewMode === 'milestones' ? 'bg-primary text-white hover:bg-primary' : 'hover:bg-gray-200'}`}
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                <span>Milestones</span>
+              </Button>
               <Button
                 variant={viewMode === 'modules' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => setViewMode('modules')}
-                className="text-xs"
+                className={`text-xs px-3 h-8 rounded-full flex items-center space-x-1 ${viewMode === 'modules' ? 'bg-primary text-white hover:bg-primary' : 'hover:bg-gray-200'}`}
               >
-                Modules
+                <ClipboardList className="h-3.5 w-3.5" />
+                <span>Modules</span>
               </Button>
               <Button
                 variant={viewMode === 'subtasks' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => setViewMode('subtasks')}
-                className="text-xs"
+                className={`text-xs px-3 h-8 rounded-full flex items-center space-x-1 ${viewMode === 'subtasks' ? 'bg-primary text-white hover:bg-primary' : 'hover:bg-gray-200'}`}
               >
-                Subtasks
+                <ListIcon className="h-3.5 w-3.5" />
+                <span>Subtasks</span>
               </Button>
             </div>
-            
-            <Tooltip>
-              <TooltipTrigger asChild>
+            {/* Layout Toggle for Kanban / List */}
+            <div className="flex bg-gray-100 rounded-full p-1 border border-gray-200 shadow-inner">
                 <Button 
-                  variant="ghost" 
+                variant={layoutMode === 'kanban' ? 'default' : 'ghost'}
                   size="sm" 
-                  data-testid="button-kanban-filter"
-                  onClick={() => setLocation('/tasks')}
+                onClick={() => setLayoutMode('kanban')}
+                className={`text-xs px-3 h-8 rounded-full flex items-center space-x-1 ${layoutMode === 'kanban' ? 'bg-primary text-white hover:bg-primary' : 'hover:bg-gray-200'}`}
                 >
-                  <Filter className="h-4 w-4" />
+                <LayoutGridIcon className="h-3.5 w-3.5" />
+                <span>Kanban</span>
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                 <p>Filter and search all {taskTerms.plural}</p>
-              </TooltipContent>
-            </Tooltip>
-            
-            <Tooltip>
-              <TooltipTrigger asChild>
                 <Button 
-                  variant="ghost" 
+                variant={layoutMode === 'list' ? 'default' : 'ghost'}
                   size="sm" 
-                  data-testid="button-kanban-view-all"
-                  onClick={() => setLocation('/tasks')}
+                onClick={() => setLayoutMode('list')}
+                className={`text-xs px-3 h-8 rounded-full flex items-center space-x-1 ${layoutMode === 'list' ? 'bg-primary text-white hover:bg-primary' : 'hover:bg-gray-200'}`}
                 >
-                  <ExternalLink className="h-4 w-4" />
+                <ListIcon className="h-3.5 w-3.5" />
+                <span>List</span>
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                 <p>View all {taskTerms.plural}</p>
-              </TooltipContent>
-            </Tooltip>
+            </div>
+            
+            {/* Removed filter and view-all buttons */}
           </div>
         </div>
       </CardHeader>
       <CardContent className={isMobile ? 'p-4' : ''}>
-        {/* Enhanced scrollable container with full card visibility */}
+        {layoutMode === 'kanban' ? (
         <div className="relative">
           {/* Scroll indicator for desktop */}
           {!isMobile && (
@@ -405,7 +480,10 @@ export default function KanbanBoard() {
                           {/* Task/Subtask */}
                           <div className="flex items-center space-x-1 text-xs text-gray-700 ml-2">
                             <span className="font-medium truncate">{task.name}</span>
-                          </div>
+                              {task.phaseNumber && (
+                                <Badge variant="outline" className="ml-2 text-[10px]">Phase {task.phaseNumber}</Badge>
+                              )}
+                            </div>
                         </div>
                         
                         <div className="flex items-start justify-between mb-2">
@@ -433,7 +511,8 @@ export default function KanbanBoard() {
                         
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-2 min-w-0 flex-1">
-                            {task.assignedUser ? (
+                              {task._type === 'subtask' ? (
+                                task.assignedUser ? (
                               <>
                                 <Avatar className={`${isMobile ? 'w-5 h-5' : 'w-6 h-6'} border-2 border-white flex-shrink-0`}>
                                   <AvatarImage src={task.assignedUser.profileImageUrl} />
@@ -456,28 +535,82 @@ export default function KanbanBoard() {
                                 <User className="h-3 w-3" />
                                 <span>{isMobile ? 'None' : 'Unassigned'}</span>
                               </div>
+                                )
+                              ) : (
+                                task._type === 'module' && (
+                                  <span className="text-xs text-gray-600 truncate">
+                                    Start: {task.startDate ? new Date(task.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'} · End: {(task.dueDate || task.endDate) ? new Date(task.dueDate || task.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                                  </span>
+                                )
                             )}
                           </div>
                           
-                          {task.dueDate && (
-                            <span 
-                              className={`text-xs px-2 py-1 rounded ${
-                                new Date(task.dueDate) < new Date() && task.status !== 'done'
-                                  ? 'bg-red-100 text-red-800 font-medium'
-                                  : 'text-gray-500'
-                              }`} 
-                              data-testid={`text-task-due-${task.id}`}
-                            >
-                              {new Date(task.dueDate) < new Date() && task.status !== 'done' 
-                                ? 'OVERDUE' 
-                                : new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                              }
-                            </span>
+                            {/* Removed single-date badge beside Start/End to avoid duplication */}
+                          </div>
+                          {task._type === 'subtask' && (
+                            <div className="mt-1 text-[11px] text-gray-500">
+                              {(() => {
+                                const today = new Date();
+                                const end = task.dueDate ? new Date(task.dueDate) : null;
+                                const isOverdue = end ? end.getTime() < today.getTime() : false;
+                                const isSoon = end ? (end.getTime() - today.getTime()) / 86400000 <= 7 && (end.getTime() - today.getTime()) > 0 : false;
+                                const endCls = isOverdue ? 'text-red-600' : isSoon ? 'text-orange-600' : 'text-gray-500';
+                                return (
+                                  <>
+                                    Start: {task.startDate ? new Date(task.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'} · <span className={endCls}>End: {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</span>
+                                  </>
+                                );
+                              })()}
+                            </div>
                           )}
+                          {task._type === 'milestone' && (
+                            <div className="mt-2">
+                              {(() => {
+                                const pct = Math.max(0, Math.min(100, Math.round(Number(task.progress || 0))));
+                                const today = new Date();
+                                const end = task.endDate ? new Date(task.endDate) : null;
+                                const isOverdue = end ? end.getTime() < today.getTime() : false;
+                                const isSoon = end ? (end.getTime() - today.getTime()) / 86400000 <= 7 && (end.getTime() - today.getTime()) > 0 : false;
+                                const endCls = isOverdue ? 'text-red-600' : isSoon ? 'text-orange-600' : 'text-gray-500';
+                                return (
+                                  <>
+                                    <div className="text-[11px] text-gray-500">Start: {task.startDate ? new Date(task.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'} · <span className={endCls}>End: {(task.dueDate || task.endDate) ? new Date(task.dueDate || task.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</span></div>
+                                    <Progress value={pct} className="h-1 mt-1" />
+                                    <div className="text-[11px] text-gray-500 mt-1">Progress: {pct}%</div>
+                                  </>
+                                );
+                              })()}
                         </div>
+                          )}
                         
                         {/* Status control: dropdown */}
                         <div className="pt-1">
+                            {task._type === 'milestone' ? (
+                              <Select
+                                value={task.billingStatus || 'none'}
+                                disabled={updateMilestoneBillingMutation.isPending}
+                                onValueChange={(value) => updateMilestoneBillingMutation.mutate({ milestoneId: task.id, billingStatus: value })}
+                              >
+                                <SelectTrigger className={`w-full h-8 text-xs ${updateMilestoneBillingMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                                  {updateMilestoneBillingMutation.isPending ? (
+                                    <div className="flex items-center">
+                                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600 mr-1"></div>
+                                      <span className="text-xs text-gray-500">Processing...</span>
+                                    </div>
+                                  ) : (
+                                    <SelectValue />
+                                  )}
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">Not Sent</SelectItem>
+                                  <SelectItem value="to_send">To Send</SelectItem>
+                                  <SelectItem value="sent">Invoice Sent</SelectItem>
+                                  <SelectItem value="processing">Processing</SelectItem>
+                                  <SelectItem value="paid">Paid</SelectItem>
+                                  <SelectItem value="overdue">Overdue</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
                           <Select
                             value={task.status}
                             disabled={updateTaskMutation.isPending}
@@ -518,6 +651,7 @@ export default function KanbanBoard() {
                       <SelectItem value="cancelled">Cancelled</SelectItem>
                     </SelectContent>
                           </Select>
+                            )}
                         </div>
                       </CardContent>
                     </Card>
@@ -563,6 +697,172 @@ export default function KanbanBoard() {
           })}
           </div>
         </div>
+        ) : (
+          <div className="w-full">
+            {(() => {
+              const orderedIds = statusColumns.map(c => c.id);
+              // Flatten with type guards and dedupe by id+_type to prevent repeats when items appear in multiple columns
+              const flatRaw: any[] = orderedIds.flatMap(id => tasksByStatus[id] || []);
+              const flatFiltered = flatRaw.filter((x: any) => {
+                if (viewMode === 'milestones') return x._type === 'milestone';
+                if (viewMode === 'modules') return x._type === 'module';
+                return x._type === 'subtask';
+              });
+              const seen = new Set<string>();
+              const flat = flatFiltered.filter((x: any) => {
+                const key = `${x._type}:${x.id}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
+              if (flat.length === 0) {
+                return (
+                  <div className="text-center py-8 text-gray-500" data-testid="text-empty-list">
+                    No {taskTerms.plural} to display
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-2">
+                  {flat.map((task: any) => (
+                    <div key={task.id} className="flex items-start justify-between bg-white border border-gray-200 rounded-md px-3 py-2 hover:bg-gray-50 cursor-pointer" onClick={() => setLocation(`/projects/${task.project.id}?task=${task.id}`)}>
+                      <div className="min-w-0">
+                        <div className="flex items-center space-x-2 text-xs text-blue-600">
+                          <Briefcase className="h-3 w-3" />
+                          <span className="font-medium truncate max-w-[260px]">{task.project?.name || 'No Project'}</span>
+                        </div>
+                        {viewMode === 'subtasks' && task.module && (
+                          <div className="flex items-center space-x-2 text-[11px] text-green-700 ml-5 mt-0.5">
+                            <ClipboardList className="h-3 w-3" />
+                            <span className="truncate max-w-[260px]">{task.module.name}</span>
+                          </div>
+                        )}
+                        <div className="text-sm text-gray-900 ml-5 mt-0.5 truncate max-w-[420px]">{task.name} {task.phaseNumber && (<Badge variant="outline" className="ml-2 text-[10px]">Phase {task.phaseNumber}</Badge>)}</div>
+                        {task._type === 'subtask' && (
+                          <div className="mt-1 text-[11px] text-gray-500 ml-5">
+                            {(() => {
+                              const today = new Date();
+                              const end = task.dueDate ? new Date(task.dueDate) : null;
+                              const isOverdue = end ? end.getTime() < today.getTime() : false;
+                              const isSoon = end ? (end.getTime() - today.getTime()) / 86400000 <= 7 && (end.getTime() - today.getTime()) > 0 : false;
+                              const endCls = isOverdue ? 'text-red-600' : isSoon ? 'text-orange-600' : 'text-gray-500';
+                              return (
+                                <>
+                                  Start: {task.startDate ? new Date(task.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'} · <span className={endCls}>End: {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</span>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                        {(task._type === 'milestone' || task._type === 'module') && (
+                          <div className="mt-1 text-[11px] text-gray-500 ml-5">
+                            {(() => {
+                              const today = new Date();
+                              const end = (task.dueDate || task.endDate) ? new Date(task.dueDate || task.endDate) : null;
+                              const isOverdue = end ? end.getTime() < today.getTime() : false;
+                              const isSoon = end ? (end.getTime() - today.getTime()) / 86400000 <= 7 && (end.getTime() - today.getTime()) > 0 : false;
+                              const endCls = isOverdue ? 'text-red-600' : isSoon ? 'text-orange-600' : 'text-gray-500';
+                              return (
+                                <>
+                                  Start: {task.startDate ? new Date(task.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'} · <span className={endCls}>End: {(task.dueDate || task.endDate) ? new Date(task.dueDate || task.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</span>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                        {task._type === 'milestone' && (
+                          <div className="mt-1 ml-5">
+                            {(() => {
+                              const pct = Math.max(0, Math.min(100, Math.round(Number(task.progress || 0))));
+                              return (
+                                <>
+                                  <Progress value={pct} className="h-1" />
+                                  <div className="text-[11px] text-gray-500 mt-1">Progress: {pct}%</div>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        {task._type === 'subtask' && (
+                          task.assignedUser ? (
+                            <div className="flex items-center space-x-1">
+                              <Avatar className="w-6 h-6 border-2 border-white">
+                                <AvatarImage src={task.assignedUser.profileImageUrl} />
+                                <AvatarFallback className="text-[10px]">
+                                  {getInitials(task.assignedUser.firstName && task.assignedUser.lastName 
+                                    ? `${task.assignedUser.firstName} ${task.assignedUser.lastName}`
+                                    : task.assignedUser.email || 'U'
+                                  )}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="text-xs text-gray-700">
+                                {task.assignedUser.firstName || task.assignedUser.email?.split('@')[0]}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center space-x-1 text-xs text-gray-500">
+                              <User className="h-3 w-3" />
+                              <span>Unassigned</span>
+                            </div>
+                          )
+                        )}
+                        <div className="min-w-[140px]">
+                          {task._type === 'milestone' ? (
+                            <Select
+                              value={task.billingStatus || 'none'}
+                              disabled={updateMilestoneBillingMutation.isPending}
+                              onValueChange={(value) => updateMilestoneBillingMutation.mutate({ milestoneId: task.id, billingStatus: value })}
+                            >
+                              <SelectTrigger className={`h-8 text-xs ${updateMilestoneBillingMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Not Sent</SelectItem>
+                                <SelectItem value="to_send">To Send</SelectItem>
+                                <SelectItem value="sent">Invoice Sent</SelectItem>
+                                <SelectItem value="processing">Processing</SelectItem>
+                                <SelectItem value="paid">Paid</SelectItem>
+                                <SelectItem value="overdue">Overdue</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Select
+                              value={task.status}
+                              disabled={updateTaskMutation.isPending}
+                              onValueChange={(value) => handleTaskStatusChange(task.id, value === 'qa' && viewMode === 'modules' ? 'client_review' : value)}
+                            >
+                              <SelectTrigger className={`h-8 text-xs ${updateTaskMutation.isPending ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="not_started">Not Started</SelectItem>
+                                <SelectItem value="in_progress">In Progress</SelectItem>
+                                <SelectItem value="fc_review">FC Review</SelectItem>
+                                {viewMode === 'modules' && (
+                                  <>
+                                    <SelectItem value="qa">QA</SelectItem>
+                                    <SelectItem value="client_review">Client Review</SelectItem>
+                                  </>
+                                )}
+                                <SelectItem value="completed">Completed</SelectItem>
+                                <SelectItem value="overdue">Overdue</SelectItem>
+                                <SelectItem value="on_hold">On Hold</SelectItem>
+                                <SelectItem value="cancelled">Cancelled</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </div>
+                        <PriorityBadge priority={task.priority} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

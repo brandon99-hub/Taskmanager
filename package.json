@@ -13,9 +13,14 @@
     "setup:admin": "node scripts/create-admin.js",
     "fix:passwords": "node scripts/hash-existing-passwords.js",
     "import:projects": "node scripts/import-projects-simple.js",
+    "import:subtasks:condensed": "node scripts/import-condensed-subtasks.js",
+    "fix:condensed": "node scripts/fix-condensed-import.js",
+    "restore:condensed:subtasks": "node scripts/restore-condensed-subtasks.js",
+    "normalize:milestones": "node scripts/normalize-milestone-modules.js",
     "test:excel": "node scripts/test-excel-data.js",
     "clear:descriptions": "node scripts/clear-project-descriptions.js",
-    "wipe:projects": "node scripts/wipe-projects-and-teams.js"
+    "wipe:projects": "node scripts/wipe-projects-and-teams.js",
+    "wipe:milestones:non-maseno": "node scripts/wipe-non-maseno-milestones.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

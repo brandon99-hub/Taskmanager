@@ -4,8 +4,8 @@ import { readFile } from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
-// Use process.cwd() as fallback for CommonJS compatibility
-const __dirname = path.dirname(process.cwd());
+// Resolve templates relative to the project root
+const TEMPLATE_ROOT = path.resolve(process.cwd(), 'server', 'templates');
 
 
 export interface EmailNotificationData {
@@ -90,7 +90,7 @@ export class EmailService {
         return this.templates.get(templateName)!;
       }
 
-      const templatePath = path.join(__dirname, '..', 'templates', `${templateName}.hbs`);
+      const templatePath = path.join(TEMPLATE_ROOT, `${templateName}.hbs`);
       const templateContent = await readFile(templatePath, 'utf-8');
       const compiledTemplate = handlebars.compile(templateContent);
       

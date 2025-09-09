@@ -232,6 +232,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Critical billing milestones for dashboard kanban
+  app.get('/api/dashboard/kanban-milestones', isAuthenticated, async (req: any, res) => {
+    try {
+      // Optional filters
+      const projectId = req.query.projectId as string | undefined;
+      const segment = req.query.segment as ('academic'|'parastals'|'private') | undefined;
+
+      const all = await storage.getMilestones();
+
+      // Filter by project/segment if provided
+      const filtered = all.filter((m: any) => {
+        if (projectId && m.project?.id !== projectId) return false;
+        if (segment && m.project?.segment !== segment) return false;
+        return true;
+      });
+
+      const today = new Date();
+      const withinDays = (d?: Date | string | null, n = 7) => {
+        if (!d) return false;
+        const dt = new Date(d as any);
+        const diff = (dt.getTime() - today.getTime()) / (1000*60*60*24);
+        return diff >= 0 && diff <= n;
+      };
+      const olderThanDays = (d?: Date | string | null, n = 5) => {
+        if (!d) return false;
+        const dt = new Date(d as any);
+        const diff = (today.getTime() - dt.getTime()) / (1000*60*60*24);
+        return diff > n;
+      };
+
+      const overdue = filtered.filter((m: any) => m.billingStatus !== 'paid' && (m.expectedCollectionDate && new Date(m.expectedCollectionDate) < today));
+      const highPriority = filtered.filter((m: any) => (m.priority === 'high' || m.priority === 'critical') && withinDays(m.endDate, 7) && m.billingStatus !== 'paid');
+      const review = filtered.filter((m: any) => ['to_send','sent','processing'].includes(m.billingStatus || 'none') && (olderThanDays(m.expectedInvoiceDate, 5) || olderThanDays(m.endDate, 5)));
+      const recentlyDone = filtered.filter((m: any) => m.billingStatus === 'paid' && (m.paymentReceivedAt ? olderThanDays(m.paymentReceivedAt, -7) : withinDays(m.endDate, 7)));
+
+      res.json({ overdue, highPriority, review, recentlyDone });
+    } catch (error) {
+      console.error("Error fetching kanban milestones:", error);
+      res.status(500).json({ message: "Failed to fetch kanban milestones" });
+    }
+  });
+
   // Best performing team endpoint
   app.get('/api/dashboard/best-team', isAuthenticated, async (req: any, res) => {
     try {
@@ -1341,6 +1383,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...req.body,
         projectId: req.params.id,
         createdById: req.user.id,
+        // Allow client to specify phaseNumber/phaseName; do not infer
+        phaseNumber: typeof req.body.phaseNumber === 'number' ? req.body.phaseNumber : req.body.phaseNumber ? Number(req.body.phaseNumber) : null,
+        phaseName: req.body.phaseName || null,
         expectedInvoiceDate: req.body.expectedInvoiceDate ? new Date(req.body.expectedInvoiceDate) : null,
         expectedCollectionDate: req.body.expectedCollectionDate ? new Date(req.body.expectedCollectionDate) : null,
       };
@@ -1546,6 +1591,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Clean and validate date fields
       const cleanedData: any = { ...req.body };
+
+      // Normalize module status: treat QA as client_review
+      if (typeof cleanedData.status === 'string' && cleanedData.status.toLowerCase() === 'qa') {
+        cleanedData.status = 'client_review';
+      }
       
       if (req.body.startDate !== undefined) {
         cleanedData.startDate = req.body.startDate ? new Date(req.body.startDate) : null;
@@ -1578,19 +1628,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Clean and validate date fields
       const cleanedData: any = { ...req.body };
+      // Allow explicit phaseNumber/phaseName from client
+      if (cleanedData.phaseNumber !== undefined) {
+        const n = Number(cleanedData.phaseNumber);
+        cleanedData.phaseNumber = Number.isFinite(n) ? n : null;
+      }
+      if (cleanedData.phaseName !== undefined && cleanedData.phaseName !== null && cleanedData.phaseName !== '') {
+        cleanedData.phaseName = String(cleanedData.phaseName);
+      }
+      // Normalize timestamp fields to Date for drizzle
+      const toDateOrNull = (v: any) => {
+        if (v === undefined || v === null || v === '') return null;
+        if (v instanceof Date) return v;
+        const d = new Date(v);
+        return isNaN(d.getTime()) ? null : d;
+      };
+      if (req.body.startDate !== undefined) {
+        cleanedData.startDate = toDateOrNull(req.body.startDate);
+      }
+      if (req.body.endDate !== undefined) {
+        cleanedData.endDate = toDateOrNull(req.body.endDate);
+      }
       
       if (req.body.expectedInvoiceDate !== undefined) {
-        cleanedData.expectedInvoiceDate = req.body.expectedInvoiceDate ? new Date(req.body.expectedInvoiceDate) : null;
-        if (cleanedData.expectedInvoiceDate && isNaN(cleanedData.expectedInvoiceDate.getTime())) {
+        cleanedData.expectedInvoiceDate = toDateOrNull(req.body.expectedInvoiceDate);
+        if (cleanedData.expectedInvoiceDate && isNaN((cleanedData.expectedInvoiceDate as Date).getTime())) {
           return res.status(400).json({ message: 'Invalid expected invoice date format' });
         }
       }
       
       if (req.body.expectedCollectionDate !== undefined) {
-        cleanedData.expectedCollectionDate = req.body.expectedCollectionDate ? new Date(req.body.expectedCollectionDate) : null;
-        if (cleanedData.expectedCollectionDate && isNaN(cleanedData.expectedCollectionDate.getTime())) {
+        cleanedData.expectedCollectionDate = toDateOrNull(req.body.expectedCollectionDate);
+        if (cleanedData.expectedCollectionDate && isNaN((cleanedData.expectedCollectionDate as Date).getTime())) {
           return res.status(400).json({ message: 'Invalid expected collection date format' });
         }
+      }
+
+      // Normalize numeric fields
+      const toNumberOrNull = (v: any) => {
+        if (v === undefined || v === null || v === '') return null;
+        if (typeof v === 'number') return v;
+        const cleaned = String(v).replace(/[,\s]/g, '');
+        const n = Number(cleaned);
+        return Number.isFinite(n) ? n : null;
+      };
+      if (req.body.feeAmount !== undefined) {
+        cleanedData.feeAmount = toNumberOrNull(req.body.feeAmount);
       }
       
       const milestone = await storage.updateMilestone(req.params.id, cleanedData);
@@ -1598,6 +1681,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating milestone:", error);
       res.status(500).json({ message: "Failed to update milestone" });
+    }
+  });
+
+  // Milestone billing status update (none | to_send | sent | paid)
+  app.put('/api/milestones/:id/billing-status', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const billingStatus = String(req.body.billingStatus || '').toLowerCase();
+      const allowed = ['none','to_send','sent','processing','paid','overdue'];
+      if (!allowed.includes(billingStatus)) {
+        return res.status(400).json({ message: 'Invalid billing status' });
+      }
+      const milestone = await storage.updateMilestone(req.params.id, { billingStatus: billingStatus as any });
+      res.json(milestone);
+    } catch (error) {
+      console.error('Error updating milestone billing status:', error);
+      res.status(500).json({ message: 'Failed to update billing status' });
     }
   });
 
@@ -2125,18 +2227,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Invalid due date format' });
       }
 
-      // Validate module exists (subtasks belong to modules, not milestones)
-      const module = await storage.getModule(cleaned.moduleId);
-      if (!module) {
-        return res.status(400).json({ message: 'Module not found' });
-      }
-
-      // Validate dates against module timeline
-      if (cleaned.startDate && module.startDate && cleaned.startDate < module.startDate) {
-        return res.status(400).json({ message: 'Subtask start cannot be before module start' });
-      }
-      if (cleaned.dueDate && module.dueDate && cleaned.dueDate > module.dueDate) {
-        return res.status(400).json({ message: 'Subtask due date cannot be after module due date' });
+      // Validation path: allow either moduleId (Phase 3) OR milestoneId (other phases)
+      if (cleaned.moduleId) {
+        const module = await storage.getModule(cleaned.moduleId);
+        if (!module) return res.status(400).json({ message: 'Module not found' });
+        if (cleaned.startDate && module.startDate && cleaned.startDate < module.startDate) {
+          return res.status(400).json({ message: 'Subtask start cannot be before module start' });
+        }
+        if (cleaned.dueDate && module.dueDate && cleaned.dueDate > module.dueDate) {
+          return res.status(400).json({ message: 'Subtask due date cannot be after module due date' });
+        }
+      } else if (cleaned.milestoneId) {
+        const milestone = await storage.getMilestone(cleaned.milestoneId);
+        if (!milestone) return res.status(400).json({ message: 'Milestone not found' });
+        if (cleaned.startDate && milestone.startDate && cleaned.startDate < milestone.startDate) {
+          return res.status(400).json({ message: 'Subtask start cannot be before milestone start' });
+        }
+        if (cleaned.dueDate && milestone.endDate && cleaned.dueDate > milestone.endDate) {
+          return res.status(400).json({ message: 'Subtask due date cannot be after milestone end' });
+        }
+      } else {
+        return res.status(400).json({ message: 'Either moduleId or milestoneId is required' });
       }
 
       // Validate FC consultant assignment (optional for now to debug the issue)
