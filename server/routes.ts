@@ -12,6 +12,7 @@ import {
 } from "../shared/schema";
 import { z } from "zod";
 import { generateExcelBuffer } from "./utils/excelExport";
+import path from "path";
 import { notificationService } from "./services/notificationService";
 import { calendarService, GoogleCalendarService } from "./services/calendarService";
 import { calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress } from "../client/src/lib/utils";
@@ -492,11 +493,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: 'Invalid report type' });
       }
 
-      // Generate Excel buffer
+      // Generate Excel buffer (use template for gantt if available)
+      const isGantt = reportType === 'gantt';
+      const templatePath = isGantt ? path.join(__dirname, 'templates', 'gantt-chart(2).xlsx') : undefined;
       const excelBuffer = generateExcelBuffer({
         filename,
         data: exportData,
-        reportType
+        reportType,
+        templatePath,
+        templateSheetName: undefined
       });
 
       // Set response headers for file download
@@ -1379,6 +1384,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Clean and validate date fields
+      const toDateOrNull = (v: any) => {
+        if (v === undefined || v === null || v === '') return null;
+        if (v instanceof Date) return v;
+        const d = new Date(v);
+        return isNaN(d.getTime()) ? null : d;
+      };
+      const toNumberOrNull = (v: any) => {
+        if (v === undefined || v === null || v === '') return null;
+        if (typeof v === 'number') return v;
+        const cleaned = String(v).replace(/[,\s]/g, '');
+        const n = Number(cleaned);
+        return Number.isFinite(n) ? n : null;
+      };
+
       const cleanedData = {
         ...req.body,
         projectId: req.params.id,
@@ -1386,15 +1405,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Allow client to specify phaseNumber/phaseName; do not infer
         phaseNumber: typeof req.body.phaseNumber === 'number' ? req.body.phaseNumber : req.body.phaseNumber ? Number(req.body.phaseNumber) : null,
         phaseName: req.body.phaseName || null,
-        expectedInvoiceDate: req.body.expectedInvoiceDate ? new Date(req.body.expectedInvoiceDate) : null,
-        expectedCollectionDate: req.body.expectedCollectionDate ? new Date(req.body.expectedCollectionDate) : null,
-      };
+        startDate: toDateOrNull(req.body.startDate),
+        endDate: toDateOrNull(req.body.endDate),
+        expectedInvoiceDate: toDateOrNull(req.body.expectedInvoiceDate),
+        expectedCollectionDate: toDateOrNull(req.body.expectedCollectionDate),
+        feeAmount: toNumberOrNull(req.body.feeAmount),
+      } as any;
       
       // Validate dates
-      if (cleanedData.expectedInvoiceDate && isNaN(cleanedData.expectedInvoiceDate.getTime())) {
+      if (cleanedData.expectedInvoiceDate && isNaN((cleanedData.expectedInvoiceDate as Date).getTime())) {
         return res.status(400).json({ message: 'Invalid expected invoice date format' });
       }
-      if (cleanedData.expectedCollectionDate && isNaN(cleanedData.expectedCollectionDate.getTime())) {
+      if (cleanedData.expectedCollectionDate && isNaN((cleanedData.expectedCollectionDate as Date).getTime())) {
         return res.status(400).json({ message: 'Invalid expected collection date format' });
       }
       
@@ -1791,7 +1813,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const phases = await storage.getProjectPhases(req.params.id);
-      let tasks = await storage.getTasksByProject(req.params.id);
+      let tasks: any[] = await storage.getTasksByProject(req.params.id) as any[];
+
+      // Also include non-Phase-3 milestones as task-like entries
+      try {
+        const projectMilestones = await storage.getMilestonesByProject(req.params.id);
+        const milestoneTasks = (projectMilestones || [])
+          .filter((m: any) => m && (m as any).phaseNumber !== 3)
+          .map((m: any) => ({
+            id: m.id,
+            name: m.name,
+            startDate: m.startDate,
+            dueDate: m.endDate,
+            status: m.status || 'not_started',
+            progressPercent: 0,
+            assignedUser: null,
+            priority: m.priority || 'medium',
+            phaseNumber: m.phaseNumber,
+            phaseName: m.phaseName,
+            subtasks: (m as any).subtasks || [],
+          }));
+        tasks = [...tasks, ...milestoneTasks];
+      } catch (e) {
+        console.warn('Gantt: failed to include milestones as tasks:', (e as any)?.message || e);
+      }
 
       // Auto-assign phases to modules if they don't have phases
       if (phases.length > 0 && tasks.length > 0) {
@@ -1813,19 +1858,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Calculate progress for each task based on subtasks
       const tasksWithCalculatedProgress = tasks.map(task => {
         let calculatedProgress = task.progressPercent;
-        
         // If task has subtasks, calculate progress based on subtask status
         if (task.subtasks && task.subtasks.length > 0) {
           calculatedProgress = calculateSubtaskWeightBasedProgress(task.subtasks);
         }
-        
-        return {
-          ...task,
-          progress: calculatedProgress
-        };
+        return { ...task, progress: calculatedProgress };
       });
 
-      // Structure data for Gantt chart
       const ganttData = {
         project: {
           id: project.id,
@@ -2228,78 +2267,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Validation path: allow either moduleId (Phase 3) OR milestoneId (other phases)
+      let parentModule: any = null;
+      let parentMilestone: any = null;
+      let project: any = null;
+
       if (cleaned.moduleId) {
-        const module = await storage.getModule(cleaned.moduleId);
-        if (!module) return res.status(400).json({ message: 'Module not found' });
-        if (cleaned.startDate && module.startDate && cleaned.startDate < module.startDate) {
+        parentModule = await storage.getModule(cleaned.moduleId);
+        if (!parentModule) return res.status(400).json({ message: 'Module not found' });
+        if (cleaned.startDate && parentModule.startDate && cleaned.startDate < parentModule.startDate) {
           return res.status(400).json({ message: 'Subtask start cannot be before module start' });
         }
-        if (cleaned.dueDate && module.dueDate && cleaned.dueDate > module.dueDate) {
+        if (cleaned.dueDate && parentModule.dueDate && cleaned.dueDate > parentModule.dueDate) {
           return res.status(400).json({ message: 'Subtask due date cannot be after module due date' });
         }
+        project = await storage.getProject(parentModule.projectId);
       } else if (cleaned.milestoneId) {
-        const milestone = await storage.getMilestone(cleaned.milestoneId);
-        if (!milestone) return res.status(400).json({ message: 'Milestone not found' });
-        if (cleaned.startDate && milestone.startDate && cleaned.startDate < milestone.startDate) {
+        parentMilestone = await storage.getMilestone(cleaned.milestoneId);
+        if (!parentMilestone) return res.status(400).json({ message: 'Milestone not found' });
+        if (cleaned.startDate && parentMilestone.startDate && cleaned.startDate < parentMilestone.startDate) {
           return res.status(400).json({ message: 'Subtask start cannot be before milestone start' });
         }
-        if (cleaned.dueDate && milestone.endDate && cleaned.dueDate > milestone.endDate) {
+        if (cleaned.dueDate && parentMilestone.endDate && cleaned.dueDate > parentMilestone.endDate) {
           return res.status(400).json({ message: 'Subtask due date cannot be after milestone end' });
         }
+        project = await storage.getProject(parentMilestone.projectId);
       } else {
         return res.status(400).json({ message: 'Either moduleId or milestoneId is required' });
       }
 
-      // Validate FC consultant assignment (optional for now to debug the issue)
-      // if (!cleaned.assignedConsultantId) {
-      //   return res.status(400).json({ message: 'FC consultant assignment is required' });
-      // }
-
       const subtask = await storage.createSubtask(cleaned);
       
-      // Send notification if subtask is assigned to someone
+      // Send notification if subtask is assigned to someone (assignee)
       if (subtask.assignedUserId) {
         try {
-          // Get the assigned user details
           const assignedUser = await storage.getUser(subtask.assignedUserId);
-          if (assignedUser) {
-            // Get the module/project details
-            const module = await storage.getModule(cleaned.moduleId);
-            const project = module ? await storage.getProject(module.projectId) : null;
-            
-            if (module && project) {
-              // Send notification
-              await notificationService.sendTaskAssignedNotification({
-                task: { ...subtask, name: subtask.name, id: subtask.id },
-                project: project,
-                user: assignedUser,
-                assignedBy: req.user
-              });
-            }
+          if (assignedUser && project) {
+            await notificationService.sendTaskAssignedNotification({
+              task: { ...subtask, name: subtask.name, id: subtask.id },
+              project,
+              user: assignedUser,
+              assignedBy: req.user
+            });
           }
         } catch (notificationError) {
-          // Don't fail the subtask creation if notification fails
           console.error("Error sending subtask assignment notification:", notificationError);
         }
       }
       
       // Send notification for developer and consultant roles
       try {
-        // Get the module/project details
-        const module = await storage.getModule(cleaned.moduleId);
-        const project = module ? await storage.getProject(module.projectId) : null;
-        
-        if (module && project) {
-          // Send notification for specialized roles
+        // If module path exists, use it; otherwise synthesize a module-like context from milestone
+        let notifyModule = parentModule;
+        if (!notifyModule && parentMilestone) {
+          notifyModule = { id: parentMilestone.id, name: parentMilestone.name };
+        }
+        if (notifyModule && project) {
           await notificationService.sendSubtaskSpecializedRoleNotification({
             subtask,
-            module,
+            module: notifyModule,
             project,
             assignedBy: req.user
           });
         }
       } catch (notificationError) {
-        // Don't fail the subtask creation if notification fails
         console.error("Error sending specialized role notification:", notificationError);
       }
       
@@ -3293,8 +3323,8 @@ async function getGanttExportData(storage: any, filters: any) {
     ganttData.push({
       'Type': 'PROJECT',
       'Name': project.name,
-      'Start Date': project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A',
-      'End Date': project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A',
+      'Start Date': project.startDate ? new Date(project.startDate) : 'N/A',
+      'End Date': project.endDate ? new Date(project.endDate) : 'N/A',
       'Duration (Days)': project.startDate && project.endDate ? 
         Math.ceil((new Date(project.endDate).getTime() - new Date(project.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
       'Status': project.status,
@@ -3310,8 +3340,8 @@ async function getGanttExportData(storage: any, filters: any) {
       ganttData.push({
         'Type': 'MODULE',
         'Name': module.name,
-        'Start Date': module.startDate ? new Date(module.startDate).toLocaleDateString() : 'N/A',
-        'End Date': module.dueDate ? new Date(module.dueDate).toLocaleDateString() : 'N/A',
+        'Start Date': module.startDate ? new Date(module.startDate) : 'N/A',
+        'End Date': module.dueDate ? new Date(module.dueDate) : 'N/A',
         'Duration (Days)': module.startDate && module.dueDate ? 
           Math.ceil((new Date(module.dueDate).getTime() - new Date(module.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
         'Status': module.status,
@@ -3353,8 +3383,8 @@ async function getGanttExportData(storage: any, filters: any) {
           ganttData.push({
             'Type': 'SUBTASK',
             'Name': subtask.name,
-            'Start Date': subtask.startDate ? new Date(subtask.startDate).toLocaleDateString() : 'N/A',
-            'End Date': subtask.dueDate ? new Date(subtask.dueDate).toLocaleDateString() : 'N/A',
+            'Start Date': subtask.startDate ? new Date(subtask.startDate) : 'N/A',
+            'End Date': subtask.dueDate ? new Date(subtask.dueDate) : 'N/A',
             'Duration (Days)': subtask.startDate && subtask.dueDate ? 
               Math.ceil((new Date(subtask.dueDate).getTime() - new Date(subtask.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
             'Status': subtask.status,

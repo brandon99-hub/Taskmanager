@@ -656,7 +656,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                       
                       {dailyMarkers.map((marker) => (
                         <div
-                          key={`day-${marker.day}`}
+                          key={`day-${marker.date.toISOString()}`}
                           className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${
                             marker.isWeekend ? 'bg-gray-100 text-gray-500' : 'bg-white text-gray-700'
                           }`}

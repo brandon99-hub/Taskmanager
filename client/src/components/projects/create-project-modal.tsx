@@ -2021,7 +2021,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       (m: any) => m && m.isMilestone && m.phaseNumber !== 3
     );
     console.log('Gate check → completeModules:', completeModules.length, 'allMilestones:', allMilestones.length, 'hasNonPhase3Milestones:', hasNonPhase3Milestones);
-
+    
     createProjectMutation.mutate(data, {
       onSuccess: async (project) => {
         console.log('Project mutation successful:', project);
@@ -2805,16 +2805,61 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
               } else {
 
+                // Create new module OR non-Phase-3 milestone
+
+                // If this is a milestone container for a non-Phase-3 phase, create a milestone instead of a module
+                if (module.phaseNumber !== 3 && (module as any).isMilestone) {
+                  try {
+                    const milestonePayload = {
+                      name: module.name,
+                      description: module.description || undefined,
+                      feeAmount: formatNumber((module as any).feeAmount),
+                      startDate: formatDate(module.startDate),
+                      endDate: formatDate(module.dueDate),
+                      expectedInvoiceDate: formatDate((module as any).expectedInvoiceDate),
+                      expectedCollectionDate: formatDate((module as any).expectedCollectionDate),
+                      billingStatus: (module as any).billingStatus || 'none',
+                      projectId: project.id,
+                      createdById: user.id,
+                      phaseNumber: module.phaseNumber,
+                      phaseName: module.phaseName,
+                    };
+
+                    console.log('Creating non-Phase-3 milestone with payload:', milestonePayload);
+                    const cleanedMilestonePayload = cleanPayload(milestonePayload);
+                    const milestoneResponse = await apiRequest('POST', `/api/projects/${project.id}/milestones`, cleanedMilestonePayload);
+                    if (!milestoneResponse.ok) {
+                      const errorText = await milestoneResponse.text();
+                      console.error('Milestone creation failed:', milestoneResponse.status, errorText);
+                      throw new Error(`HTTP ${milestoneResponse.status}: ${errorText}`);
+                    }
+
+                    const milestoneData = await milestoneResponse.json();
+
+                    // Persist subtasks to milestone
+                    if (module.subtasks && module.subtasks.length > 0) {
+                      await processSubtasks(module.subtasks, { milestoneId: milestoneData.id });
+                    }
+
+                    // Invalidate queries to refresh the UI
+                    queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'milestones'] });
+                    queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'phases'] });
+                    queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
+
+                    success = true;
+                    break;
+                  } catch (e: any) {
+                    console.error('Failed creating non-Phase-3 milestone:', e?.message || e);
+                    throw e;
+                  }
+                }
+
                 // Create new module
 
                 if (!module.name || !module.dueDate) {
-
                   console.warn('Skipping incomplete module:', module.name, 'missing required fields');
-
                   success = true;
-
                   break;
-
                 }
 
                 

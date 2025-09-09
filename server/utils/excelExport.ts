@@ -5,20 +5,27 @@ interface ExcelExportOptions {
   filename: string;
   data: any;
   reportType: string;
+  templatePath?: string;
+  templateSheetName?: string;
 }
 
 export function generateExcelBuffer(options: ExcelExportOptions): Buffer {
-  const { data, reportType } = options;
+  const { data, reportType, templatePath, templateSheetName } = options;
   
   // Create a new workbook
-  const workbook = XLSX.utils.book_new();
+  const usingTemplate = !!(templatePath && reportType === 'gantt');
+  const workbook = usingTemplate ? XLSX.readFile(templatePath as string) : XLSX.utils.book_new();
   
   if (reportType === 'complete') {
     // Handle complete report with multiple sheets
     createCompleteReport(workbook, data);
   } else {
     // Handle individual reports
-    createSingleReport(workbook, data, reportType);
+    if (reportType === 'gantt' && usingTemplate) {
+      populateGanttTemplate(workbook, data, templateSheetName);
+    } else {
+      createSingleReport(workbook, data, reportType);
+    }
   }
   
   // Generate and return buffer
@@ -362,6 +369,7 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
       const projectRow = {
         'WBS': '1', // Projects are always 1
         'TASK': item.Name,
+        'LEAD': shortName(item.Manager) || '',
         'DEVELOPER': item.Manager || 'N/A',
         'FUNCTIONAL CONSULTANT': 'N/A',
         'START': item['Start Date'],
@@ -381,6 +389,8 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
       const moduleRow = {
         'WBS': currentModuleNumber.toString(),
         'TASK': item.Name.toUpperCase(), // Make module names caps
+        // Milestone/module lead: blank or project manager (use manager when provided)
+        'LEAD': shortName(item.Manager) || '',
         'DEVELOPER': '', // Empty for modules
         'FUNCTIONAL CONSULTANT': '', // Empty for modules
         'START': item['Start Date'],
@@ -397,6 +407,8 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
       const subtaskRow = {
         'WBS': `${currentModuleNumber}.${currentSubtaskNumber}`,
         'TASK': item.Name,
+        // Subtask lead: first non-null among Developer, Consultant, Assigned User (short name)
+        'LEAD': pickSubtaskLeadShort(item),
         'DEVELOPER': item.Developer || 'N/A',
         'FUNCTIONAL CONSULTANT': item.Consultant || 'N/A',
         'START': item['Start Date'],
@@ -431,7 +443,7 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
     [`Generated on: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`], // Date
     [''], // Empty row
     // Column headers row
-    ['WBS', 'TASK', 'DEVELOPER', 'FUNCTIONAL CONSULTANT', 'START', 'END', 'DAYS', '% DONE', 'WORK DAYS', ...weekColumns.map(week => week.header)],
+    ['WBS', 'TASK', 'LEAD', 'DEVELOPER', 'FUNCTIONAL CONSULTANT', 'START', 'END', 'DAYS', '% DONE', 'WORK DAYS', ...weekColumns.map(week => week.header)],
     // Week numbers row
     ['', '', '', '', '', '', '', '', '', ...weekColumns.map((_, index) => `Week ${index + 1}`)],
     // Days of week row
@@ -452,6 +464,7 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
   const dataRows = ganttRows.map((row, index) => [
     row['WBS'] || '',
     row['TASK'] || '',
+    row['LEAD'] || '',
     row['DEVELOPER'] || '',
     row['FUNCTIONAL CONSULTANT'] || '',
     row['START'] || '',
@@ -489,6 +502,134 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
   applyGanttFormattingForScreenshot(worksheet, range, weekColumns.length);
   
   return worksheet;
+}
+
+// Populate an existing template workbook for Gantt export
+function populateGanttTemplate(workbook: XLSX.WorkBook, data: any[], templateSheetName?: string) {
+  const sheetName = templateSheetName || workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    // Fallback: create a new gantt worksheet if template sheet not found
+    const ws = createGanttWorksheet(data, 'AppKings Solutions Limited - Gantt Chart Report');
+    XLSX.utils.book_append_sheet(workbook, ws, 'GanttChart');
+    return;
+  }
+
+  const expectedHeaders = ['WBS', 'TASK', 'LEAD', 'DEVELOPER', 'FUNCTIONAL CONSULTANT', 'START', 'END', 'DAYS', '% DONE', 'WORK DAYS'];
+  const headerRowIndex = findHeaderRow(worksheet, expectedHeaders);
+  if (headerRowIndex === -1) {
+    // Fallback if headers not found
+    const ws = createGanttWorksheet(data, 'AppKings Solutions Limited - Gantt Chart Report');
+    XLSX.utils.book_append_sheet(workbook, ws, 'GanttChart');
+    return;
+  }
+
+  const rows = buildGanttRowsForTemplate(data);
+  if (rows.length === 0) return;
+
+  // Write rows under header, starting at column A (c=0), row headerRowIndex+1
+  XLSX.utils.sheet_add_aoa(worksheet, rows, { origin: { r: headerRowIndex + 1, c: 0 } });
+}
+
+function findHeaderRow(worksheet: XLSX.WorkSheet, headers: string[]): number {
+  const rangeRef = worksheet['!ref'] || 'A1:Z200';
+  const range = XLSX.utils.decode_range(rangeRef);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const rowValues: string[] = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r, c })];
+      rowValues.push(cell ? String(cell.v).trim() : '');
+    }
+    // Look for the sequence of headers in order
+    const norm = (s: string) => s.trim().toUpperCase();
+    const normalizedRow = rowValues.map(norm);
+    const normalizedHeaders = headers.map(norm);
+    const startIdx = normalizedRow.findIndex(v => v === normalizedHeaders[0]);
+    if (startIdx !== -1) {
+      let matches = true;
+      for (let i = 0; i < headers.length; i++) {
+        if (normalizedRow[startIdx + i] !== normalizedHeaders[i]) {
+          matches = false; break;
+        }
+      }
+      if (matches) return r;
+    }
+  }
+  return -1;
+}
+
+// Build rows matching template base columns (without timeline columns)
+function buildGanttRowsForTemplate(data: any[]): any[][] {
+  if (!data || data.length === 0) return [];
+  const rows: any[][] = [];
+  let currentModuleNumber = 0;
+  let currentSubtaskNumber = 0;
+
+  data.forEach(item => {
+    if (item.Type === 'PROJECT') {
+      // Project row
+      rows.push([
+        '1',
+        item.Name,
+        shortName(item.Manager) || '',
+        item.Manager || 'N/A',
+        'N/A',
+        item['Start Date'] || '',
+        item['End Date'] || '',
+        item['Duration (Days)'] || '',
+        item['Progress (%)'] || '',
+        calculateWorkDays(item['Start Date'], item['End Date'])
+      ]);
+    } else if (item.Type === 'MODULE') {
+      currentModuleNumber++;
+      currentSubtaskNumber = 0;
+      rows.push([
+        String(currentModuleNumber),
+        String(item.Name || '').toUpperCase(),
+        shortName(item.Manager) || '',
+        '',
+        '',
+        item['Start Date'] || '',
+        item['End Date'] || '',
+        item['Duration (Days)'] || '',
+        item['Progress (%)'] || '',
+        calculateWorkDays(item['Start Date'], item['End Date'])
+      ]);
+    } else if (item.Type === 'SUBTASK') {
+      currentSubtaskNumber++;
+      rows.push([
+        `${currentModuleNumber}.${currentSubtaskNumber}`,
+        item.Name || '',
+        pickSubtaskLeadShort(item),
+        item.Developer || 'N/A',
+        item.Consultant || 'N/A',
+        item['Start Date'] || '',
+        item['End Date'] || '',
+        item['Duration (Days)'] || '',
+        item['Progress (%)'] || '',
+        calculateWorkDays(item['Start Date'], item['End Date'])
+      ]);
+    } else if (item.Type === '') {
+      // spacing row
+      rows.push(['', '', '', '', '', '', '', '', '', '']);
+    }
+  });
+
+  return rows;
+}
+
+// Helpers for LEAD column
+function shortName(fullName?: string): string {
+  if (!fullName) return '';
+  const parts = String(fullName).trim().split(/\s+/);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[1].charAt(0).toUpperCase()}.`;
+}
+
+function pickSubtaskLeadShort(item: any): string {
+  const firstNonNull = item.Developer || item.Consultant || item.AssignedUser || item['Assigned User'] || item.Manager || '';
+  return shortName(firstNonNull);
 }
 
 function generateWeekColumns(startDate: Date, endDate: Date): Array<{header: string, startDate: Date, endDate: Date}> {
@@ -766,7 +907,7 @@ function applyGanttFormattingForScreenshot(worksheet: WorkSheet, range: XLSX.Ran
   
   // Style timeline header rows (rows 5-8, now 4-7 in 0-indexed)
   for (let r = 4; r <= 7; r++) {
-    for (let c = 9; c <= range.e.c; c++) { // Timeline starts at column J (index 9)
+    for (let c = 10; c <= range.e.c; c++) { // Timeline starts at column K (index 10) after adding LEAD
       const cellRef = XLSX.utils.encode_cell({ r, c });
       if (worksheet[cellRef]) {
         worksheet[cellRef].s = {
@@ -785,7 +926,7 @@ function applyGanttFormattingForScreenshot(worksheet: WorkSheet, range: XLSX.Ran
   }
   
   // Style data column headers (row 5, now 4 in 0-indexed)
-  for (let c = 0; c <= 8; c++) { // Columns A through I
+  for (let c = 0; c <= 9; c++) { // Columns A through J (added LEAD)
     const cellRef = XLSX.utils.encode_cell({ r: 4, c });
     if (worksheet[cellRef]) {
       worksheet[cellRef].s = {
@@ -803,15 +944,15 @@ function applyGanttFormattingForScreenshot(worksheet: WorkSheet, range: XLSX.Ran
   }
   
   // Style data rows and timeline columns
-  const timelineStartCol = 9; // Timeline starts at column J (index 9)
+  const timelineStartCol = 10; // Timeline starts at column K (index 10) after adding LEAD
   for (let r = 7; r <= range.e.r; r++) {
     // Check if this is a module row (WBS column contains only numbers, no dots)
     const wbsCell = worksheet[XLSX.utils.encode_cell({ r, c: 0 })]; // Column A (WBS)
     const taskCell = worksheet[XLSX.utils.encode_cell({ r, c: 1 })]; // Column B (TASK)
     const isModuleRow = wbsCell && wbsCell.v && !wbsCell.v.toString().includes('.') && wbsCell.v.toString() !== '';
     
-    // Style data columns (A through I)
-    for (let c = 0; c <= 8; c++) {
+    // Style data columns (A through J)
+    for (let c = 0; c <= 9; c++) {
       const cellRef = XLSX.utils.encode_cell({ r, c });
       const cell = worksheet[cellRef];
       
@@ -926,6 +1067,7 @@ function applyGanttFormattingForScreenshot(worksheet: WorkSheet, range: XLSX.Ran
   worksheet['!cols'] = [
     { width: 8 },  // WBS
     { width: 40 }, // TASK
+    { width: 14 }, // LEAD
     { width: 15 }, // DEVELOPER
     { width: 20 }, // FUNCTIONAL CONSULTANT
     { width: 12 }, // START

@@ -2218,8 +2218,16 @@ export class DatabaseStorage implements IStorage {
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    // Get overdue subtasks
-    const overdue = await db
+    // Helper to map milestone-joined rows to module-like context
+    const mapMilestoneRows = (rows: any[]) => rows.map(row => ({
+      ...(row.subtasks as any),
+      module: { id: row.milestones.id, name: row.milestones.name } as any,
+      project: row.projects as Project,
+      assignedUser: row.users || null
+    }));
+
+    // Get overdue subtasks (module-based)
+    const overdueModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
@@ -2233,8 +2241,23 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get client review subtasks
-    const review = await db
+    // Overdue subtasks attached directly to milestones
+    const overdueMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          sql`${subtasks.dueDate} < ${now}`,
+          sql`${subtasks.status} != 'completed'`
+        )
+      )
+      .execute();
+
+    // Client review subtasks (module-based)
+    const reviewModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
@@ -2243,8 +2266,18 @@ export class DatabaseStorage implements IStorage {
       .where(eq(subtasks.status, 'client_review'))
       .execute();
 
-    // Get FC review subtasks
-    const fcReview = await db
+    // Client review for milestone-based subtasks
+    const reviewMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(eq(subtasks.status, 'client_review'))
+      .execute();
+
+    // FC review (module-based)
+    const fcReviewModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
@@ -2253,8 +2286,18 @@ export class DatabaseStorage implements IStorage {
       .where(eq(subtasks.status, 'fc_review'))
       .execute();
 
-    // Get recently done subtasks (last 7 days)
-    const recentlyDone = await db
+    // FC review (milestone-based)
+    const fcReviewMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(eq(subtasks.status, 'fc_review'))
+      .execute();
+
+    // Recently done (module-based)
+    const recentlyDoneModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
@@ -2268,8 +2311,23 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get high priority subtasks (regardless of status)
-    const highPriorityTodo = await db
+    // Recently done (milestone-based)
+    const recentlyDoneMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          eq(subtasks.status, 'completed'),
+          sql`${subtasks.updatedAt} >= ${sevenDaysAgo}`
+        )
+      )
+      .execute();
+
+    // High priority (module-based)
+    const highPriorityModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
@@ -2283,12 +2341,42 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
+    // High priority (milestone-based)
+    const highPriorityMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        or(
+          eq(subtasks.priority, 'critical'),
+          eq(subtasks.priority, 'high')
+        )
+      )
+      .execute();
+
     return {
-      overdue: overdue.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
-      review: review.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
-      fcReview: fcReview.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
-      recentlyDone: recentlyDone.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
-      highPriorityTodo: highPriorityTodo.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      overdue: [
+        ...overdueModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(overdueMilestone)
+      ],
+      review: [
+        ...reviewModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(reviewMilestone)
+      ],
+      fcReview: [
+        ...fcReviewModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(fcReviewMilestone)
+      ],
+      recentlyDone: [
+        ...recentlyDoneModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(recentlyDoneMilestone)
+      ],
+      highPriorityTodo: [
+        ...highPriorityModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(highPriorityMilestone)
+      ],
     };
   }
 
@@ -2319,8 +2407,8 @@ export class DatabaseStorage implements IStorage {
       teamIds.length > 0 ? sql`${modules.assignedTeamId} IN (${teamIds.join(',')})` : sql`false`
     );
 
-    // Get overdue subtasks
-    const overdue = await db
+    // Module-joined queries
+    const overdueModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
@@ -2335,38 +2423,25 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get client review subtasks
-    const review = await db
+    const reviewModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
       .innerJoin(projects, eq(modules.projectId, projects.id))
       .leftJoin(users, eq(subtasks.assignedUserId, users.id))
-      .where(
-        and(
-          eq(subtasks.status, 'client_review'),
-          userSubtaskCondition
-        )
-      )
+      .where(and(eq(subtasks.status, 'client_review'), userSubtaskCondition))
       .execute();
 
-    // Get FC review subtasks
-    const fcReview = await db
+    const fcReviewModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
       .innerJoin(projects, eq(modules.projectId, projects.id))
       .leftJoin(users, eq(subtasks.assignedUserId, users.id))
-      .where(
-        and(
-          eq(subtasks.status, 'fc_review'),
-          userSubtaskCondition
-        )
-      )
+      .where(and(eq(subtasks.status, 'fc_review'), userSubtaskCondition))
       .execute();
 
-    // Get recently done subtasks (last 7 days)
-    const recentlyDone = await db
+    const recentlyDoneModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
@@ -2381,8 +2456,7 @@ export class DatabaseStorage implements IStorage {
       )
       .execute();
 
-    // Get high priority subtasks (regardless of status)
-    const highPriorityTodo = await db
+    const highPriorityModule = await db
       .select()
       .from(subtasks)
       .innerJoin(modules, eq(subtasks.moduleId, modules.id))
@@ -2390,21 +2464,98 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(subtasks.assignedUserId, users.id))
       .where(
         and(
-          or(
-            eq(subtasks.priority, 'critical'),
-            eq(subtasks.priority, 'high')
-          ),
+          or(eq(subtasks.priority, 'critical'), eq(subtasks.priority, 'high')),
           userSubtaskCondition
         )
       )
       .execute();
 
+    // Milestone-joined queries
+    const mapMilestoneRows = (rows: any[]) => rows.map(row => ({
+      ...(row.subtasks as any),
+      module: { id: row.milestones.id, name: row.milestones.name } as any,
+      project: row.projects as Project,
+      assignedUser: row.users || null
+    }));
+
+    const overdueMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          sql`${subtasks.dueDate} < ${now}`,
+          sql`${subtasks.status} != 'completed'`,
+          userSubtaskCondition
+        )
+      )
+      .execute();
+
+    const reviewMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(and(eq(subtasks.status, 'client_review'), userSubtaskCondition))
+      .execute();
+
+    const fcReviewMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(and(eq(subtasks.status, 'fc_review'), userSubtaskCondition))
+      .execute();
+
+    const recentlyDoneMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          eq(subtasks.status, 'completed'),
+          sql`${subtasks.updatedAt} >= ${sevenDaysAgo}`,
+          userSubtaskCondition
+        )
+      )
+      .execute();
+
+    const highPriorityMilestone = await db
+      .select({ subtasks, milestones, projects, users })
+      .from(subtasks)
+      .innerJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+      .innerJoin(projects, eq(milestones.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(and(or(eq(subtasks.priority, 'critical'), eq(subtasks.priority, 'high')), userSubtaskCondition))
+      .execute();
+
     return {
-      overdue: overdue.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
-      review: review.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
-      fcReview: fcReview.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
-      recentlyDone: recentlyDone.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
-      highPriorityTodo: highPriorityTodo.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+      overdue: [
+        ...overdueModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(overdueMilestone)
+      ],
+      review: [
+        ...reviewModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(reviewMilestone)
+      ],
+      fcReview: [
+        ...fcReviewModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(fcReviewMilestone)
+      ],
+      recentlyDone: [
+        ...recentlyDoneModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(recentlyDoneMilestone)
+      ],
+      highPriorityTodo: [
+        ...highPriorityModule.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+        ...mapMilestoneRows(highPriorityMilestone)
+      ],
     };
   }
 
@@ -4246,6 +4397,74 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
             );
             flattenedSubtasks = subtasksPerModule.flat();
           }
+
+          // NEW: also include subtasks directly attached to this milestone (subtasks.milestoneId = milestone.id)
+          const directSubtasksRows = await db
+            .select({ subtask: subtasks, assignedUser: users })
+            .from(subtasks)
+            .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+            .where(eq(subtasks.milestoneId, milestone.id))
+            .orderBy(asc(subtasks.createdAt));
+
+          const directSubtasks = await Promise.all(
+            directSubtasksRows.map(async (row) => {
+              const sub: any = {
+                id: row.subtask.id,
+                name: row.subtask.name,
+                description: row.subtask.description,
+                status: row.subtask.status,
+                priority: row.subtask.priority,
+                startDate: row.subtask.startDate,
+                dueDate: row.subtask.dueDate,
+                estimatedHours: row.subtask.estimatedHours,
+                estimatedDays: row.subtask.estimatedDays,
+                actualHours: row.subtask.actualHours,
+                actualDays: row.subtask.actualDays,
+                progressPercent: row.subtask.progressPercent,
+                assignedUserId: row.subtask.assignedUserId,
+                assignedDevId: row.subtask.assignedDevId,
+                assignedConsultantId: row.subtask.assignedConsultantId,
+                createdById: row.subtask.createdById,
+                assignedUser: row.assignedUser,
+                completedAt: row.subtask.completedAt
+              };
+
+              // Populate assignedDev
+              if (sub.assignedDevId) {
+                try {
+                  const assignedDev = await this.getUser(sub.assignedDevId);
+                  if (assignedDev) {
+                    sub.assignedDev = {
+                      id: assignedDev.id,
+                      firstName: assignedDev.firstName,
+                      lastName: assignedDev.lastName,
+                      email: assignedDev.email
+                    };
+                  }
+                } catch {}
+              }
+
+              // Populate assignedConsultant
+              if (sub.assignedConsultantId) {
+                try {
+                  const assignedConsultant = await this.getUser(sub.assignedConsultantId);
+                  if (assignedConsultant) {
+                    sub.assignedConsultant = {
+                      id: assignedConsultant.id,
+                      firstName: assignedConsultant.firstName,
+                      lastName: assignedConsultant.lastName,
+                      email: assignedConsultant.email
+                    };
+                  }
+                } catch {}
+              }
+
+              return sub;
+            })
+          );
+
+          // Merge module-derived subtasks with direct milestone subtasks
+          flattenedSubtasks = [...flattenedSubtasks, ...directSubtasks];
 
           return {
             ...milestone,
