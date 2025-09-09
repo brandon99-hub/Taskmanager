@@ -108,12 +108,22 @@ app.use((req, res, next) => {
   if (process.env.NODE_ENV === "development") {
   await setupVite(app, server);
 } else {
-  // Serve the built React frontend
+  // Serve the built React frontend (only for non-API routes)
   const publicPath = path.resolve(__dirname, "../dist/public");
-  app.use(express.static(publicPath));
+  
+  // Serve static files for non-API routes
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      return next(); // Skip static serving for API routes
+    }
+    express.static(publicPath)(req, res, next);
+  });
 
-  // Fallback: let React handle routing
-  app.get("*", (_req, res) => {
+  // Fallback: let React handle routing (only for non-API routes)
+  app.get("*", (req, res) => {
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ error: 'API endpoint not found' });
+    }
     res.sendFile(path.join(publicPath, "index.html"));
   });
 }
