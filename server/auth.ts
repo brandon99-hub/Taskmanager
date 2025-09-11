@@ -298,14 +298,15 @@ export async function setupAuth(app: Express) {
       // Store reset token in user record
       await storage.updateUserResetToken(user.id, resetToken, resetTokenExpiry);
 
-      // Send email with reset link
-      const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:5000'}/reset-password?token=${resetToken}`;
+      // Send email with reset link (no localhost fallback)
+      const baseUrl = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
+      const resetLink = `${baseUrl}/reset-password?token=${resetToken}`;
       await emailService.sendPasswordResetEmail({
         to: user.email,
         userName: user.firstName || user.email,
         resetLink: resetLink,
-        unsubscribeUrl: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/home`,
-        preferencesUrl: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/home`
+        unsubscribeUrl: `${baseUrl}/home`,
+        preferencesUrl: `${baseUrl}/home`
       });
 
       res.json({ message: "If an account with that email exists, we've sent a reset link" });

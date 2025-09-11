@@ -495,7 +495,7 @@ export class NotificationService {
    */
   private buildTaskAssignedEmailData(context: NotificationContext, preferences: any): EmailNotificationData {
     const { task, project, user, assignedBy } = context;
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5000';
+    const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
     
     return {
       to: user.email,
@@ -525,7 +525,7 @@ export class NotificationService {
    */
   private buildTaskDueSoonEmailData(context: NotificationContext, preferences: any): EmailNotificationData {
     const { task, project, user } = context;
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5000';
+    const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
     
     return {
       to: user.email,
@@ -554,7 +554,7 @@ export class NotificationService {
    */
   private buildTaskOverdueEmailData(context: NotificationContext, preferences: any): EmailNotificationData {
     const { task, project, user } = context;
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5000';
+    const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
     
     return {
       to: user.email,
@@ -583,7 +583,7 @@ export class NotificationService {
    */
   private buildProjectDeadlineEmailData(context: NotificationContext, preferences: any): EmailNotificationData {
     const { project, user } = context;
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5000';
+    const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
     
     return {
       to: user.email,
@@ -1016,7 +1016,7 @@ export class NotificationService {
               </ul>
               
               <p style="text-align: center; margin-top: 30px;">
-                <a href="${process.env.CLIENT_URL || 'http://localhost:5000'}/login" class="button">
+                <a href="${process.env.FRONTEND_URL || process.env.CLIENT_URL}/login" class="button">
                   Login to TaskFlow Dashboard
                 </a>
               </p>
@@ -1042,7 +1042,7 @@ export class NotificationService {
         
         IMPORTANT: You must change your password immediately after your first login for security reasons.
         
-        Please login at: ${process.env.CLIENT_URL || 'http://localhost:5000'}/login
+        Please login at: ${process.env.FRONTEND_URL || process.env.CLIENT_URL}/login
         
         Best regards,
         TaskFlow Team
@@ -1120,7 +1120,7 @@ export class NotificationService {
               </ul>
               
               <p style="text-align: center; margin-top: 30px;">
-                <a href="${process.env.CLIENT_URL || 'http://localhost:5000'}/dashboard" class="button">
+                <a href="${process.env.FRONTEND_URL || process.env.CLIENT_URL}/dashboard" class="button">
                   Access Your Dashboard
                 </a>
               </p>
@@ -1140,7 +1140,7 @@ export class NotificationService {
         
         Your role has been updated to ${roleName} by ${assignerName}.
         
-        Please login to access your updated dashboard at: ${process.env.CLIENT_URL || 'http://localhost:5000'}/dashboard
+        Please login to access your updated dashboard at: ${process.env.FRONTEND_URL || process.env.CLIENT_URL}/dashboard
         
         Best regards,
         TaskFlow Team
@@ -1256,10 +1256,10 @@ export class NotificationService {
               `}
               
               <p style="text-align: center; margin-top: 30px;">
-                <a href="${process.env.CLIENT_URL || 'http://localhost:5000'}/projects/${project.id}/modules/${module.id}" class="button">
+                <a href="${process.env.FRONTEND_URL || process.env.CLIENT_URL}/projects/${project.id}/modules/${module.id}" class="button">
                   ${isAssignee ? 'View Subtask' : 'Monitor Progress'}
                 </a>
-                ${isAssignee ? `<a href="${process.env.CLIENT_URL || 'http://localhost:5000'}/dashboard" class="button">Go to Dashboard</a>` : ''}
+                ${isAssignee ? `<a href="${process.env.FRONTEND_URL || process.env.CLIENT_URL}/dashboard" class="button">Go to Dashboard</a>` : ''}
               </p>
               
               <p style="font-size: 12px; color: #666; margin-top: 30px;">
@@ -1289,7 +1289,7 @@ export class NotificationService {
         ${subtask.priority ? `- Priority: ${subtask.priority}` : ''}
         ${isAssignee ? `- Assigned By: ${assignerName}` : `- Assigned To: ${assigneeName}`}
         
-        Access TaskFlow: ${process.env.CLIENT_URL || 'http://localhost:5000'}/projects/${project.id}/modules/${module.id}
+        Access TaskFlow: ${process.env.FRONTEND_URL || process.env.CLIENT_URL}/projects/${project.id}/modules/${module.id}
         
         Best regards,
         TaskFlow Team
@@ -1454,10 +1454,10 @@ export class NotificationService {
               </div>
               
               <p style="text-align: center; margin-top: 30px;">
-                <a href="${process.env.CLIENT_URL || 'http://localhost:5000'}/dashboard" class="button">
+                <a href="${process.env.FRONTEND_URL || process.env.CLIENT_URL}/dashboard" class="button">
                   View Finance Dashboard
                 </a>
-                <a href="${process.env.CLIENT_URL || 'http://localhost:5000'}/projects" class="button">
+                <a href="${process.env.FRONTEND_URL || process.env.CLIENT_URL}/projects" class="button">
                   Review Projects
                 </a>
               </p>
@@ -1503,7 +1503,7 @@ export class NotificationService {
         
         Please review and take appropriate action.
         
-        Access TaskFlow: ${process.env.CLIENT_URL || 'http://localhost:5000'}/dashboard
+        Access TaskFlow: ${process.env.FRONTEND_URL || process.env.CLIENT_URL}/dashboard
         
         Best regards,
         TaskFlow Team

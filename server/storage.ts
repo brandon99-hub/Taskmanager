@@ -5473,7 +5473,8 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         .limit(1);
 
       if (existingRole.length > 0) {
-        throw new Error('User already has this admin role assigned');
+        // Idempotent: return the existing active role instead of erroring
+        return existingRole[0] as unknown as AdminRole;
       }
 
       // Create the admin role assignment

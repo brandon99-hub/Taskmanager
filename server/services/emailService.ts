@@ -120,13 +120,13 @@ export class EmailService {
   }
 
   private enhanceEmailData(data: EmailNotificationData): EmailNotificationData {
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5000';
+    const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
     
     return {
       ...data,
-      logoUrl: `${baseUrl}/assets/taskflow-logo.png`,
-      unsubscribeUrl: data.unsubscribeUrl || `${baseUrl}/unsubscribe`,
-      preferencesUrl: data.preferencesUrl || `${baseUrl}/home`,
+      logoUrl: baseUrl ? `${baseUrl}/assets/taskflow-logo.png` : undefined,
+      unsubscribeUrl: data.unsubscribeUrl || (baseUrl ? `${baseUrl}/unsubscribe` : undefined),
+      preferencesUrl: data.preferencesUrl || (baseUrl ? `${baseUrl}/home` : undefined),
       priorityLabel: data.priority ? data.priority.charAt(0).toUpperCase() + data.priority.slice(1) : 'Medium',
       isUrgent: data.priority === 'high' || data.priority === 'critical'
     };

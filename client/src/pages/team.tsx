@@ -294,10 +294,28 @@ export default function Team() {
         return; // Don't close modal, don't proceed
       }
 
-      // Track results for user feedback
+      // Track results for detailed feedback
       let successCount = 0;
       let errorCount = 0;
       const errors: string[] = [];
+      const updated: { displayName: string; oldEmail: string; newEmail: string }[] = [];
+      const assigned: { displayName: string; email: string }[] = [];
+      const unchanged: { displayName: string; email: string }[] = [];
+
+      // Build map of existing assignments (from loaded adminRolesData)
+      const currentAssignments: Record<string, string | undefined> = {};
+      if (adminRolesData) {
+        const pm = adminRolesData.find((r: any) => r.roleType === 'project_manager');
+        const fh = adminRolesData.find((r: any) => r.roleType === 'finance_head');
+        const segA = adminRolesData.find((r: any) => r.roleType === 'segment_leader' && r.segment === 'academic');
+        const segP = adminRolesData.find((r: any) => r.roleType === 'segment_leader' && r.segment === 'parastals');
+        const segPr = adminRolesData.find((r: any) => r.roleType === 'segment_leader' && r.segment === 'private');
+        currentAssignments['Project Manager'] = pm?.user?.email;
+        currentAssignments['Finance Head'] = fh?.user?.email;
+        currentAssignments['Academic Segment Leader'] = segA?.user?.email;
+        currentAssignments['Parastals Segment Leader'] = segP?.user?.email;
+        currentAssignments['Private Segment Leader'] = segPr?.user?.email;
+      }
 
       // Create users with admin roles - this will trigger credential emails
       for (const roleConfig of rolesConfig) {
@@ -326,13 +344,23 @@ export default function Team() {
 
           if (userResponse.ok) {
             successCount++;
-            console.log(`Successfully created/updated user for ${roleConfig.displayName}:`, roleConfig.email);
+            const prev = currentAssignments[roleConfig.displayName];
+            if (prev && prev !== roleConfig.email) {
+              updated.push({ displayName: roleConfig.displayName, oldEmail: prev, newEmail: roleConfig.email });
+            } else {
+              assigned.push({ displayName: roleConfig.displayName, email: roleConfig.email });
+            }
           } else {
             const errorData = await userResponse.json();
             // If user already exists, that's fine - they might have been created before
             if (errorData.message && errorData.message.includes('already exists')) {
-              console.log(`User already exists for ${roleConfig.displayName}:`, roleConfig.email);
               successCount++;
+              const prev = currentAssignments[roleConfig.displayName];
+              if (prev && prev !== roleConfig.email) {
+                updated.push({ displayName: roleConfig.displayName, oldEmail: prev, newEmail: roleConfig.email });
+              } else {
+                unchanged.push({ displayName: roleConfig.displayName, email: roleConfig.email });
+              }
             } else {
               errorCount++;
               errors.push(`${roleConfig.displayName}: ${errorData.message || 'Unknown error'}`);
@@ -373,15 +401,30 @@ export default function Team() {
 
       // Show appropriate feedback
       if (errorCount === 0) {
+        const lines: string[] = [];
+        if (updated.length) {
+          lines.push(`Updated: ${updated.map(u => `${u.displayName}: ${u.oldEmail} → ${u.newEmail}`).join('; ')}`);
+        }
+        if (assigned.length) {
+          lines.push(`Assigned: ${assigned.map(a => `${a.displayName} → ${a.email}`).join('; ')}`);
+        }
+        if (unchanged.length) {
+          lines.push(`Unchanged (already assigned): ${unchanged.map(u => `${u.displayName} → ${u.email}`).join('; ')}`);
+        }
         toast({
-          title: "Success",
-          description: `Admin roles updated successfully. ${successCount} users processed and credential emails sent.`,
+          title: "Admin roles saved",
+          description: lines.join('\n') || `${successCount} users processed.`,
         });
         setIsSegmentLeaderModalOpen(false); // Only close on complete success
       } else if (successCount > 0) {
+        const parts: string[] = [];
+        if (updated.length) parts.push(`Updated: ${updated.map(u => `${u.displayName}: ${u.oldEmail} → ${u.newEmail}`).join('; ')}`);
+        if (assigned.length) parts.push(`Assigned: ${assigned.map(a => `${a.displayName} → ${a.email}`).join('; ')}`);
+        if (unchanged.length) parts.push(`Unchanged: ${unchanged.map(u => `${u.displayName} → ${u.email}`).join('; ')}`);
+        parts.push(`Errors: ${errors.join(', ')}`);
         toast({
-          title: "Partial Success",
-          description: `${successCount} users processed successfully, but ${errorCount} had issues: ${errors.join(', ')}`,
+          title: "Partial update",
+          description: parts.join('\n'),
           variant: "default",
         });
         console.error('Admin role assignment errors:', errors);
