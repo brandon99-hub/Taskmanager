@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Users, Plus, Mail, UserPlus, Calendar, BarChart3, Info, User, Briefcase } from "lucide-react";
+import { Users, Plus, Mail, UserPlus, Calendar, BarChart3, Info, User, Briefcase, RefreshCw } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
 
@@ -66,12 +66,11 @@ export default function Team() {
     accountManagerEmail: 'accountmanager@company.com'
   });
 
-  // Debug log for initial state
-  // console.debug('Initial admin role data:', adminRoleData);
-  
   // Loading state for admin role save
   const [isSavingAdminRoles, setIsSavingAdminRoles] = useState(false);
-  
+  // Resend button disabled states
+  const [resending, setResending] = useState<Record<string, boolean>>({});
+
   // Fetch finance and account manager emails for auto-fill
   const { data: systemEmails } = useQuery({
     queryKey: ['/api/system-config/emails'],
@@ -81,7 +80,6 @@ export default function Team() {
       });
       if (!res.ok) return { financeEmail: '', accountManagerEmail: '' };
       const data = await res.json();
-      // console.debug('System emails loaded:', data);
       return data;
     },
     enabled: !!isAuthenticated,
@@ -99,6 +97,44 @@ export default function Team() {
     },
     enabled: !!isAuthenticated && isSegmentLeaderModalOpen,
   });
+
+  // Helper: validate email
+  const isValidEmail = (email: string | undefined) => !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !email.includes('@company.com');
+
+  // Helper: does role exist already (or had been sent before)
+  const roleExists = (roleType: 'project_manager' | 'finance_head' | 'segment_leader', segment?: 'academic' | 'parastals' | 'private') => {
+    if (!adminRolesData) return false;
+    if (roleType === 'segment_leader') {
+      return !!adminRolesData.find((r: any) => r.roleType === 'segment_leader' && r.segment === segment && r.isActive);
+    }
+    return !!adminRolesData.find((r: any) => r.roleType === roleType && r.isActive);
+  };
+
+  // Resend credentials handler
+  const handleResend = async (key: string, params: { roleType: 'project_manager' | 'finance_head' | 'segment_leader'; segment?: 'academic' | 'parastals' | 'private'; email: string | undefined; displayName: string; }) => {
+    if (!isValidEmail(params.email)) {
+      toast({ title: 'Invalid email', description: `Enter a valid email for ${params.displayName} before resending.`, variant: 'destructive' });
+      return;
+    }
+    if (!roleExists(params.roleType, params.segment)) {
+      toast({ title: 'Not yet assigned', description: `Assign ${params.displayName} first, then you can resend credentials.`, variant: 'destructive' });
+      return;
+    }
+    setResending(prev => ({ ...prev, [key]: true }));
+    try {
+      await apiRequest('POST', '/api/admin/users/resend', {
+        email: params.email,
+        roleType: params.roleType,
+        segment: params.segment,
+      });
+      toast({ title: 'Credentials re-sent', description: `New temporary password emailed to ${params.email}.` });
+    } catch (e: any) {
+      toast({ title: 'Resend failed', description: e?.message || 'Failed to resend credentials', variant: 'destructive' });
+    } finally {
+      // brief cooldown to prevent double send
+      setTimeout(() => setResending(prev => ({ ...prev, [key]: false })), 1500);
+    }
+  };
 
   // Update form state when data is loaded
   useEffect(() => {
@@ -1164,13 +1200,24 @@ export default function Team() {
                                       {!systemEmails && <span className="text-xs text-gray-500 ml-2">(Loading...)</span>}
                                       {systemEmails?.financeEmail && <span className="text-xs text-green-600 ml-2">(Auto-filled)</span>}
                                     </FormLabel>
-                                    <FormControl>
-                                      <Input 
-                                        placeholder="finance@company.com" 
-                                        className="h-11"
-                                        {...field} 
-                                      />
-                                    </FormControl>
+                                    <div className="flex items-center gap-2">
+                                      <FormControl>
+                                        <Input 
+                                          placeholder="finance@company.com" 
+                                          className="h-11"
+                                          {...field} 
+                                        />
+                                      </FormControl>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleResend('financeEmail', { roleType: 'finance_head', email: field.value, displayName: 'Finance Head' })}
+                                        disabled={!isValidEmail(field.value) || resending['financeEmail'] || !roleExists('finance_head')}
+                                        className="h-11 px-3"
+                                      >
+                                        <RefreshCw className={`h-4 w-4 ${resending['financeEmail'] ? 'animate-spin' : ''}`} />
+                                      </Button>
+                                    </div>
                                     <FormMessage />
                                   </FormItem>
                                 )}
@@ -1213,13 +1260,24 @@ export default function Team() {
                                       {!systemEmails && <span className="text-xs text-gray-500 ml-2">(Loading...)</span>}
                                       {systemEmails?.accountManagerEmail && <span className="text-xs text-green-600 ml-2">(Auto-filled)</span>}
                                     </FormLabel>
-                                    <FormControl>
-                                      <Input 
-                                        placeholder="accountmanager@company.com" 
-                                        className="h-11"
-                                        {...field} 
-                                      />
-                                    </FormControl>
+                                    <div className="flex items-center gap-2">
+                                      <FormControl>
+                                        <Input 
+                                          placeholder="accountmanager@company.com" 
+                                          className="h-11"
+                                          {...field} 
+                                        />
+                                      </FormControl>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleResend('accountManagerEmail', { roleType: 'project_manager', email: field.value, displayName: 'Project Manager' })}
+                                        disabled={!isValidEmail(field.value) || resending['accountManagerEmail'] || !roleExists('project_manager')}
+                                        className="h-11 px-3"
+                                      >
+                                        <RefreshCw className={`h-4 w-4 ${resending['accountManagerEmail'] ? 'animate-spin' : ''}`} />
+                                      </Button>
+                                    </div>
                                     <FormMessage />
                                   </FormItem>
                                 )}
@@ -1293,12 +1351,26 @@ export default function Team() {
                             </div>
                             <div>
                               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                              <Input 
-                                placeholder="manager@company.com"
-                                className="h-10"
-                                value={adminRoleData.projectManager.email}
-                                onChange={(e) => setAdminRoleData({ ...adminRoleData, projectManager: { ...adminRoleData.projectManager, email: e.target.value } })}
-                              />
+                              <div className="flex items-center gap-2">
+                                <Input 
+                                  placeholder="manager@company.com"
+                                  className="h-10"
+                                  value={adminRoleData.projectManager.email}
+                                  onChange={(e) => setAdminRoleData({ ...adminRoleData, projectManager: { ...adminRoleData.projectManager, email: e.target.value } })}
+                                />
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => handleResend('pm', { roleType: 'project_manager', email: adminRoleData.projectManager.email, displayName: 'Project Manager' })}
+                                  disabled={!!resending['pm'] || !isValidEmail(adminRoleData.projectManager.email) || !roleExists('project_manager')}
+                                  title="Resend credentials"
+                                  className="h-9 w-9"
+                                >
+                                  <span className="sr-only">Resend credentials</span>
+                                  <RefreshCw className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1321,12 +1393,26 @@ export default function Team() {
                             </div>
                             <div>
                               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                              <Input 
-                                placeholder="finance.head@company.com"
-                                className="h-10"
-                                value={adminRoleData.financeHead.email}
-                                onChange={(e) => setAdminRoleData({ ...adminRoleData, financeHead: { ...adminRoleData.financeHead, email: e.target.value } })}
-                              />
+                              <div className="flex items-center gap-2">
+                                <Input 
+                                  placeholder="finance.head@company.com"
+                                  className="h-10"
+                                  value={adminRoleData.financeHead.email}
+                                  onChange={(e) => setAdminRoleData({ ...adminRoleData, financeHead: { ...adminRoleData.financeHead, email: e.target.value } })}
+                                />
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => handleResend('fh', { roleType: 'finance_head', email: adminRoleData.financeHead.email, displayName: 'Finance Head' })}
+                                  disabled={!!resending['fh'] || !isValidEmail(adminRoleData.financeHead.email) || !roleExists('finance_head')}
+                                  title="Resend credentials"
+                                  className="h-9 w-9"
+                                >
+                                  <span className="sr-only">Resend credentials</span>
+                                  <RefreshCw className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1353,12 +1439,26 @@ export default function Team() {
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                            <Input 
-                              placeholder="leader@academic.com"
-                              className="h-10"
-                              value={adminRoleData.academic.email}
-                              onChange={(e) => setAdminRoleData({ ...adminRoleData, academic: { ...adminRoleData.academic, email: e.target.value } })}
-                            />
+                            <div className="flex items-center gap-2">
+                              <Input 
+                                placeholder="leader@academic.com"
+                                className="h-10"
+                                value={adminRoleData.academic.email}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, academic: { ...adminRoleData.academic, email: e.target.value } })}
+                              />
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleResend('seg-academic', { roleType: 'segment_leader', segment: 'academic', email: adminRoleData.academic.email, displayName: 'Academic Segment Leader' })}
+                                disabled={!!resending['seg-academic'] || !isValidEmail(adminRoleData.academic.email) || !roleExists('segment_leader', 'academic')}
+                                title="Resend credentials"
+                                className="h-9 w-9"
+                              >
+                                <span className="sr-only">Resend credentials</span>
+                                <RefreshCw className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1381,12 +1481,26 @@ export default function Team() {
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                            <Input 
-                              placeholder="leader@parastals.com"
-                              className="h-10"
-                              value={adminRoleData.parastals.email}
-                              onChange={(e) => setAdminRoleData({ ...adminRoleData, parastals: { ...adminRoleData.parastals, email: e.target.value } })}
-                            />
+                            <div className="flex items-center gap-2">
+                              <Input 
+                                placeholder="leader@parastals.com"
+                                className="h-10"
+                                value={adminRoleData.parastals.email}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, parastals: { ...adminRoleData.parastals, email: e.target.value } })}
+                              />
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleResend('seg-parastals', { roleType: 'segment_leader', segment: 'parastals', email: adminRoleData.parastals.email, displayName: 'Parastals Segment Leader' })}
+                                disabled={!!resending['seg-parastals'] || !isValidEmail(adminRoleData.parastals.email) || !roleExists('segment_leader', 'parastals')}
+                                title="Resend credentials"
+                                className="h-9 w-9"
+                              >
+                                <span className="sr-only">Resend credentials</span>
+                                <RefreshCw className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1409,12 +1523,26 @@ export default function Team() {
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                            <Input 
-                              placeholder="leader@private.com"
-                              className="h-10"
-                              value={adminRoleData.private.email}
-                              onChange={(e) => setAdminRoleData({ ...adminRoleData, private: { ...adminRoleData.private, email: e.target.value } })}
-                            />
+                            <div className="flex items-center gap-2">
+                              <Input 
+                                placeholder="leader@private.com"
+                                className="h-10"
+                                value={adminRoleData.private.email}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, private: { ...adminRoleData.private, email: e.target.value } })}
+                              />
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleResend('seg-private', { roleType: 'segment_leader', segment: 'private', email: adminRoleData.private.email, displayName: 'Private Segment Leader' })}
+                                disabled={!!resending['seg-private'] || !isValidEmail(adminRoleData.private.email) || !roleExists('segment_leader', 'private')}
+                                title="Resend credentials"
+                                className="h-9 w-9"
+                              >
+                                <span className="sr-only">Resend credentials</span>
+                                <RefreshCw className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       </div>

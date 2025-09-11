@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -18,8 +17,7 @@ import {
   ChevronRight,
   RefreshCw,
   Maximize2,
-  Minimize2,
-  X
+  Minimize2
 } from 'lucide-react';
 
 interface GanttData {
@@ -590,30 +588,6 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
           </div>
           
           <div className="flex items-center space-x-3">
-            {/* View Toggle */}
-            <Select value={selectedView} onValueChange={(value: 'timeline' | 'list') => setSelectedView(value)}>
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="timeline">Timeline View</SelectItem>
-                <SelectItem value="list">List View</SelectItem>
-              </SelectContent>
-            </Select>
-
-            {/* Status Filter */}
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="todo">To Do</SelectItem>
-                <SelectItem value="in_progress">In Progress</SelectItem>
-                <SelectItem value="done">Completed</SelectItem>
-              </SelectContent>
-            </Select>
-
             {/* Zoom Controls */}
             <div className="flex items-center space-x-1">
               <Button
@@ -1022,50 +996,378 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
 
     {isFullscreen ? createPortal(
       <div className="fixed inset-0 z-[9999] bg-white flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white">
-          <div className="flex items-center gap-3">
-            <div className="text-lg font-semibold text-gray-900">{overlayData?.project.name}</div>
-            {overlayData ? (
-              <div className="text-sm text-gray-600">
-                {overlayData?.project.startDate ? new Date(overlayData.project.startDate).toLocaleDateString() : ''}
-                {overlayData?.project.endDate ? ` — ${new Date(overlayData.project.endDate).toLocaleDateString()}` : ''}
-              </div>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Optional date controls could go here */}
-            <Button size="sm" variant="outline" onClick={() => setIsFullscreen(false)} title="Exit full screen">
-              <Minimize2 className="h-4 w-4" />
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setIsFullscreen(false)}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Main Gantt area */}
+        {/* Main area renders exact same chart UI */}
         <div className="flex-1 overflow-auto p-4">
-          {overlayLoading && (
-            <div className="h-full flex items-center justify-center text-gray-500">Loading…</div>
-          )}
-          {!overlayLoading && overlayData && (
-            <div className="min-h-full">
-              {/* Reuse the same visualization by rendering the inner content only */}
-              {/* For simplicity, we re-render this component’s main content by cloning with overlayData */}
-              {/* Basic reuse: show timeline view only in fullscreen for maximum space */}
-              {/* Header inside chart kept sticky via styles already */}
-              {/* Create a minimal wrapper to reuse existing calculated structures */}
-              {/* We can quickly reuse by temporarily setting data to overlayData and selectedView to timeline */}
-              {/* Inline render: */}
-              <div className="overflow-x-auto">
-                {/* Duplicate the key parts by leveraging existing helpers */}
-                {/* Because functions close over timelineData based on overlayData, recompute below */}
-                {/* Quick approach: mount a lightweight sub-instance of the same component is complex; instead, reuse same structures by temporarily creating a small child component */}
-                <FullscreenGanttBody data={overlayData as GanttData} />
+          <Card className="w-full max-w-none">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Target className="h-5 w-5 text-blue-600" />
+                    Project Timeline - Gantt Chart
+                  </CardTitle>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Visualize project timeline and milestones
+                  </p>
+                </div>
+                
+                <div className="flex items-center space-x-3">
+                  {/* Zoom Controls */}
+                  <div className="flex items-center space-x-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setZoom(prev => Math.max(0.5, prev - 0.2))}
+                    >
+                      <ZoomOut className="h-4 w-4" />
+                    </Button>
+                    <span className="text-sm text-gray-600 px-2">{Math.round(zoom * 100)}%</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setZoom(prev => Math.min(2, prev + 0.2))}
+                    >
+                      <ZoomIn className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setZoom(1)}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={handleExportGantt}
+                    disabled={exportLoading}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    {exportLoading ? 'Exporting...' : 'Export'}
+                  </Button>
+
+                  {/* Minimize in fullscreen */}
+                  <Button size="sm" variant="outline" onClick={() => setIsFullscreen(false)} title="Minimize">
+                    <Minimize2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
+
+              {/* Search */}
+              <div className="flex items-center space-x-4 mt-4">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Input
+                    placeholder="Search milestones..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+                
+                <div className="text-sm text-gray-600">
+                  <span className="font-medium">Start:</span> {timelineData.projectStart.toLocaleDateString()}
+                </div>
+                <div className="text-sm text-gray-600">
+                  <span className="font-medium">End:</span> {timelineData.projectEnd.toLocaleDateString()}
+                </div>
+                <div className="text-sm text-gray-600">
+                  <span className="font-medium">Duration:</span> {timelineData.totalDays} days
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              {selectedView === 'timeline' ? (
+                /* Timeline View */
+                <div className="overflow-x-auto">
+                  <div 
+                    className="relative min-w-full"
+                    style={{ width: timelineData.containerWidth }}
+                  >
+                    {/* Timeline Header */}
+                    <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 z-10 shadow-sm">
+                      <div className="flex">
+                        {/* Labels Column - WIDER to cover milestone names completely */}
+                        <div className="w-96 bg-gradient-to-b from-blue-50 to-white border-r border-gray-200 p-3">
+                          <div className="text-sm font-semibold text-blue-700">Milestones</div>
+                        </div>
+                        
+                        {/* Timeline Grid - Starts exactly where milestone bars begin */}
+                        <div className="flex-1 relative">
+                          {/* Weekly Markers - Top row with week numbers and dates */}
+                          <div className="relative" style={{ height: '44px' }}>
+                            {timelineMarkers.map((m: any) => (
+                              <div key={m.week} className="absolute border-r border-gray-200 text-center text-xs text-gray-600 p-1 bg-gradient-to-b from-gray-50 to-white flex flex-col justify-center" style={{ left: m.position, width: 7*timelineData.dayWidth, minWidth: 7*timelineData.dayWidth, height: '44px' }}>
+                                <div className="font-semibold text-gray-800">Week {m.week}</div>
+                                <div className="text-gray-500">{m.date.toLocaleDateString()}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="relative" style={{ height: '20px' }}>
+                            {dailyMarkers.map((marker: any, idx: number) => (
+                              <div key={`day-letter-${idx}`} className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${marker.isWeekend?'bg-gray-100 text-gray-500':'bg-white text-gray-600'}`} style={{ left: marker.position, width: timelineData.dayWidth, minWidth: timelineData.dayWidth, height: '20px' }}>
+                                <div className="font-medium">{marker.dayLetter}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="relative" style={{ height: '24px' }}>
+                            <div className="absolute top-0 bottom-0 w-1 bg-red-600 z-20 shadow-lg" style={{ left: getCurrentDatePosition(), boxShadow: '0 0 4px rgba(220, 38, 38, 0.5), 0 0 8px rgba(220, 38, 38, 0.3)' }} />
+                            {dailyMarkers.map((m: any) => (
+                              <div key={`day-${m.date.toISOString()}`} className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${m.isWeekend?'bg-gray-100 text-gray-500':'bg-white text-gray-700'}`} style={{ left: m.position, width: timelineData.dayWidth, minWidth: timelineData.dayWidth, height: '24px' }}>
+                                <div className="font-medium">{m.day}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Timeline Content */}
+                    <div className="space-y-0 relative">
+                      {/* Current Date Indicator - spans across ALL milestone rows */}
+                      <div
+                        className="absolute top-0 bottom-0 w-1 bg-red-600 z-20 shadow-lg"
+                        style={{ 
+                          left: getCurrentDatePosition() + 384, // 384px = width of milestone labels column (w-96)
+                          boxShadow: '0 0 4px rgba(220, 38, 38, 0.5), 0 0 8px rgba(220, 38, 38, 0.3)'
+                        }}
+                      />
+                      
+                      {filteredTasks.map((task) => {
+                        const x = getMilestoneStartPosition(task);
+                        const width = getTaskWidth(task.startDate, task.dueDate);
+                        
+                        return (
+                          <div key={task.id}>
+                            {/* Main Milestone Row */}
+                            <div className="flex items-center h-16 border-b border-gray-100">
+                              {/* Task Label - WIDER to match header */}
+                              <div className="w-96 bg-white border-r border-gray-200 p-3 flex items-center space-x-3">
+                                <div className="flex items-center space-x-2">
+                                  <button
+                                    onClick={() => toggleMilestoneExpansion(task.id)}
+                                    className={`transition-colors ${
+                                      task.subtasks && task.subtasks.length > 0 
+                                        ? 'text-gray-500 hover:text-gray-700' 
+                                        : 'text-gray-300 cursor-not-allowed'
+                                    }`}
+                                    disabled={!task.subtasks || task.subtasks.length === 0}
+                                  >
+                                    {expandedMilestones.has(task.id) ? '▼' : '▶'}
+                                  </button>
+                                  <div className={`w-3 h-3 rounded-full ${getStatusColor(task.status)} shadow-sm`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-sm text-gray-900 truncate">
+                                    {task.name}
+                                  </div>
+                                  <div className="flex items-center space-x-2 mt-1">
+                                    <Badge 
+                                      variant="outline" 
+                                      className={`text-xs ${getPhaseColor(task.phaseNumber)}`}
+                                    >
+                                      {getPhaseName(task.phaseNumber)}
+                                    </Badge>
+                                  </div>
+                                </div>
+                                <Badge 
+                                  variant="outline" 
+                                  className={`text-xs ${getPriorityColor(task.priority)}`}
+                                >
+                                  {task.priority || 'Medium'}
+                                </Badge>
+                              </div>
+                              
+                              {/* Timeline Bar */}
+                              <div className="flex-1 relative">
+                                <div className="relative h-full">
+                                  {/* Task Bar */}
+                                  <div
+                                    className={`absolute top-2 h-10 rounded-lg cursor-pointer transition-all hover:opacity-80 hover:scale-105 shadow-lg ${getStatusColor(task.status)} border-2 border-white`}
+                                    style={{
+                                      left: `${x}px`,
+                                      width: `${Math.max(20, width)}px`,
+                                      minWidth: '20px',
+                                      zIndex: 10,
+                                    }}
+                                    onClick={() => onTaskClick?.(task.id)}
+                                    title={generateTooltipContent(task)}
+                                  />
+                                  
+                                  {/* Progress Overlay */}
+                                  {task.progress > 0 && (
+                                    <div
+                                      className="absolute top-2 h-10 bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-l transition-all shadow-sm"
+                                      style={{
+                                        left: `${x}px`,
+                                        width: `${(width * task.progress) / 100}px`,
+                                      }}
+                                    />
+                                  )}
+
+                                  {/* Progress Text */}
+                                  {task.progress > 0 && (
+                                    <div
+                                      className="absolute top-2 h-10 flex items-center justify-center text-white text-xs font-medium"
+                                      style={{
+                                        left: `${x}px`,
+                                        width: `${(width * task.progress) / 100}px`,
+                                      }}
+                                    >
+                                      {task.progress}%
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* Subtasks */}
+                            {expandedMilestones.has(task.id) && task.subtasks && task.subtasks.length > 0 && (
+                              <div className="bg-gray-50 border-b border-gray-100">
+                                {task.subtasks.map((subtask: NonNullable<typeof task.subtasks>[0], index: number) => (
+                                  <div key={subtask.id} className="flex items-center h-20 border-b border-gray-100 last:border-b-0 bg-gray-50/50">
+                                    {/* Subtask Label */}
+                                    <div className="w-96 bg-gray-50/50 border-r border-gray-200 p-6 flex items-center space-x-4">
+                                      <div className="flex items-center space-x-4 ml-16">
+                                        <div className="w-4 h-4 bg-gray-400 rounded-full"></div>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="font-medium text-sm text-gray-700 truncate mb-2">
+                                            {subtask.name}
+                                          </div>
+                                          <div className="flex items-center space-x-4">
+                                            <Badge variant="outline" className="text-xs">
+                                              {subtask.status}
+                                            </Badge>
+                                            {subtask.startDate && (
+                                              <span className="text-gray-500 text-xs">
+                                                {new Date(subtask.startDate).toLocaleDateString()}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    
+                                    {/* Subtask Bar */}
+                                    <div className="flex-1 relative">
+                                      <div className="relative h-full">
+                                        <div
+                                          className="absolute top-6 h-6 bg-gray-400 rounded cursor-pointer transition-all hover:opacity-80 shadow-sm border border-gray-300"
+                                          style={{
+                                            left: `${getDatePosition(subtask.startDate)}px`,
+                                            width: `${Math.max(20, getTaskWidth(subtask.startDate, subtask.dueDate))}px`,
+                                            minWidth: '20px',
+                                            zIndex: 5,
+                                          }}
+                                          title={generateSubtaskTooltipContent(subtask, task, getPhaseName(task.phaseNumber))}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                   
+                  {/* Legend */}
+                  <div className="mt-6 p-4 bg-gray-50 rounded-lg border">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3">Legend</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
+                        <span className="text-gray-600">Completed</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                        <span className="text-gray-600">In Progress</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 rounded-full bg-slate-400"></div>
+                        <span className="text-gray-600">To Do</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 rounded-full bg-amber-500"></div>
+                        <span className="text-gray-600">On Hold</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* List View */
+                <div className="space-y-4">
+                  {filteredTasks.map((task) => (
+                    <div key={task.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-3 h-3 rounded-full ${getStatusColor(task.status)}`} />
+                          <div>
+                            <h4 className="font-medium text-gray-900">{task.name}</h4>
+                            <p className="text-sm text-gray-600">
+                              Phase {task.phaseNumber || 'N/A'} • {task.status}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center space-x-4">
+                          <Badge variant="outline" className={getPhaseColor(task.phaseNumber)}>
+                            {getPhaseName(task.phaseNumber)}
+                          </Badge>
+                          
+                          <Badge variant="outline" className={getPriorityColor(task.priority)}>
+                            {task.priority || 'Medium'}
+                          </Badge>
+                          
+                          <div className="text-sm text-gray-600">
+                            <div>Start: {task.startDate ? new Date(task.startDate).toLocaleDateString() : 'Not set'}</div>
+                            <div>Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'Not set'}</div>
+                          </div>
+                          
+                          <div className="text-right">
+                            <div className="text-sm font-medium">{task.progress || 0}%</div>
+                            <Progress value={task.progress || 0} className="w-20 h-2" />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Subtasks Section for List View */}
+                      {expandedMilestones.has(task.id) && task.subtasks && task.subtasks.length > 0 && (
+                        <div className="mt-3 p-3 bg-gray-50 rounded border-l-4 border-blue-500">
+                          <div className="text-sm font-medium text-gray-700 mb-2">Subtasks:</div>
+                          <div className="space-y-2">
+                            {task.subtasks.map((subtask: NonNullable<typeof task.subtasks>[0]) => (
+                              <div key={subtask.id} className="flex items-center space-x-3 text-sm">
+                                <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                                <span className="text-gray-700">{subtask.name}</span>
+                                <Badge variant="outline" className="text-xs">
+                                  {subtask.status}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  
+                  {filteredTasks.length === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      <Target className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                      <p>No milestones found</p>
+                      <p className="text-sm">Try adjusting your search or status filters</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         {/* Bottom project tabs */}
@@ -1099,156 +1401,5 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
       document.body
     ) : null}
     </>
-  );
-}
-
-// Lightweight body renderer for fullscreen reuse (timeline-only)
-function FullscreenGanttBody({ data }: { data: GanttData }) {
-  // We embed a minimal instance of this component’s core rendering using the same utility logic.
-  // To avoid duplicating all code, we instantiate a tiny wrapper of the same chart at 100% zoom.
-  // For simplicity, we’ll call the original GanttChart helpers indirectly by recreating needed parts here.
-  // Reuse of full logic would require refactor; this provides a spacious view with headers and bars.
-
-  // Local copies of small helpers
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed':
-      case 'done':
-        return 'bg-emerald-500';
-      case 'in_progress':
-        return 'bg-blue-500';
-      case 'on_hold':
-        return 'bg-amber-500';
-      case 'overdue':
-        return 'bg-red-500';
-      case 'todo':
-      case 'not_started':
-        return 'bg-slate-400';
-      default:
-        return 'bg-indigo-500';
-    }
-  };
-
-  const [zoom] = useState(1);
-
-  const timelineData = useMemo(() => {
-    if (!data.project.startDate || !data.project.endDate) return null;
-    const projectStart = new Date(data.project.startDate);
-    const projectEnd = new Date(data.project.endDate);
-    if (isNaN(projectStart.getTime()) || isNaN(projectEnd.getTime())) return null;
-    const allStartDates: Date[] = [];
-    data.tasks.forEach(task => { if (task.startDate) { const d = new Date(task.startDate); if (!isNaN(d.getTime())) allStartDates.push(d); } });
-    const earliestStart = allStartDates.length ? new Date(Math.min(...allStartDates.map(d => d.getTime()))) : projectStart;
-    const timelineStart = new Date(earliestStart);
-    const dayOfWeek = timelineStart.getDay();
-    const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    timelineStart.setDate(timelineStart.getDate() + daysToMonday);
-    const totalDays = Math.ceil((projectEnd.getTime() - timelineStart.getTime()) / (1000 * 60 * 60 * 24));
-    const dayWidth = 40 * zoom;
-    return {
-      projectStart, projectEnd, timelineStart, totalDays, dayWidth,
-      containerWidth: totalDays * dayWidth + 400,
-      weekWidth: 7 * dayWidth
-    };
-  }, [data, zoom]) as any;
-
-  const getDatePosition = (date: string | null) => {
-    if (!date || !timelineData) return 0;
-    const target = new Date(date); if (isNaN(target.getTime())) return 0;
-    const daysDiff = Math.ceil((target.getTime() - timelineData.timelineStart.getTime()) / (1000 * 60 * 60 * 24));
-    return Math.max(0, daysDiff * timelineData.dayWidth);
-  };
-  const getTaskWidth = (startDate: string | null, dueDate: string | null) => {
-    if (!startDate || !dueDate || !timelineData) return 120;
-    const start = new Date(startDate); const end = new Date(dueDate);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 120;
-    const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-    return Math.max(30, days * timelineData.dayWidth);
-  };
-  const getCurrentDatePosition = () => {
-    if (!timelineData) return 0; const today = new Date(); return getDatePosition(today.toISOString().split('T')[0]);
-  };
-  const dailyMarkers = useMemo(() => {
-    if (!timelineData) return [] as any[];
-    const markers: any[] = [];
-    for (let i = 0; i <= timelineData.totalDays; i++) {
-      const d = new Date(timelineData.timelineStart); d.setDate(d.getDate() + i);
-      const dayOfWeek = d.getDay();
-      const dayLetters = ['S','M','T','W','T','F','S'];
-      markers.push({ day: d.getDate(), date: d, position: i * timelineData.dayWidth, isWeekend: dayOfWeek===0||dayOfWeek===6, dayLetter: dayLetters[dayOfWeek] });
-    }
-    return markers;
-  }, [timelineData]);
-  const timelineMarkers = useMemo(() => {
-    if (!timelineData) return [] as any[];
-    const markers: any[] = []; const totalWeeks = Math.ceil(timelineData.totalDays/7);
-    for (let i=0;i<=totalWeeks;i++) { const weekStart = new Date(timelineData.timelineStart); weekStart.setDate(weekStart.getDate()+i*7); markers.push({ week: i+1, date: weekStart, position: i*7*timelineData.dayWidth }); }
-    return markers;
-  }, [timelineData]);
-
-  return (
-    <div className="overflow-x-auto">
-      <div className="relative min-w-full" style={{ width: timelineData?.containerWidth }}>
-        {/* Sticky header rows replicate main component */}
-        <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 z-10 shadow-sm">
-          <div className="flex">
-            <div className="w-96 bg-gradient-to-b from-blue-50 to-white border-r border-gray-200 p-3">
-              <div className="text-sm font-semibold text-blue-700">Milestones</div>
-            </div>
-            <div className="flex-1 relative">
-              <div className="relative" style={{ height: '44px' }}>
-                {timelineMarkers.map((m: any) => (
-                  <div key={m.week} className="absolute border-r border-gray-200 text-center text-xs text-gray-600 p-1 bg-gradient-to-b from-gray-50 to-white flex flex-col justify-center" style={{ left: m.position, width: 7*timelineData.dayWidth, minWidth: 7*timelineData.dayWidth, height: '44px' }}>
-                    <div className="font-semibold text-gray-800">Week {m.week}</div>
-                    <div className="text-gray-500">{m.date.toLocaleDateString()}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="relative" style={{ height: '20px' }}>
-                {dailyMarkers.map((marker: any, idx: number) => (
-                  <div key={`day-letter-${idx}`} className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${marker.isWeekend?'bg-gray-100 text-gray-500':'bg-white text-gray-600'}`} style={{ left: marker.position, width: timelineData.dayWidth, minWidth: timelineData.dayWidth, height: '20px' }}>
-                    <div className="font-medium">{marker.dayLetter}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="relative" style={{ height: '24px' }}>
-                <div className="absolute top-0 bottom-0 w-1 bg-red-600 z-20 shadow-lg" style={{ left: getCurrentDatePosition(), boxShadow: '0 0 4px rgba(220, 38, 38, 0.5), 0 0 8px rgba(220, 38, 38, 0.3)' }} />
-                {dailyMarkers.map((m: any) => (
-                  <div key={`day-${m.date.toISOString()}`} className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${m.isWeekend?'bg-gray-100 text-gray-500':'bg-white text-gray-700'}`} style={{ left: m.position, width: timelineData.dayWidth, minWidth: timelineData.dayWidth, height: '24px' }}>
-                    <div className="font-medium">{m.day}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Rows */}
-        <div className="space-y-0 relative">
-          <div className="absolute top-0 bottom-0 w-1 bg-red-600 z-20 shadow-lg" style={{ left: getCurrentDatePosition() + 384, boxShadow: '0 0 4px rgba(220, 38, 38, 0.5), 0 0 8px rgba(220, 38, 38, 0.3)' }} />
-          {data.tasks.map((t) => {
-            const x = getDatePosition(t.startDate);
-            const w = getTaskWidth(t.startDate, t.dueDate);
-            return (
-              <div key={t.id}>
-                <div className="flex items-center h-16 border-b border-gray-100">
-                  <div className="w-96 bg-white border-r border-gray-200 p-3 flex items-center space-x-3">
-                    <div className={`w-3 h-3 rounded-full ${getStatusColor(t.status)} shadow-sm`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm text-gray-900 truncate">{t.name}</div>
-                    </div>
-                  </div>
-                  <div className="flex-1 relative">
-                    <div className="relative h-full">
-                      <div className={`absolute top-2 h-10 rounded-lg shadow-lg ${getStatusColor(t.status)} border-2 border-white`} style={{ left: `${x}px`, width: `${Math.max(20, w)}px`, minWidth: '20px' }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
   );
 }
