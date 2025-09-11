@@ -72,7 +72,7 @@ app.use((req, res, next) => {
     const server = await registerRoutes(app);
 
     // CSRF protection (after auth setup) - temporarily disabled for debugging
-    // setupCSRFProtection(app);
+  setupCSRFProtection(app);
 
   // Enhanced error handler with security logging
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {

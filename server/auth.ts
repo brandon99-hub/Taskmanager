@@ -17,34 +17,42 @@ export function getSession() {
   if (!process.env.SESSION_SECRET) {
     throw new Error("SESSION_SECRET environment variable is required");
   }
-  
   if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL environment variable is required");
   }
-  
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
-  const pgStore = connectPg.default(session);
-  const sessionStore = new pgStore({
+
+  const sessionTtl = 7 * 24 * 60 * 60 * 1000;
+
+  // Robust connect-pg-simple import for both ESM/CJS
+  const PgSessionFactory: any = (connectPg as any).default ?? (connectPg as any);
+  const PgStore = PgSessionFactory(session);
+  const sessionStore = new PgStore({
     conString: process.env.DATABASE_URL,
     createTableIfMissing: true,
     ttl: sessionTtl,
     tableName: "sessions",
   });
-  
+
+  const isSecureCookie =
+    (process.env.COOKIE_SECURE ?? (process.env.NODE_ENV === "production" ? "true" : "false")) === "true";
+
   return session({
     secret: process.env.SESSION_SECRET,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
-    name: 'taskflow-session',
+    name: "taskflow-session",
+    proxy: true,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? 'strict' : 'lax',
+      secure: isSecureCookie,
+      sameSite: "lax",
       maxAge: sessionTtl,
+      path: "/",
+      domain: process.env.COOKIE_DOMAIN || undefined,
     },
-    rolling: true, // Extend session on activity
-    unset: 'destroy', // Destroy session when unset
+    rolling: true,
+    unset: "destroy",
   });
 }
 
@@ -58,7 +66,7 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 export async function setupAuth(app: Express) {
-  app.set("trust proxy", 1);
+  app.set("trust proxy", true);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
@@ -217,25 +225,34 @@ export async function setupAuth(app: Express) {
     }
 
     passport.authenticate('local', (err: any, user: any, info: any) => {
-      if (err) {
-        return next(err);
-      }
-      if (!user) {
-        return res.status(401).json({ message: info.message || 'Authentication failed' });
-      }
-      
-      req.logIn(user, (err) => {
-        if (err) {
-          return next(err);
-        }
-        
-        // Remove password from response
-        const { password, ...userWithoutPassword } = user;
-        return res.json(userWithoutPassword);
+      if (err) return next(err);
+      if (!user) return res.status(401).json({ message: info?.message || 'Authentication failed' });
+
+      // Regenerate session to prevent fixation, then log in and force a save so Set-Cookie is sent
+      (req as any).session.regenerate((regenErr: any) => {
+        if (regenErr) return next(regenErr);
+
+        req.logIn(user, (loginErr) => {
+          if (loginErr) return next(loginErr);
+
+          (req as any).session.save((saveErr: any) => {
+            if (saveErr) return next(saveErr);
+
+            if (process.env.DEBUG_AUTH === "true") {
+              console.warn("auth-cookie-debug", {
+                secureReq: req.secure,
+                xfp: req.get("x-forwarded-proto"),
+                sessionId: (req as any).sessionID,
+              });
+            }
+
+            const { password, ...userWithoutPassword } = user;
+            return res.json(userWithoutPassword);
+          });
+        });
       });
     })(req, res, next);
   });
-
   // Logout endpoint
   app.post('/api/auth/logout', (req, res) => {
     req.logout((err) => {
