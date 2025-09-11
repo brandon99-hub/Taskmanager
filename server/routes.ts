@@ -1083,11 +1083,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? undefined
           : String(req.body.budget),
         teamId: req.body.teamId || undefined,
-        managerId: req.user.id,
+        managerId: req.body.managerId || undefined,
       };
 
       if (!payload.client || !payload.contactPerson || !payload.contactPhone) {
         return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['client','contactPerson','contactPhone'], message: 'Client name, contact person, and contact phone are required' }] });
+      }
+
+      // Determine managerId if not explicitly provided
+      if (!payload.managerId) {
+        if (payload.teamId) {
+          try {
+            const teamMembers = await storage.getTeamMembers(payload.teamId);
+            const leader = teamMembers.find(m => m.role === 'Project Leader');
+            if (leader) {
+              payload.managerId = leader.userId;
+            }
+          } catch (_err) {
+            // ignore, fallback will apply
+          }
+        }
+        if (!payload.managerId) {
+          payload.managerId = req.user.id;
+        }
       }
 
       const project = await storage.createProject(payload);
@@ -2264,6 +2282,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (cleaned.dueDate && isNaN(cleaned.dueDate.getTime())) {
         return res.status(400).json({ message: 'Invalid due date format' });
+      }
+
+      // Default assignment: if both Dev and FC are unassigned, assign to project manager
+      try {
+        const devUnassigned = !cleaned.assignedDevId || cleaned.assignedDevId === 'unassigned';
+        const fcUnassigned = !cleaned.assignedConsultantId || cleaned.assignedConsultantId === 'unassigned';
+        if (devUnassigned && fcUnassigned) {
+          if (cleaned.moduleId) {
+            const mod = await storage.getModule(cleaned.moduleId);
+            if (mod) {
+              const proj = await storage.getProject(mod.projectId);
+              if (proj?.managerId) {
+                cleaned.assignedDevId = proj.managerId;
+                cleaned.assignedConsultantId = proj.managerId;
+              }
+            }
+          } else if (cleaned.milestoneId) {
+            const ms = await storage.getMilestone(cleaned.milestoneId);
+            if (ms) {
+              const proj = await storage.getProject(ms.projectId);
+              if (proj?.managerId) {
+                cleaned.assignedDevId = proj.managerId;
+                cleaned.assignedConsultantId = proj.managerId;
+              }
+            }
+          }
+        }
+      } catch (_err) {
+        // if lookup fails, continue without defaulting
       }
 
       // Validation path: allow either moduleId (Phase 3) OR milestoneId (other phases)

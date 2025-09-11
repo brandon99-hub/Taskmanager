@@ -14,9 +14,9 @@ export default function QuickActions() {
   const dashboardType = getDashboardType();
   
   // Debug logging
-  console.log('QuickActions - dashboardType:', dashboardType);
-  console.log('QuickActions - user role:', user?.role);
-  console.log('QuickActions - isAdminRole():', isAdminRole());
+  // console.debug('QuickActions - dashboardType:', dashboardType);
+  // console.debug('QuickActions - user role:', user?.role);
+  // console.debug('QuickActions - isAdminRole():', isAdminRole());
 
   const handleExportData = () => {
     // Generate CSV data from current tasks/projects

@@ -24,8 +24,8 @@ export default function Dashboard() {
   const segment = getSegment();
   
   // Debug logging
-  console.log('Dashboard - dashboardType:', dashboardType);
-  console.log('Dashboard - isAdminRole():', isAdminRole());
+  // console.debug('Dashboard - dashboardType:', dashboardType);
+  // console.debug('Dashboard - isAdminRole():', isAdminRole());
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
   // Check if user must change password

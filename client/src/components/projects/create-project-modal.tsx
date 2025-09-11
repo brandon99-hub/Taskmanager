@@ -53,6 +53,8 @@ const createProjectSchema = z.object({
   segment: z.enum(["academic", "parastals", "private"]).default("private"),
 
   teamId: z.string().optional().or(z.literal("none")),
+  // New: allow selecting a project leader (manager) explicitly
+  managerId: z.string().optional(),
 
   budget: z.string().default("0.00"),
 
@@ -1260,14 +1262,23 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   // Debug phases state changes
 
   useEffect(() => {
-
-    console.log('Phases state updated:', phases);
-
-    console.log('Phase 1 milestones:', phases[0]?.milestones?.length || 0);
-
-    console.log('Phase 1 modules:', phases[0]?.modules?.length || 0);
-
+    // console.debug('Phases state updated:', phases);
+    // console.debug('Phase 1 milestones:', phases[0]?.milestones?.length || 0);
+    // console.debug('Phase 1 modules:', phases[0]?.modules?.length || 0);
   }, [phases]);
+
+  // Auto-select team Project Leader as manager when team changes (new project only)
+  const watchedTeamId = form.watch('teamId');
+  useEffect(() => {
+    if (isEditMode) return;
+    if (!watchedTeamId || watchedTeamId === 'none') return;
+    // This effect is declared before teamMembers; the callback runs after render, when teamMembers is defined
+    // eslint-disable-next-line @typescript-eslint/no-use-before-define
+    const leader = (teamMembers || []).find((m: any) => m.role === 'Project Leader');
+    if (leader && leader.id) {
+      form.setValue('managerId', leader.id, { shouldDirty: true, shouldValidate: true });
+    }
+  }, [isEditMode, watchedTeamId]);
 
 
 
@@ -1335,6 +1346,18 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     retry: 1,
 
+  });
+
+  // Fetch admins as fallback candidates for manager selection
+  const { data: admins = [], isLoading: adminsLoading } = useQuery<any[]>({
+    queryKey: ['/api/users', 'admin'],
+    queryFn: async () => {
+      const res = await fetch('/api/users?role=admin', { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: isOpen,
+    staleTime: 5 * 60 * 1000,
   });
 
 
@@ -1492,6 +1515,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         endDate: new Date(data.endDate),
 
         teamId: data.teamId === "none" ? undefined : data.teamId || undefined,
+
+        managerId: (data as any).managerId || undefined,
 
         client: data.client || undefined,
 
@@ -4911,6 +4936,43 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                   )}
 
+                />
+
+                {/* Project Leader (Manager) selection */}
+                <FormField
+                  control={form.control}
+                  name="managerId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-medium text-gray-700">Project Leader (Manager)</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className="h-11" data-testid="select-project-manager">
+                            <SelectValue placeholder="Select project leader" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {/* Prefer team members if a team is selected */}
+                          {(() => {
+                            const selectedTeamId = form.getValues("teamId");
+                            const selectedTeam = selectedTeamId && selectedTeamId !== 'none' ? teams.find((t: any) => t.id === selectedTeamId) : null;
+                            const teamMembers = (selectedTeam?.members || []).map((m: any) => m.user || m);
+                            const uniq = (arr: any[]) => arr.filter((x, i) => arr.findIndex(y => (y.id || y.userId) === (x.id || x.userId)) === i);
+                            const options = uniq(teamMembers.length > 0 ? teamMembers : admins);
+                            if (!options || options.length === 0) {
+                              return <SelectItem value="no_managers" disabled>No candidates available</SelectItem>;
+                            }
+                            return options.map((u: any) => (
+                              <SelectItem key={u.id} value={u.id}>
+                                {u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : (u.email || 'Unknown User')}
+                              </SelectItem>
+                            ));
+                          })()}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
 
               </div>

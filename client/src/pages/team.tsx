@@ -67,7 +67,7 @@ export default function Team() {
   });
 
   // Debug log for initial state
-  console.log('Initial admin role data:', adminRoleData);
+  // console.debug('Initial admin role data:', adminRoleData);
   
   // Loading state for admin role save
   const [isSavingAdminRoles, setIsSavingAdminRoles] = useState(false);
@@ -81,7 +81,7 @@ export default function Team() {
       });
       if (!res.ok) return { financeEmail: '', accountManagerEmail: '' };
       const data = await res.json();
-      console.log('System emails loaded:', data); // Debug log
+      // console.debug('System emails loaded:', data);
       return data;
     },
     enabled: !!isAuthenticated,
@@ -493,7 +493,7 @@ export default function Team() {
   // Auto-fill segment leader emails when system emails are loaded
   useEffect(() => {
     if (systemEmails) {
-      console.log('Updating segment leader data with system emails:', systemEmails); // Debug log
+      // console.debug('Updating segment leader data with system emails:', systemEmails);
       setAdminRoleData(prev => ({
         ...prev,
         financeEmail: systemEmails.financeEmail || 'finance@company.com',

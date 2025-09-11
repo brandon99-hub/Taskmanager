@@ -5486,18 +5486,17 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         } as any)
         .returning();
 
-      // Update user table with admin flags and base role
+      // Update user table with admin flags and promote base role to admin
       const updateData: any = { updatedAt: new Date() };
       if (typedRoleData.roleType === 'project_manager') {
         updateData.isProjectManager = true;
-        updateData.role = 'project_manager'; // Update base role
       } else if (typedRoleData.roleType === 'finance_head') {
         updateData.isFinanceHead = true;
-        updateData.role = 'finance_head'; // Update base role
       } else if (typedRoleData.roleType === 'segment_leader' && typedRoleData.segment) {
         updateData.assignedSegment = typedRoleData.segment;
-        updateData.role = 'segment_leader'; // Update base role
       }
+      // Ensure any assigned admin role elevates base role to 'admin'
+      updateData.role = 'admin';
 
       await db
         .update(users)
@@ -5537,17 +5536,14 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         throw new Error('Admin role assignment not found');
       }
 
-      // Update user table to remove admin flags and reset base role
+      // Update user table to remove admin flags (do not downgrade base role)
       const updateData: any = { updatedAt: new Date() };
       if (roleType === 'project_manager') {
         updateData.isProjectManager = false;
-        updateData.role = 'employee'; // Reset base role
       } else if (roleType === 'finance_head') {
         updateData.isFinanceHead = false;
-        updateData.role = 'employee'; // Reset base role
       } else if (roleType === 'segment_leader') {
         updateData.assignedSegment = null;
-        updateData.role = 'employee'; // Reset base role
       }
 
       await db
@@ -5683,14 +5679,14 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       // Hash the password (you'll need to implement password hashing)
       // const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
       
-      // Create user with employee role (they'll get admin privileges through admin roles table)
+      // Create user with admin base role so they have full admin capabilities
       const [newUser] = await db
         .insert(users)
         .values({
           email: userData.email,
           firstName: userData.firstName,
           lastName: userData.lastName,
-          role: 'employee', // Base role
+          role: 'admin',
           password: temporaryPassword, // TODO: Hash this properly
           temporaryPassword: temporaryPassword,
           passwordGeneratedAt: new Date(),

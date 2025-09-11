@@ -39,12 +39,12 @@ export default function MetricsCards() {
     queryKey: ['/api/dashboard/metrics'],
   });
 
-  // Log metrics when they change
+  // Debug logging disabled for production
   React.useEffect(() => {
     if (metrics) {
-      console.log('Dashboard metrics loaded:', metrics);
-      console.log('Completed modules count:', metrics.completedModules);
-      console.log('Dashboard type:', dashboardType);
+      // console.debug('Dashboard metrics loaded:', metrics);
+      // console.debug('Completed modules count:', metrics.completedModules);
+      // console.debug('Dashboard type:', dashboardType);
     }
   }, [metrics, dashboardType]);
 
