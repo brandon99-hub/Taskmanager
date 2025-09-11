@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +16,10 @@ import {
   ZoomOut,
   ChevronLeft,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  Maximize2,
+  Minimize2,
+  X
 } from 'lucide-react';
 
 interface GanttData {
@@ -190,6 +194,14 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
   const [expandedMilestones, setExpandedMilestones] = useState<Set<string>>(new Set());
   const [exportLoading, setExportLoading] = useState(false);
 
+  // Fullscreen overlay state
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [projectTabs, setProjectTabs] = useState<Array<{ id: string; name: string }>>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string>(data.project.id);
+  const [overlayLoading, setOverlayLoading] = useState(false);
+  const [overlayData, setOverlayData] = useState<GanttData | null>(null);
+  const [projectSearch, setProjectSearch] = useState('');
+
   const toggleMilestoneExpansion = (milestoneId: string) => {
     setExpandedMilestones(prev => {
       const newSet = new Set(prev);
@@ -201,6 +213,84 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
       return newSet;
     });
   };
+
+  // Fetch lightweight projects list for tabs when entering fullscreen
+  useEffect(() => {
+    if (!isFullscreen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/projects', { credentials: 'include', cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (cancelled) return;
+        const list = (json || []).map((p: any) => ({ id: p.id, name: p.name || p.client || 'Untitled Project' }));
+        setProjectTabs(list);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [isFullscreen]);
+
+  // Load Gantt data for a given project id (used in fullscreen)
+  const loadGanttDataForProject = async (projectId: string) => {
+    setOverlayLoading(true);
+    try {
+      const [projRes, phasesRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}`, { credentials: 'include', cache: 'no-store' }),
+        fetch(`/api/projects/${projectId}/phases`, { credentials: 'include', cache: 'no-store' })
+      ]);
+      if (!projRes.ok) throw new Error('Failed to load project');
+      const proj = await projRes.json();
+      const phases = phasesRes.ok ? await phasesRes.json() : [];
+      // Map modules -> tasks for Gantt
+      const tasks = (proj.modules || []).map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        startDate: m.startDate || null,
+        dueDate: m.dueDate || null,
+        status: m.status || 'not_started',
+        progress: m.progressPercent || 0,
+        priority: m.priority || 'medium',
+        phaseNumber: m.phaseNumber || undefined,
+        subtasks: [] as any[]
+      }));
+      const mappedPhases = (phases || []).map((p: any) => ({
+        id: p.id,
+        phaseNumber: p.phaseNumber,
+        name: p.phaseName,
+        startDate: p.startDate || null,
+        endDate: p.endDate || null,
+        status: p.status || 'not_started',
+        progress: p.progress || 0
+      }));
+      const mapped: GanttData = {
+        project: {
+          id: proj.id,
+          name: proj.name || proj.client || 'Untitled Project',
+          startDate: proj.startDate,
+          endDate: proj.endDate,
+        },
+        phases: mappedPhases,
+        tasks,
+      };
+      setOverlayData(mapped);
+    } catch (e: any) {
+      toast({ title: 'Load error', description: e?.message || 'Failed to load project', variant: 'destructive' });
+    } finally {
+      setOverlayLoading(false);
+    }
+  };
+
+  // When opening fullscreen, seed overlay with current data
+  useEffect(() => {
+    if (!isFullscreen) return;
+    setActiveProjectId(data.project.id);
+    setOverlayData(data);
+    // Attach Esc handler
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isFullscreen]);
 
   // Export Gantt chart to Excel
   const handleExportGantt = async () => {
@@ -485,6 +575,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
   }
 
   return (
+    <>
     <Card className="w-full">
       <CardHeader>
         <div className="flex items-center justify-between">
@@ -558,6 +649,16 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
             >
               <Download className="h-4 w-4 mr-2" />
               {exportLoading ? 'Exporting...' : 'Export'}
+            </Button>
+
+            {/* Maximize */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsFullscreen(true)}
+              title="Maximize Gantt"
+            >
+              <Maximize2 className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -918,5 +1019,236 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
         )}
       </CardContent>
     </Card>
+
+    {isFullscreen ? createPortal(
+      <div className="fixed inset-0 z-[9999] bg-white flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white">
+          <div className="flex items-center gap-3">
+            <div className="text-lg font-semibold text-gray-900">{overlayData?.project.name}</div>
+            {overlayData ? (
+              <div className="text-sm text-gray-600">
+                {overlayData?.project.startDate ? new Date(overlayData.project.startDate).toLocaleDateString() : ''}
+                {overlayData?.project.endDate ? ` — ${new Date(overlayData.project.endDate).toLocaleDateString()}` : ''}
+              </div>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Optional date controls could go here */}
+            <Button size="sm" variant="outline" onClick={() => setIsFullscreen(false)} title="Exit full screen">
+              <Minimize2 className="h-4 w-4" />
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setIsFullscreen(false)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Main Gantt area */}
+        <div className="flex-1 overflow-auto p-4">
+          {overlayLoading && (
+            <div className="h-full flex items-center justify-center text-gray-500">Loading…</div>
+          )}
+          {!overlayLoading && overlayData && (
+            <div className="min-h-full">
+              {/* Reuse the same visualization by rendering the inner content only */}
+              {/* For simplicity, we re-render this component’s main content by cloning with overlayData */}
+              {/* Basic reuse: show timeline view only in fullscreen for maximum space */}
+              {/* Header inside chart kept sticky via styles already */}
+              {/* Create a minimal wrapper to reuse existing calculated structures */}
+              {/* We can quickly reuse by temporarily setting data to overlayData and selectedView to timeline */}
+              {/* Inline render: */}
+              <div className="overflow-x-auto">
+                {/* Duplicate the key parts by leveraging existing helpers */}
+                {/* Because functions close over timelineData based on overlayData, recompute below */}
+                {/* Quick approach: mount a lightweight sub-instance of the same component is complex; instead, reuse same structures by temporarily creating a small child component */}
+                <FullscreenGanttBody data={overlayData as GanttData} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Bottom project tabs */}
+        <div className="border-t bg-white p-2 sticky bottom-0">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Input placeholder="Search projects" value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} className="pl-3 pr-3 h-9 w-64" />
+            </div>
+            <div className="flex-1 overflow-x-auto">
+              <div className="flex items-center gap-2 whitespace-nowrap">
+                {projectTabs
+                  .filter(p => p.name.toLowerCase().includes(projectSearch.toLowerCase()))
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      className={`px-3 py-1.5 rounded border text-sm ${p.id === activeProjectId ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                      onClick={async () => {
+                        if (p.id === activeProjectId) return;
+                        setActiveProjectId(p.id);
+                        await loadGanttDataForProject(p.id);
+                      }}
+                    >
+                      {p.name}
+                    </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>,
+      document.body
+    ) : null}
+    </>
+  );
+}
+
+// Lightweight body renderer for fullscreen reuse (timeline-only)
+function FullscreenGanttBody({ data }: { data: GanttData }) {
+  // We embed a minimal instance of this component’s core rendering using the same utility logic.
+  // To avoid duplicating all code, we instantiate a tiny wrapper of the same chart at 100% zoom.
+  // For simplicity, we’ll call the original GanttChart helpers indirectly by recreating needed parts here.
+  // Reuse of full logic would require refactor; this provides a spacious view with headers and bars.
+
+  // Local copies of small helpers
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed':
+      case 'done':
+        return 'bg-emerald-500';
+      case 'in_progress':
+        return 'bg-blue-500';
+      case 'on_hold':
+        return 'bg-amber-500';
+      case 'overdue':
+        return 'bg-red-500';
+      case 'todo':
+      case 'not_started':
+        return 'bg-slate-400';
+      default:
+        return 'bg-indigo-500';
+    }
+  };
+
+  const [zoom] = useState(1);
+
+  const timelineData = useMemo(() => {
+    if (!data.project.startDate || !data.project.endDate) return null;
+    const projectStart = new Date(data.project.startDate);
+    const projectEnd = new Date(data.project.endDate);
+    if (isNaN(projectStart.getTime()) || isNaN(projectEnd.getTime())) return null;
+    const allStartDates: Date[] = [];
+    data.tasks.forEach(task => { if (task.startDate) { const d = new Date(task.startDate); if (!isNaN(d.getTime())) allStartDates.push(d); } });
+    const earliestStart = allStartDates.length ? new Date(Math.min(...allStartDates.map(d => d.getTime()))) : projectStart;
+    const timelineStart = new Date(earliestStart);
+    const dayOfWeek = timelineStart.getDay();
+    const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    timelineStart.setDate(timelineStart.getDate() + daysToMonday);
+    const totalDays = Math.ceil((projectEnd.getTime() - timelineStart.getTime()) / (1000 * 60 * 60 * 24));
+    const dayWidth = 40 * zoom;
+    return {
+      projectStart, projectEnd, timelineStart, totalDays, dayWidth,
+      containerWidth: totalDays * dayWidth + 400,
+      weekWidth: 7 * dayWidth
+    };
+  }, [data, zoom]) as any;
+
+  const getDatePosition = (date: string | null) => {
+    if (!date || !timelineData) return 0;
+    const target = new Date(date); if (isNaN(target.getTime())) return 0;
+    const daysDiff = Math.ceil((target.getTime() - timelineData.timelineStart.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.max(0, daysDiff * timelineData.dayWidth);
+  };
+  const getTaskWidth = (startDate: string | null, dueDate: string | null) => {
+    if (!startDate || !dueDate || !timelineData) return 120;
+    const start = new Date(startDate); const end = new Date(dueDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 120;
+    const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.max(30, days * timelineData.dayWidth);
+  };
+  const getCurrentDatePosition = () => {
+    if (!timelineData) return 0; const today = new Date(); return getDatePosition(today.toISOString().split('T')[0]);
+  };
+  const dailyMarkers = useMemo(() => {
+    if (!timelineData) return [] as any[];
+    const markers: any[] = [];
+    for (let i = 0; i <= timelineData.totalDays; i++) {
+      const d = new Date(timelineData.timelineStart); d.setDate(d.getDate() + i);
+      const dayOfWeek = d.getDay();
+      const dayLetters = ['S','M','T','W','T','F','S'];
+      markers.push({ day: d.getDate(), date: d, position: i * timelineData.dayWidth, isWeekend: dayOfWeek===0||dayOfWeek===6, dayLetter: dayLetters[dayOfWeek] });
+    }
+    return markers;
+  }, [timelineData]);
+  const timelineMarkers = useMemo(() => {
+    if (!timelineData) return [] as any[];
+    const markers: any[] = []; const totalWeeks = Math.ceil(timelineData.totalDays/7);
+    for (let i=0;i<=totalWeeks;i++) { const weekStart = new Date(timelineData.timelineStart); weekStart.setDate(weekStart.getDate()+i*7); markers.push({ week: i+1, date: weekStart, position: i*7*timelineData.dayWidth }); }
+    return markers;
+  }, [timelineData]);
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="relative min-w-full" style={{ width: timelineData?.containerWidth }}>
+        {/* Sticky header rows replicate main component */}
+        <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 z-10 shadow-sm">
+          <div className="flex">
+            <div className="w-96 bg-gradient-to-b from-blue-50 to-white border-r border-gray-200 p-3">
+              <div className="text-sm font-semibold text-blue-700">Milestones</div>
+            </div>
+            <div className="flex-1 relative">
+              <div className="relative" style={{ height: '44px' }}>
+                {timelineMarkers.map((m: any) => (
+                  <div key={m.week} className="absolute border-r border-gray-200 text-center text-xs text-gray-600 p-1 bg-gradient-to-b from-gray-50 to-white flex flex-col justify-center" style={{ left: m.position, width: 7*timelineData.dayWidth, minWidth: 7*timelineData.dayWidth, height: '44px' }}>
+                    <div className="font-semibold text-gray-800">Week {m.week}</div>
+                    <div className="text-gray-500">{m.date.toLocaleDateString()}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="relative" style={{ height: '20px' }}>
+                {dailyMarkers.map((marker: any, idx: number) => (
+                  <div key={`day-letter-${idx}`} className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${marker.isWeekend?'bg-gray-100 text-gray-500':'bg-white text-gray-600'}`} style={{ left: marker.position, width: timelineData.dayWidth, minWidth: timelineData.dayWidth, height: '20px' }}>
+                    <div className="font-medium">{marker.dayLetter}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="relative" style={{ height: '24px' }}>
+                <div className="absolute top-0 bottom-0 w-1 bg-red-600 z-20 shadow-lg" style={{ left: getCurrentDatePosition(), boxShadow: '0 0 4px rgba(220, 38, 38, 0.5), 0 0 8px rgba(220, 38, 38, 0.3)' }} />
+                {dailyMarkers.map((m: any) => (
+                  <div key={`day-${m.date.toISOString()}`} className={`absolute text-center text-xs border-r border-gray-100 flex items-center justify-center ${m.isWeekend?'bg-gray-100 text-gray-500':'bg-white text-gray-700'}`} style={{ left: m.position, width: timelineData.dayWidth, minWidth: timelineData.dayWidth, height: '24px' }}>
+                    <div className="font-medium">{m.day}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Rows */}
+        <div className="space-y-0 relative">
+          <div className="absolute top-0 bottom-0 w-1 bg-red-600 z-20 shadow-lg" style={{ left: getCurrentDatePosition() + 384, boxShadow: '0 0 4px rgba(220, 38, 38, 0.5), 0 0 8px rgba(220, 38, 38, 0.3)' }} />
+          {data.tasks.map((t) => {
+            const x = getDatePosition(t.startDate);
+            const w = getTaskWidth(t.startDate, t.dueDate);
+            return (
+              <div key={t.id}>
+                <div className="flex items-center h-16 border-b border-gray-100">
+                  <div className="w-96 bg-white border-r border-gray-200 p-3 flex items-center space-x-3">
+                    <div className={`w-3 h-3 rounded-full ${getStatusColor(t.status)} shadow-sm`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm text-gray-900 truncate">{t.name}</div>
+                    </div>
+                  </div>
+                  <div className="flex-1 relative">
+                    <div className="relative h-full">
+                      <div className={`absolute top-2 h-10 rounded-lg shadow-lg ${getStatusColor(t.status)} border-2 border-white`} style={{ left: `${x}px`, width: `${Math.max(20, w)}px`, minWidth: '20px' }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }

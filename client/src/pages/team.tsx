@@ -351,9 +351,15 @@ export default function Team() {
               assigned.push({ displayName: roleConfig.displayName, email: roleConfig.email });
             }
           } else {
-            const errorData = await userResponse.json();
-            // If user already exists, that's fine - they might have been created before
-            if (errorData.message && errorData.message.includes('already exists')) {
+            // Read error safely without consuming the stream twice
+            const raw = await userResponse.clone().text();
+            let message = raw || userResponse.statusText || 'Unknown error';
+            try {
+              const json = JSON.parse(raw);
+              message = json?.message || message;
+            } catch {}
+            // If user already exists, treat as success/unchanged
+            if (message.toLowerCase().includes('already')) {
               successCount++;
               const prev = currentAssignments[roleConfig.displayName];
               if (prev && prev !== roleConfig.email) {
@@ -363,7 +369,7 @@ export default function Team() {
               }
             } else {
               errorCount++;
-              errors.push(`${roleConfig.displayName}: ${errorData.message || 'Unknown error'}`);
+              errors.push(`${roleConfig.displayName}: ${message}`);
             }
           }
         } catch (error) {

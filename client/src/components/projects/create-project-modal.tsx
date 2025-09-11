@@ -1616,6 +1616,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     allModules.forEach((module, moduleIndex) => {
 
+      // Skip milestone-only rows
+      // @ts-ignore
+      if ((module as any).isMilestone) return;
+
       const moduleStart = module.startDate ? new Date(module.startDate) : undefined;
 
       const moduleEnd = module.dueDate ? new Date(module.dueDate) : undefined;
@@ -1624,11 +1628,12 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
       
       
-      if (moduleStart && moduleEnd && moduleStart >= moduleEnd) {
+      // Only validate modules when both dates exist. Allow same-day duration.
+      if (moduleStart && moduleEnd && moduleStart > moduleEnd) {
 
         if (!moduleErrors[moduleKey]) moduleErrors[moduleKey] = {};
 
-        moduleErrors[moduleKey].dueDate = 'Module end date must be after start date';
+        moduleErrors[moduleKey].dueDate = 'Module end date cannot be before start date';
 
       }
 
@@ -1668,11 +1673,12 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
           
           
-          if (subtaskStart && subtaskEnd && subtaskStart >= subtaskEnd) {
+          // Only validate when both dates exist. Allow same-day duration.
+          if (subtaskStart && subtaskEnd && subtaskStart > subtaskEnd) {
 
             if (!moduleErrors[subtaskKey]) moduleErrors[subtaskKey] = {};
 
-            moduleErrors[subtaskKey].dueDate = 'Subtask end date must be after start date';
+            moduleErrors[subtaskKey].dueDate = 'Subtask end date cannot be before start date';
 
           }
 

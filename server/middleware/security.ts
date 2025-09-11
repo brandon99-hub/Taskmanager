@@ -34,8 +34,9 @@ export function setupSecurityHeaders(app: Express) {
         ],
         connectSrc: [
           "'self'",
-          process.env.NODE_ENV === 'development' ? "ws://localhost:*" : "'none'",
-          "https://api.taskflow.com" // Your API domain
+          ...(process.env.NODE_ENV === 'development' ? ["ws://localhost:*"] : []),
+          // Explicitly allow your deployed origin (redundant with 'self' when same-origin, but harmless)
+          "https://project.appkings.co.ke"
         ],
         frameSrc: ["'none'"],
         objectSrc: ["'none'"],

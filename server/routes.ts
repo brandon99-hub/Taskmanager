@@ -768,6 +768,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Resend admin role email with new temporary password
+  app.post('/api/admin/users/resend', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const { email, roleType, segment } = req.body || {};
+      if (!email || !roleType) {
+        return res.status(400).json({ message: 'Email and roleType are required' });
+      }
+      if (!['project_manager', 'finance_head', 'segment_leader'].includes(roleType)) {
+        return res.status(400).json({ message: 'Invalid roleType' });
+      }
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(404).json({ message: 'User not found for resend' });
+      }
+      // Generate a new temporary password and set mustChangePassword
+      const temporaryPassword = Math.random().toString(36).slice(-8);
+      await storage.updateUserPassword(user.id, temporaryPassword, true);
+
+      // Re-send admin role assignment notification
+      const { notificationService } = await import('./services/notificationService');
+      await notificationService.sendAdminRoleAssignedNotification({
+        user,
+        roleType,
+        segment,
+        assignedBy: req.user,
+        temporaryPassword,
+      });
+      return res.json({ message: 'Credentials re-sent with a new temporary password' });
+    } catch (error) {
+      console.error('Error resending admin credentials:', error);
+      res.status(500).json({ message: 'Failed to resend credentials' });
+    }
+  });
+
   // Notification endpoints
   // Send subtask assignment notification
   app.post('/api/notifications/subtask-assignment', isAuthenticated, async (req: any, res) => {
