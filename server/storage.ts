@@ -95,9 +95,9 @@ export interface IStorage {
   isUserInTeam(teamId: string, userId: string): Promise<boolean>;
 
   // Project operations
-  getProjects(): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number })[]>;
+  getProjects(): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number })[]>;
   getProject(id: string): Promise<(Project & { manager: User; team: Team | null; modules: Module[] }) | undefined>;
-  getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number })[]>;
+  getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number })[]>;
   createProject(project: InsertProject): Promise<Project>;
   updateProject(id: string, project: Partial<InsertProject>): Promise<Project>;
   terminateProject(id: string): Promise<Project>; // Method for terminating projects
@@ -693,6 +693,7 @@ export class DatabaseStorage implements IStorage {
     milestoneCount: number; 
     completedMilestoneCount: number;
     paidAmount: number;
+    totalFees: number;
   })[]> {
     // Step 1: fetch base projects with manager and team
     const baseRows = await db
@@ -718,23 +719,25 @@ export class DatabaseStorage implements IStorage {
         milestoneCount: count(milestones.id),
         completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
         paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'sent' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
+        totalFees: sql<number>`COALESCE(SUM(${milestones.feeAmount}), 0)`,
       })
       .from(milestones)
       .where(inArray(milestones.projectId, projectIds))
       .groupBy(milestones.projectId);
 
-    const projectIdToAgg: Record<string, { milestoneCount: number; completedMilestoneCount: number; paidAmount: number }> = {};
+    const projectIdToAgg: Record<string, { milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number }> = {};
     for (const row of aggRows) {
       projectIdToAgg[row.projectId] = {
         milestoneCount: Number(row.milestoneCount || 0),
         completedMilestoneCount: Number(row.completedMilestoneCount || 0),
         paidAmount: Number(row.paidAmount || 0),
+        totalFees: Number(row.totalFees || 0),
       };
     }
 
     // Step 3: merge
     return baseRows.map(r => {
-      const agg = projectIdToAgg[r.project.id] || { milestoneCount: 0, completedMilestoneCount: 0, paidAmount: 0 };
+      const agg = projectIdToAgg[r.project.id] || { milestoneCount: 0, completedMilestoneCount: 0, paidAmount: 0, totalFees: 0 };
       return {
         ...r.project,
         manager: r.manager!,
@@ -742,11 +745,12 @@ export class DatabaseStorage implements IStorage {
         milestoneCount: agg.milestoneCount,
         completedMilestoneCount: agg.completedMilestoneCount,
         paidAmount: agg.paidAmount,
+        totalFees: agg.totalFees,
       };
     });
   }
 
-  async getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number })[]> {
+  async getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number })[]> {
     // Get unique project IDs that the user has access to
     const userProjectIds = new Set<string>();
     
@@ -801,22 +805,24 @@ export class DatabaseStorage implements IStorage {
         milestoneCount: count(milestones.id),
         completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
         paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'sent' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
+        totalFees: sql<number>`COALESCE(SUM(${milestones.feeAmount}), 0)`,
       })
       .from(milestones)
       .where(inArray(milestones.projectId, projectIds))
       .groupBy(milestones.projectId);
 
-    const projectIdToAgg: Record<string, { milestoneCount: number; completedMilestoneCount: number; paidAmount: number }> = {};
+    const projectIdToAgg: Record<string, { milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number }> = {};
     for (const row of aggRows) {
       projectIdToAgg[row.projectId] = {
         milestoneCount: Number(row.milestoneCount || 0),
         completedMilestoneCount: Number(row.completedMilestoneCount || 0),
         paidAmount: Number(row.paidAmount || 0),
+        totalFees: Number(row.totalFees || 0),
       };
     }
 
     return baseRows.map(r => {
-      const agg = projectIdToAgg[r.project.id] || { milestoneCount: 0, completedMilestoneCount: 0, paidAmount: 0 };
+      const agg = projectIdToAgg[r.project.id] || { milestoneCount: 0, completedMilestoneCount: 0, paidAmount: 0, totalFees: 0 };
       return {
         ...r.project,
         manager: r.manager!,
@@ -824,6 +830,7 @@ export class DatabaseStorage implements IStorage {
         milestoneCount: agg.milestoneCount,
         completedMilestoneCount: agg.completedMilestoneCount,
         paidAmount: agg.paidAmount,
+        totalFees: agg.totalFees,
       };
     });
   }

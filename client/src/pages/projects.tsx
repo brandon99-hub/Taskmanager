@@ -492,7 +492,11 @@ export default function Projects() {
                         {project.contactEmail || 'N/A'}
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-900">
-                        {project.budget ? `KSh ${parseFloat(project.budget).toLocaleString()}` : 'N/A'}
+                        {project.budget
+                          ? `KSh ${parseFloat(project.budget).toLocaleString()}`
+                          : (project.totalFees && Number(project.totalFees) > 0
+                              ? `KSh ${Number(project.totalFees).toLocaleString()}`
+                              : 'N/A')}
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-900">
                         KSh {(project.paidAmount || 0).toLocaleString()}
@@ -501,20 +505,22 @@ export default function Projects() {
                         {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-900">
-                        {new Date(project.startDate).toLocaleDateString()}
+                        {project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A'}
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-900">
-                        {new Date(project.endDate).toLocaleDateString()}
+                        {project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A'}
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-900">
                         <span className="font-medium">
-                          {(() => {
-                            const start = new Date(project.startDate);
-                            const end = new Date(project.endDate);
-                            const diffTime = Math.abs(end.getTime() - start.getTime());
-                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                            return `${diffDays} days`;
-                          })()}
+                          {project.startDate && project.endDate
+                            ? (() => {
+                                const start = new Date(project.startDate);
+                                const end = new Date(project.endDate);
+                                const diffTime = Math.abs(end.getTime() - start.getTime());
+                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                return `${diffDays} days`;
+                              })()
+                            : 'N/A'}
                         </span>
                       </td>
                       <td className="px-4 py-4">
@@ -671,7 +677,7 @@ export default function Projects() {
                         <div className="flex items-center" data-testid={`text-project-dates-${project.id}`}>
                           <Calendar className="h-4 w-4 mr-2" />
                           <span>
-                            <span className="font-medium">Start:</span> {new Date(project.startDate).toLocaleDateString()} - <span className="font-medium">End:</span> {new Date(project.endDate).toLocaleDateString()}
+                            <span className="font-medium">Start:</span> {project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A'} - <span className="font-medium">End:</span> {project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A'}
                           </span>
                         </div>
 
@@ -679,15 +685,13 @@ export default function Projects() {
                         <div className="flex items-center">
                           <Clock className="h-4 w-4 mr-2" />
                           <span className="text-sm text-gray-600">
-                            <span className="font-medium">Duration:</span> {
-                              (() => {
-                                const start = new Date(project.startDate);
-                                const end = new Date(project.endDate);
-                                const diffTime = Math.abs(end.getTime() - start.getTime());
-                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                                return `${diffDays} days`;
-                              })()
-                            }
+                            <span className="font-medium">Duration:</span> {project.startDate && project.endDate ? (() => {
+                              const start = new Date(project.startDate);
+                              const end = new Date(project.endDate);
+                              const diffTime = Math.abs(end.getTime() - start.getTime());
+                              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                              return `${diffDays} days`;
+                            })() : 'N/A'}
                           </span>
                         </div>
 
