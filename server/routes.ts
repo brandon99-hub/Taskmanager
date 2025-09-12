@@ -1119,12 +1119,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/projects', isAuthenticated, async (req: any, res) => {
     try {
-      const start = req.body.startDate ? new Date(req.body.startDate) : undefined;
-      const end = req.body.endDate ? new Date(req.body.endDate) : undefined;
-      if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime()))) {
+      const hasStart = req.body.startDate !== undefined && req.body.startDate !== null && String(req.body.startDate).trim() !== '';
+      const hasEnd = req.body.endDate !== undefined && req.body.endDate !== null && String(req.body.endDate).trim() !== '';
+      const start = hasStart ? new Date(req.body.startDate) : undefined;
+      const end = hasEnd ? new Date(req.body.endDate) : undefined;
+      if ((hasStart && (!start || Number.isNaN(start.getTime()))) || (hasEnd && (!end || Number.isNaN(end.getTime())))) {
         return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['startDate','endDate'], message: 'Invalid dates' }] });
       }
-      if (start && end && end < start) {
+      if (hasStart && hasEnd && start && end && end < start) {
         return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['endDate'], message: 'End date must be after start date' }] });
       }
 
