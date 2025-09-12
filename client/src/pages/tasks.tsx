@@ -229,15 +229,15 @@ export default function Tasks() {
     <div className="min-h-screen bg-background-page">
       <Navigation />
       
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         
         {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 sm:mb-8">
           <div>
-            <h2 className="text-3xl font-medium text-gray-900 mb-2" data-testid="text-title">
+            <h2 className="text-2xl sm:text-3xl font-medium text-gray-900 mb-1 sm:mb-2" data-testid="text-title">
               {viewMode === 'milestones' ? (user?.role === 'employee' ? 'My Milestones' : 'All Milestones') : viewMode === 'modules' ? 'Modules' : 'Subtasks'}
             </h2>
-            <p className="text-gray-600" data-testid="text-subtitle">
+            <p className="text-gray-600 text-sm sm:text-base" data-testid="text-subtitle">
               {user?.role === 'employee' 
                  ? 'Track and manage your assigned milestones' 
                 : 'Track and manage all team milestones'
@@ -257,7 +257,7 @@ export default function Tasks() {
         </div>
 
         {/* Filters */}
-        <Card className="mb-8">
+        <Card className="mb-6 sm:mb-8">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">Filters & Search</CardTitle>

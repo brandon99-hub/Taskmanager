@@ -179,9 +179,9 @@ export default function MilestonesTable({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
@@ -236,7 +236,7 @@ export default function MilestonesTable({
         </CardHeader>
         <CardContent>
           {/* Filters and Search */}
-          <div className="mb-6 space-y-4">
+          <div className="mb-4 sm:mb-6 space-y-3 sm:space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="relative lg:col-span-2">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />

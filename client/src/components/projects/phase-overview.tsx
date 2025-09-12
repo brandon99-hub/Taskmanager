@@ -180,7 +180,7 @@ export default function PhaseOverview({
 
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">Project Phases</h3>
         <Badge variant="outline">
@@ -188,7 +188,7 @@ export default function PhaseOverview({
         </Badge>
       </div>
 
-      <div className="grid gap-4">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2">
         {phases.map((phase) => {
           const phaseModules = modules?.filter(m => m.phaseNumber === phase.phaseNumber) || [];
           const completedModules = phaseModules.filter(m => m.status === 'done').length;

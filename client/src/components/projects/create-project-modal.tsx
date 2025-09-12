@@ -3529,7 +3529,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         { ...newModule }
       ];
     } else {
-      newPhases[phaseIndex].modules = [...(newPhases[phaseIndex].modules || []), newModule];
+    newPhases[phaseIndex].modules = [...(newPhases[phaseIndex].modules || []), newModule];
     }
 
     setPhases(newPhases);
@@ -3544,7 +3544,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     if ((newPhases[phaseIndex].phaseNumber !== 3) && Array.isArray((newPhases[phaseIndex] as any).milestones)) {
       (newPhases[phaseIndex] as any).milestones = (newPhases[phaseIndex] as any).milestones.filter((_: any, i: number) => i !== moduleIndex);
     } else {
-      newPhases[phaseIndex].modules = newPhases[phaseIndex].modules.filter((_: any, i: number) => i !== moduleIndex);
+    newPhases[phaseIndex].modules = newPhases[phaseIndex].modules.filter((_: any, i: number) => i !== moduleIndex);
     }
 
     setPhases(newPhases);
@@ -3572,8 +3572,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         (newPhases[phaseIndex] as any).milestones = [];
       }
     } else {
-      if (!newPhases[phaseIndex].modules) {
-        newPhases[phaseIndex].modules = [];
+    if (!newPhases[phaseIndex].modules) {
+      newPhases[phaseIndex].modules = [];
       }
     }
 
@@ -3594,10 +3594,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         [field]: value
       };
     } else {
-      newPhases[phaseIndex].modules[moduleIndex] = {
-        ...newPhases[phaseIndex].modules[moduleIndex],
-        [field]: value
-      };
+    newPhases[phaseIndex].modules[moduleIndex] = {
+      ...newPhases[phaseIndex].modules[moduleIndex],
+      [field]: value
+    };
     }
 
     

@@ -22,7 +22,11 @@ export function generateExcelBuffer(options: ExcelExportOptions): Buffer {
   } else {
     // Handle individual reports
     if (reportType === 'gantt' && usingTemplate) {
+      // Use template headers and formatting exclusively; do not generate bars programmatically
       populateGanttTemplate(workbook, data, templateSheetName);
+    } else if (reportType === 'gantt') {
+      // No template provided: fall back to a simple table without custom bars
+      createSingleReport(workbook, data, reportType);
     } else {
       createSingleReport(workbook, data, reportType);
     }
@@ -506,29 +510,37 @@ function createGanttWorksheet(data: any[], title: string): WorkSheet {
 
 // Populate an existing template workbook for Gantt export
 function populateGanttTemplate(workbook: XLSX.WorkBook, data: any[], templateSheetName?: string) {
-  const sheetName = templateSheetName || workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
-  if (!worksheet) {
-    // Fallback: create a new gantt worksheet if template sheet not found
-    const ws = createGanttWorksheet(data, 'AppKings Solutions Limited - Gantt Chart Report');
-    XLSX.utils.book_append_sheet(workbook, ws, 'GanttChart');
+  // Always target an existing template sheet; never append a new GanttChart sheet to avoid name conflicts
+  // Prefer the 'GanttChart' sheet explicitly if present
+  const ganttSheetName = workbook.SheetNames.find(n => n.trim().toLowerCase() === 'ganttcart')
+    ? 'GanttChart'
+    : (workbook.SheetNames.find(n => n.trim().toLowerCase() === 'ganttchart') || undefined);
+  const preferredName = templateSheetName || ganttSheetName || workbook.SheetNames[0];
+  const targetSheet = workbook.Sheets[preferredName] || workbook.Sheets[workbook.SheetNames[0]];
+  if (!targetSheet) {
+    // As a last resort do nothing rather than appending a duplicate sheet
     return;
   }
 
-  const expectedHeaders = ['WBS', 'TASK', 'LEAD', 'DEVELOPER', 'FUNCTIONAL CONSULTANT', 'START', 'END', 'DAYS', '% DONE', 'WORK DAYS'];
-  const headerRowIndex = findHeaderRow(worksheet, expectedHeaders);
-  if (headerRowIndex === -1) {
-    // Fallback if headers not found
-    const ws = createGanttWorksheet(data, 'AppKings Solutions Limited - Gantt Chart Report');
-    XLSX.utils.book_append_sheet(workbook, ws, 'GanttChart');
-    return;
-  }
+  // Match the template's column headers exactly (no Developer/Functional Consultant columns)
+  const expectedHeaders = ['WBS', 'TASK', 'LEAD', 'START', 'END', 'DAYS', '% DONE', 'WORK DAYS'];
+  const headerRowIndex = findHeaderRow(targetSheet, expectedHeaders);
 
   const rows = buildGanttRowsForTemplate(data);
   if (rows.length === 0) return;
 
-  // Write rows under header, starting at column A (c=0), row headerRowIndex+1
-  XLSX.utils.sheet_add_aoa(worksheet, rows, { origin: { r: headerRowIndex + 1, c: 0 } });
+  // If headers found, place rows immediately below; otherwise, write starting at a safe default row (e.g., row 6)
+  // If headers detected, write immediately below; else default to row 9 (template common data row)
+  const startRow = headerRowIndex !== -1 ? headerRowIndex + 1 : 9; // 0-based row index
+  
+  // Optional: clear an ample data range below headers to remove sample/template rows
+  try {
+    const clearRows = Math.max(rows.length, 200);
+    const clearData = Array.from({ length: clearRows }, () => Array(8).fill(''));
+    XLSX.utils.sheet_add_aoa(targetSheet, clearData, { origin: { r: startRow, c: 0 } });
+  } catch {}
+  
+  XLSX.utils.sheet_add_aoa(targetSheet, rows, { origin: { r: startRow, c: 0 } });
 }
 
 function findHeaderRow(worksheet: XLSX.WorkSheet, headers: string[]): number {
@@ -572,8 +584,6 @@ function buildGanttRowsForTemplate(data: any[]): any[][] {
         '1',
         item.Name,
         shortName(item.Manager) || '',
-        item.Manager || 'N/A',
-        'N/A',
         item['Start Date'] || '',
         item['End Date'] || '',
         item['Duration (Days)'] || '',
@@ -587,8 +597,6 @@ function buildGanttRowsForTemplate(data: any[]): any[][] {
         String(currentModuleNumber),
         String(item.Name || '').toUpperCase(),
         shortName(item.Manager) || '',
-        '',
-        '',
         item['Start Date'] || '',
         item['End Date'] || '',
         item['Duration (Days)'] || '',
@@ -601,8 +609,6 @@ function buildGanttRowsForTemplate(data: any[]): any[][] {
         `${currentModuleNumber}.${currentSubtaskNumber}`,
         item.Name || '',
         pickSubtaskLeadShort(item),
-        item.Developer || 'N/A',
-        item.Consultant || 'N/A',
         item['Start Date'] || '',
         item['End Date'] || '',
         item['Duration (Days)'] || '',
@@ -611,7 +617,7 @@ function buildGanttRowsForTemplate(data: any[]): any[][] {
       ]);
     } else if (item.Type === '') {
       // spacing row
-      rows.push(['', '', '', '', '', '', '', '', '', '']);
+      rows.push(['', '', '', '', '', '', '', '']);
     }
   });
 

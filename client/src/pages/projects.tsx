@@ -120,6 +120,11 @@ export default function Projects() {
     }
   };
 
+  // Auto-switch to grid view on mobile for better readability
+  useEffect(() => {
+    if (isMobile && viewMode !== "grid") setViewMode("grid");
+  }, [isMobile]);
+
   const { data: overdueTasks = [] } = useQuery<any[]>({
     queryKey: ['/api/dashboard/overdue-tasks'],
     enabled: !!isAuthenticated,
@@ -364,19 +369,19 @@ export default function Projects() {
           <div className="overflow-x-auto">
             <table className="w-full border-collapse bg-white rounded-lg overflow-hidden shadow-sm">
               <thead>
-                <tr className="border-b border-gray-200">
+                <tr className="border-b border-gray-200 text-xs md:text-sm">
                   <th className="text-left p-3">Client</th>
-                  <th className="text-left p-3">Segment</th>
+                  <th className="text-left p-3 hidden md:table-cell">Segment</th>
                   <th className="text-left p-3">Status</th>
                   <th className="text-left p-3">Progress</th>
-                  <th className="text-left p-3">Overdue</th>
-                  <th className="text-left p-3">Client Email</th>
-                  <th className="text-left p-3">Contract Amount</th>
-                  <th className="text-left p-3">Paid</th>
-                  <th className="text-left p-3">Milestones</th>
-                  <th className="text-left p-3">Start Date</th>
-                  <th className="text-left p-3">End Date</th>
-                  <th className="text-left p-3">Duration</th>
+                  <th className="text-left p-3 hidden lg:table-cell">Overdue</th>
+                  <th className="text-left p-3 hidden lg:table-cell">Client Email</th>
+                  <th className="text-left p-3 hidden xl:table-cell">Contract Amount</th>
+                  <th className="text-left p-3 hidden xl:table-cell">Paid</th>
+                  <th className="text-left p-3 hidden xl:table-cell">Milestones</th>
+                  <th className="text-left p-3 hidden xl:table-cell">Start Date</th>
+                  <th className="text-left p-3 hidden xl:table-cell">End Date</th>
+                  <th className="text-left p-3 hidden xl:table-cell">Duration</th>
                   <th className="text-left p-3">Actions</th>
                 </tr>
               </thead>
@@ -390,10 +395,10 @@ export default function Projects() {
                   return (
                     <tr 
                       key={project.id}
-                      className="hover:bg-gray-50 transition-colors cursor-pointer"
+                      className="hover:bg-gray-50 transition-colors cursor-pointer text-xs md:text-sm"
                       onClick={() => setLocation(`/projects/${project.id}`)}
                     >
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-3 md:py-4">
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div>
@@ -447,22 +452,22 @@ export default function Projects() {
                           </TooltipContent>
                         </Tooltip>
                       </td>
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-3 md:py-4 hidden md:table-cell">
                         <Badge variant="outline" className="capitalize">
                           {project.segment || 'private'}
                         </Badge>
                       </td>
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-3 md:py-4">
                         <Badge className={getStatusColor(project.status)}>
                           {formatStatus(project.status)}
                         </Badge>
                       </td>
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-3 md:py-4">
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="flex items-center gap-2 cursor-help">
-                              <Progress value={getProjectWeightBasedProgress(project.id)} className="h-2 w-16" />
-                              <span className="text-sm text-gray-600">{getProjectWeightBasedProgress(project.id)}%</span>
+                              <Progress value={getProjectWeightBasedProgress(project.id)} className="h-1.5 md:h-2 w-14 md:w-16" />
+                              <span className="text-[10px] md:text-sm text-gray-600">{getProjectWeightBasedProgress(project.id)}%</span>
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>
@@ -470,7 +475,7 @@ export default function Projects() {
                           </TooltipContent>
                         </Tooltip>
                       </td>
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-3 md:py-4 hidden lg:table-cell">
                         {overdueCount > 0 ? (
                           <Tooltip>
                             <TooltipTrigger>
@@ -487,43 +492,42 @@ export default function Projects() {
                           <span className="text-sm text-gray-500">-</span>
                         )}
                       </td>
-
-                      <td className="px-4 py-4 text-sm text-gray-900">
+                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden lg:table-cell">
                         {project.contactEmail || 'N/A'}
                       </td>
-                      <td className="px-4 py-4 text-sm text-gray-900">
+                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
                         {project.budget
                           ? `KSh ${parseFloat(project.budget).toLocaleString()}`
                           : (project.totalFees && Number(project.totalFees) > 0
                               ? `KSh ${Number(project.totalFees).toLocaleString()}`
                               : 'N/A')}
                       </td>
-                      <td className="px-4 py-4 text-sm text-gray-900">
+                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
                         KSh {(project.paidAmount || 0).toLocaleString()}
                       </td>
-                      <td className="px-4 py-4 text-sm text-gray-900">
+                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
                         {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
                       </td>
-                      <td className="px-4 py-4 text-sm text-gray-900">
+                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
                         {project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A'}
                       </td>
-                      <td className="px-4 py-4 text-sm text-gray-900">
+                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
                         {project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A'}
                       </td>
-                      <td className="px-4 py-4 text-sm text-gray-900">
+                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
                         <span className="font-medium">
                           {project.startDate && project.endDate
                             ? (() => {
-                                const start = new Date(project.startDate);
-                                const end = new Date(project.endDate);
-                                const diffTime = Math.abs(end.getTime() - start.getTime());
-                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                                return `${diffDays} days`;
+                            const start = new Date(project.startDate);
+                            const end = new Date(project.endDate);
+                            const diffTime = Math.abs(end.getTime() - start.getTime());
+                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                            return `${diffDays} days`;
                               })()
                             : 'N/A'}
                         </span>
                       </td>
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-3 md:py-4">
                         <div className="flex items-center gap-2">
                           <Button
                             variant="outline"
@@ -686,11 +690,11 @@ export default function Projects() {
                           <Clock className="h-4 w-4 mr-2" />
                           <span className="text-sm text-gray-600">
                             <span className="font-medium">Duration:</span> {project.startDate && project.endDate ? (() => {
-                              const start = new Date(project.startDate);
-                              const end = new Date(project.endDate);
-                              const diffTime = Math.abs(end.getTime() - start.getTime());
-                              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                              return `${diffDays} days`;
+                                const start = new Date(project.startDate);
+                                const end = new Date(project.endDate);
+                                const diffTime = Math.abs(end.getTime() - start.getTime());
+                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                return `${diffDays} days`;
                             })() : 'N/A'}
                           </span>
                         </div>

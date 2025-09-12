@@ -29,6 +29,7 @@ import {
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatCurrency, calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress } from "@/lib/utils";
+import { useScreenSize } from "@/hooks/use-mobile";
 
 export default function ProjectDetail() {
   // Type definitions
@@ -104,6 +105,7 @@ export default function ProjectDetail() {
   const [, setLocation] = useLocation();
   const params = useParams();
   const projectId = params.id;
+  const { isMobile } = useScreenSize();
 
   const [editingProject, setEditingProject] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('modules');
@@ -510,10 +512,10 @@ export default function ProjectDetail() {
     <div className="min-h-screen bg-background-page">
       <Navigation />
       
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         
         {/* Header with breadcrumb and actions */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6 sm:mb-8">
           <div className="flex items-center space-x-4">
             <Button 
               variant="ghost" 
@@ -523,7 +525,7 @@ export default function ProjectDetail() {
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back to Projects
             </Button>
-            <div className="text-sm text-gray-500">
+            <div className="text-xs sm:text-sm text-gray-500">
               Projects / {project.client || project.name}
             </div>
           </div>
@@ -553,7 +555,7 @@ export default function ProjectDetail() {
         </div>
 
         {/* Project Header Card */}
-        <Card className="mb-8">
+        <Card className="mb-6 sm:mb-8">
           <CardHeader>
             <div className="flex items-start justify-between">
               <div className="flex-1">

@@ -184,7 +184,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Modules</CardTitle>
+          <CardTitle className="text-base sm:text-lg">Modules</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="animate-pulse space-y-4">
@@ -500,7 +500,7 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Milestones</CardTitle>
+          <CardTitle className="text-base sm:text-lg">Milestones</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="text-center py-12 text-gray-500">
@@ -515,12 +515,12 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Milestones</CardTitle>
-        <p className="text-sm text-gray-600">Track progress across all project milestones</p>
+        <CardTitle className="text-base sm:text-lg">Milestones</CardTitle>
+        <p className="text-xs sm:text-sm text-gray-600">Track progress across all project milestones</p>
       </CardHeader>
       <CardContent>
         {/* Filters and Search */}
-        <div className="mb-6 space-y-4">
+        <div className="mb-4 sm:mb-6 space-y-3 sm:space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="relative lg:col-span-2">
               <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
