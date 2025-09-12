@@ -4458,15 +4458,27 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     const phase = newPhases[phaseIndex];
 
-    if (!phase || !phase.milestones || !phase.milestones[moduleIndex]) return;
+    if (!phase) return;
 
-    const milestone = phase.milestones[moduleIndex];
+    // Support both regular-phase structures: milestones[] or modules[]
+    let container: any | undefined = undefined;
+    if (phase.milestones && phase.milestones[moduleIndex]) {
+      container = phase.milestones[moduleIndex];
+    } else if (phase.modules && phase.modules[moduleIndex]) {
+      container = phase.modules[moduleIndex];
+    }
+    if (!container) return;
 
-    if (!milestone.subtasks) milestone.subtasks = [];
+    if (!container.subtasks) container.subtasks = [];
 
-    milestone.subtasks = [...milestone.subtasks, newSubtask];
+    container.subtasks = [...container.subtasks, newSubtask];
 
     setPhases(newPhases);
+
+    // Ensure the subtasks section is expanded so the new row is visible
+    if (areModuleSubtasksCollapsed(phaseIndex, moduleIndex)) {
+      toggleModuleSubtasks(phaseIndex, moduleIndex);
+    }
 
   };
 
@@ -5807,7 +5819,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                               <div 
 
-                                                className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-all duration-200"
+                                                className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-all duration-200 w-max"
 
                                                 onClick={() => toggleModuleSubtasks(phaseIndex, moduleIndex)}
 
@@ -6613,7 +6625,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                               <div 
 
-                                className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-all duration-200"
+                                className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-all duration-200 w-max"
 
                                 onClick={() => toggleModuleSubtasks(phaseIndex, moduleIndex)}
 

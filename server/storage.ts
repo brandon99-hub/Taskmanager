@@ -55,6 +55,7 @@ import {
   type AdminRole,
   type InsertAdminRole,
   type AdminRoleType,
+  adminRoleMembers,
 } from "../shared/schema";
 import { db } from "./db";
 import { eq, desc, asc, and, or, sql, count, avg, inArray, gt, lte, ne } from "drizzle-orm";
@@ -358,6 +359,9 @@ export interface IStorage {
   getUserDashboardRole(userId: string): Promise<{ role: string; isProjectManager: boolean; isFinanceHead: boolean; assignedSegment?: string }>;
   getSegmentLeaderData(): Promise<{ academic: any; parastals: any; private: any; projectManager: any; financeHead: any }>;
   createUserWithCredentials(userData: { email: string; firstName: string; lastName: string; role: AdminRoleType; segment?: string }, assignedBy: string): Promise<{ user: User; temporaryPassword: string }>;
+  listManagersForHead(headRoleId: string): Promise<{ user: User }[]>;
+  addManagersToHead(headRoleId: string, managerUsers: { id: string }[], assignedBy: string): Promise<void>;
+  removeManagerFromHead(headRoleId: string, managerUserId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -368,7 +372,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = lower(${email})`);
     return user;
   }
 
@@ -5561,29 +5568,49 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
 
   async getUserDashboardRole(userId: string): Promise<{ role: string; isProjectManager: boolean; isFinanceHead: boolean; assignedSegment?: string }> {
     try {
-      const [user] = await db
-        .select({
-          role: users.role,
-          isProjectManager: users.isProjectManager,
-          isFinanceHead: users.isFinanceHead,
-          assignedSegment: users.assignedSegment,
-        })
-        .from(users)
-        .where(eq(users.id, userId));
+      const [user] = await db.select().from(users).where(eq(users.id, userId));
+      if (!user) return { role: 'employee', isProjectManager: false, isFinanceHead: false };
 
-      if (!user) {
-        throw new Error('User not found');
+      // If base admin or manager flags set, return directly
+      if (user.role === 'admin' || user.role === 'manager' || user.isProjectManager || user.isFinanceHead || user.assignedSegment) {
+        return {
+          role: user.role,
+          isProjectManager: !!user.isProjectManager,
+          isFinanceHead: !!user.isFinanceHead,
+          assignedSegment: user.assignedSegment || undefined,
+        };
       }
 
-      return {
-        role: user.role,
-        isProjectManager: user.isProjectManager || false,
-        isFinanceHead: user.isFinanceHead || false,
-        assignedSegment: user.assignedSegment || undefined,
-      };
+      // Inherit from head membership if present
+      const memberships = await db
+        .select({
+          headRoleType: adminRoles.roleType,
+          headSegment: adminRoles.segment,
+        })
+        .from(adminRoleMembers)
+        .innerJoin(adminRoles, eq(adminRoleMembers.headRoleId, adminRoles.id))
+        .where(and(eq(adminRoleMembers.managerUserId, userId), eq(adminRoles.isActive, true)));
+
+      // Reduce memberships to a single effective dashboard preference
+      let isPM = false; let isFH = false; let seg: any = undefined;
+      for (const m of memberships) {
+        if (m.headRoleType === 'project_manager') isPM = true;
+        if (m.headRoleType === 'finance_head') isFH = true;
+        if (m.headRoleType === 'segment_leader' && m.headSegment) seg = m.headSegment;
+      }
+      if (isPM || isFH || seg) {
+        return {
+          role: user.role,
+          isProjectManager: isPM,
+          isFinanceHead: isFH,
+          assignedSegment: seg,
+        };
+      }
+
+      return { role: user.role, isProjectManager: false, isFinanceHead: false };
     } catch (error) {
-      console.error('Error fetching user dashboard role:', error);
-      throw error;
+      console.error('Error checking dashboard role:', error);
+      return { role: 'employee', isProjectManager: false, isFinanceHead: false };
     }
   }
 
@@ -5841,6 +5868,43 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
     const userSubtasks = subtaskRows.map(r => ({ ...r.subtask, module: r.module, project: r.project }));
 
     return { projects: uniqueProjects, subtasks: userSubtasks };
+  }
+
+  async listManagersForHead(headRoleId: string): Promise<{ user: User }[]> {
+    const rows = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role,
+      })
+      .from(adminRoleMembers)
+      .innerJoin(users, eq(adminRoleMembers.managerUserId, users.id))
+      .where(eq(adminRoleMembers.headRoleId, headRoleId));
+    return rows.map((u: any) => ({ user: u }));
+  }
+
+  async addManagersToHead(headRoleId: string, managerUsers: { id: string }[], assignedBy: string): Promise<void> {
+    if (!managerUsers.length) return;
+    const now = new Date();
+    // Upsert links; ensure base role is 'manager'
+    for (const mu of managerUsers) {
+      // Link
+      await db
+        .insert(adminRoleMembers)
+        .values({ headRoleId, managerUserId: mu.id, createdAt: now, updatedAt: now } as any)
+        .onConflictDoNothing();
+      // Promote to manager if not admin
+      await db
+        .update(users)
+        .set({ role: sql`CASE WHEN role = 'admin' THEN role ELSE 'manager' END`, updatedAt: now } as any)
+        .where(eq(users.id, mu.id));
+    }
+  }
+
+  async removeManagerFromHead(headRoleId: string, managerUserId: string): Promise<void> {
+    await db.delete(adminRoleMembers).where(and(eq(adminRoleMembers.headRoleId, headRoleId), eq(adminRoleMembers.managerUserId, managerUserId)));
   }
 }
 

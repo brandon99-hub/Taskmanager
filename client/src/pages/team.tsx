@@ -20,6 +20,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Users, Plus, Mail, UserPlus, Calendar, BarChart3, Info, User, Briefcase, RefreshCw } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 
 
 const createTeamSchema = z.object({
@@ -70,6 +71,13 @@ export default function Team() {
   const [isSavingAdminRoles, setIsSavingAdminRoles] = useState(false);
   // Resend button disabled states
   const [resending, setResending] = useState<Record<string, boolean>>({});
+
+  // Dynamic manager rows per head (staged until Save)
+  const [pmManagerRows, setPmManagerRows] = useState<Array<{ name: string; email: string }>>([]);
+  const [fhManagerRows, setFhManagerRows] = useState<Array<{ name: string; email: string }>>([]);
+  const [segAcManagerRows, setSegAcManagerRows] = useState<Array<{ name: string; email: string }>>([]);
+  const [segPaManagerRows, setSegPaManagerRows] = useState<Array<{ name: string; email: string }>>([]);
+  const [segPrManagerRows, setSegPrManagerRows] = useState<Array<{ name: string; email: string }>>([]);
 
   // Fetch finance and account manager emails for auto-fill
   const { data: systemEmails } = useQuery({
@@ -353,7 +361,7 @@ export default function Team() {
         currentAssignments['Private Segment Leader'] = segPr?.user?.email;
       }
 
-      // Create users with admin roles - this will trigger credential emails
+      // Create users with admin roles - this will trigger credential emails (only for new users)
       for (const roleConfig of rolesConfig) {
         try {
           // Skip if email is empty or default placeholder
@@ -363,55 +371,33 @@ export default function Team() {
             continue;
           }
 
-          const userResponse = await fetch('/api/admin/users', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            credentials: 'include',
-            body: JSON.stringify({
-              email: roleConfig.email,
-              firstName: roleConfig.firstName,
-              lastName: roleConfig.lastName,
-              role: roleConfig.role,
-              segment: roleConfig.segment
-            })
+          // Change detection: find current assigned email for this head
+          const prev = currentAssignments[roleConfig.displayName];
+          const isSameEmail = prev && prev.toLowerCase() === roleConfig.email.toLowerCase();
+
+          const response = await apiRequest('POST', '/api/admin/users', {
+            email: roleConfig.email,
+            firstName: roleConfig.firstName,
+            lastName: roleConfig.lastName,
+            role: roleConfig.role,
+            segment: roleConfig.segment
           });
 
-          if (userResponse.ok) {
+          if (response.ok) {
             successCount++;
-            const prev = currentAssignments[roleConfig.displayName];
-            if (prev && prev !== roleConfig.email) {
+            if (isSameEmail) {
+              // Name-only change
+              unchanged.push({ displayName: roleConfig.displayName, email: roleConfig.email });
+            } else if (prev && prev !== roleConfig.email) {
               updated.push({ displayName: roleConfig.displayName, oldEmail: prev, newEmail: roleConfig.email });
             } else {
               assigned.push({ displayName: roleConfig.displayName, email: roleConfig.email });
             }
-          } else {
-            // Read error safely without consuming the stream twice
-            const raw = await userResponse.clone().text();
-            let message = raw || userResponse.statusText || 'Unknown error';
-            try {
-              const json = JSON.parse(raw);
-              message = json?.message || message;
-            } catch {}
-            // If user already exists, treat as success/unchanged
-            if (message.toLowerCase().includes('already')) {
-              successCount++;
-              const prev = currentAssignments[roleConfig.displayName];
-              if (prev && prev !== roleConfig.email) {
-                updated.push({ displayName: roleConfig.displayName, oldEmail: prev, newEmail: roleConfig.email });
-              } else {
-                unchanged.push({ displayName: roleConfig.displayName, email: roleConfig.email });
-              }
-            } else {
-              errorCount++;
-              errors.push(`${roleConfig.displayName}: ${message}`);
-            }
           }
-        } catch (error) {
+        } catch (error: any) {
           errorCount++;
-          errors.push(`${roleConfig.displayName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          console.error(`Error creating user for ${roleConfig.displayName}:`, error);
+          errors.push(`${roleConfig.displayName}: ${error?.message || 'Unknown error'}`);
+          console.error(`Error creating/updating user for ${roleConfig.displayName}:`, error);
         }
       }
 
@@ -441,6 +427,35 @@ export default function Team() {
         errorCount++;
       }
 
+      // Save managers in batches per head (auto-sends credentials server-side)
+      const addRows = async (headId: string | undefined, rows: Array<{ name: string; email: string }>, label: string) => {
+        if (!headId || !rows.length) return;
+        const payload = rows
+          .filter(r => r.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email))
+          .map(r => {
+            const name = (r.name || '').trim();
+            const [firstName, ...rest] = name ? name.split(' ') : [r.email.split('@')[0]];
+            return { email: r.email.trim(), firstName, lastName: rest.join(' ') };
+          });
+        if (!payload.length) return;
+        const res = await apiRequest('POST', `/api/admin/roles/${headId}/managers`, { managers: payload });
+        if (!res.ok) {
+          const txt = await res.clone().text();
+          throw new Error(`${label}: ${txt || res.statusText}`);
+        }
+      };
+
+      try {
+        await addRows(adminRolesData?.find((r:any)=>r.roleType==='project_manager')?.id, pmManagerRows, 'Project Manager managers');
+        await addRows(adminRolesData?.find((r:any)=>r.roleType==='finance_head')?.id, fhManagerRows, 'Finance Head managers');
+        await addRows(adminRolesData?.find((r:any)=>r.roleType==='segment_leader' && r.segment==='academic')?.id, segAcManagerRows, 'Academic segment managers');
+        await addRows(adminRolesData?.find((r:any)=>r.roleType==='segment_leader' && r.segment==='parastals')?.id, segPaManagerRows, 'Parastals segment managers');
+        await addRows(adminRolesData?.find((r:any)=>r.roleType==='segment_leader' && r.segment==='private')?.id, segPrManagerRows, 'Private segment managers');
+      } catch (e:any) {
+        errorCount++;
+        errors.push(e?.message || 'Failed to save managers');
+      }
+
       // Show appropriate feedback
       if (errorCount === 0) {
         const lines: string[] = [];
@@ -453,11 +468,17 @@ export default function Team() {
         if (unchanged.length) {
           lines.push(`Unchanged (already assigned): ${unchanged.map(u => `${u.displayName} → ${u.email}`).join('; ')}`);
         }
-        toast({
-          title: "Admin roles saved",
-          description: lines.join('\n') || `${successCount} users processed.`,
-        });
-        setIsSegmentLeaderModalOpen(false); // Only close on complete success
+        if (pmManagerRows.length + fhManagerRows.length + segAcManagerRows.length + segPaManagerRows.length + segPrManagerRows.length > 0) {
+          lines.push('Managers added and credentials sent.');
+        }
+        toast({ title: 'Admin roles saved', description: lines.join(' | ') });
+        setIsSegmentLeaderModalOpen(false);
+        // Clear staged rows after success
+        setPmManagerRows([]);
+        setFhManagerRows([]);
+        setSegAcManagerRows([]);
+        setSegPaManagerRows([]);
+        setSegPrManagerRows([]);
       } else if (successCount > 0) {
         const parts: string[] = [];
         if (updated.length) parts.push(`Updated: ${updated.map(u => `${u.displayName}: ${u.oldEmail} → ${u.newEmail}`).join('; ')}`);
@@ -1373,6 +1394,34 @@ export default function Team() {
                               </div>
                             </div>
                           </div>
+
+                          {/* Managers under Project Manager */}
+                          <Accordion type="single" collapsible className="w-full pt-2">
+                            <AccordionItem value="pm-managers">
+                              <AccordionTrigger className="text-sm">Managers under Project Manager</AccordionTrigger>
+                              <AccordionContent>
+                                <div className="space-y-2">
+                                  {pmManagerRows.map((row, idx) => (
+                                    <div key={`pm-row-${idx}`} className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                      <Input placeholder="Full name" className="h-9" value={row.name} onChange={(e)=>{
+                                        const v=[...pmManagerRows]; v[idx]={...v[idx], name:e.target.value}; setPmManagerRows(v);
+                                      }} />
+                                      <Input placeholder="Email" className="h-9" value={row.email} onChange={(e)=>{
+                                        const v=[...pmManagerRows]; v[idx]={...v[idx], email:e.target.value}; setPmManagerRows(v);
+                                      }} />
+                                      <div className="flex items-center gap-2">
+                                        <Button size="sm" variant="outline" onClick={()=>{
+                                          const v=[...pmManagerRows]; v.splice(idx,1); setPmManagerRows(v);
+                                        }}>Remove</Button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <Button size="sm" variant="outline" onClick={()=> setPmManagerRows([...pmManagerRows, { name: '', email: '' }])}>Add manager</Button>
+                                  <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                                </div>
+                              </AccordionContent>
+                            </AccordionItem>
+                          </Accordion>
                         </div>
 
                         {/* Finance Head */}
@@ -1415,6 +1464,34 @@ export default function Team() {
                               </div>
                             </div>
                           </div>
+
+                          {/* Managers under Finance Head */}
+                          <Accordion type="single" collapsible className="w-full pt-2">
+                            <AccordionItem value="fh-managers">
+                              <AccordionTrigger className="text-sm">Managers under Finance Head</AccordionTrigger>
+                              <AccordionContent>
+                                <div className="space-y-2">
+                                  {fhManagerRows.map((row, idx) => (
+                                    <div key={`fh-row-${idx}`} className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                      <Input placeholder="Full name" className="h-9" value={row.name} onChange={(e)=>{
+                                        const v=[...fhManagerRows]; v[idx]={...v[idx], name:e.target.value}; setFhManagerRows(v);
+                                      }} />
+                                      <Input placeholder="Email" className="h-9" value={row.email} onChange={(e)=>{
+                                        const v=[...fhManagerRows]; v[idx]={...v[idx], email:e.target.value}; setFhManagerRows(v);
+                                      }} />
+                                      <div className="flex items-center gap-2">
+                                        <Button size="sm" variant="outline" onClick={()=>{
+                                          const v=[...fhManagerRows]; v.splice(idx,1); setFhManagerRows(v);
+                                        }}>Remove</Button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <Button size="sm" variant="outline" onClick={()=> setFhManagerRows([...fhManagerRows, { name: '', email: '' }])}>Add manager</Button>
+                                  <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                                </div>
+                              </AccordionContent>
+                            </AccordionItem>
+                          </Accordion>
                         </div>
                       </div>
                       
@@ -1461,6 +1538,34 @@ export default function Team() {
                             </div>
                           </div>
                         </div>
+
+                        {/* Managers under Academic Segment */}
+                        <Accordion type="single" collapsible className="w-full pt-2">
+                          <AccordionItem value="seg-ac-managers">
+                            <AccordionTrigger className="text-sm">Managers under Academic Segment Leader</AccordionTrigger>
+                            <AccordionContent>
+                              <div className="space-y-2">
+                                {segAcManagerRows.map((row, idx) => (
+                                  <div key={`seg-ac-row-${idx}`} className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                    <Input placeholder="Full name" className="h-9" value={row.name} onChange={(e)=>{
+                                      const v=[...segAcManagerRows]; v[idx]={...v[idx], name:e.target.value}; setSegAcManagerRows(v);
+                                    }} />
+                                    <Input placeholder="Email" className="h-9" value={row.email} onChange={(e)=>{
+                                      const v=[...segAcManagerRows]; v[idx]={...v[idx], email:e.target.value}; setSegAcManagerRows(v);
+                                    }} />
+                                    <div className="flex items-center gap-2">
+                                      <Button size="sm" variant="outline" onClick={()=>{
+                                        const v=[...segAcManagerRows]; v.splice(idx,1); setSegAcManagerRows(v);
+                                      }}>Remove</Button>
+                                    </div>
+                                  </div>
+                                ))}
+                                <Button size="sm" variant="outline" onClick={()=> setSegAcManagerRows([...segAcManagerRows, { name: '', email: '' }])}>Add manager</Button>
+                                <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
                       </div>
 
                       {/* Parastals Segment */}
@@ -1503,6 +1608,34 @@ export default function Team() {
                             </div>
                           </div>
                         </div>
+
+                        {/* Managers under Parastals Segment */}
+                        <Accordion type="single" collapsible className="w-full pt-2">
+                          <AccordionItem value="seg-pa-managers">
+                            <AccordionTrigger className="text-sm">Managers under Parastals Segment Leader</AccordionTrigger>
+                            <AccordionContent>
+                              <div className="space-y-2">
+                                {segPaManagerRows.map((row, idx) => (
+                                  <div key={`seg-pa-row-${idx}`} className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                    <Input placeholder="Full name" className="h-9" value={row.name} onChange={(e)=>{
+                                      const v=[...segPaManagerRows]; v[idx]={...v[idx], name:e.target.value}; setSegPaManagerRows(v);
+                                    }} />
+                                    <Input placeholder="Email" className="h-9" value={row.email} onChange={(e)=>{
+                                      const v=[...segPaManagerRows]; v[idx]={...v[idx], email:e.target.value}; setSegPaManagerRows(v);
+                                    }} />
+                                    <div className="flex items-center gap-2">
+                                      <Button size="sm" variant="outline" onClick={()=>{
+                                        const v=[...segPaManagerRows]; v.splice(idx,1); setSegPaManagerRows(v);
+                                      }}>Remove</Button>
+                                    </div>
+                                  </div>
+                                ))}
+                                <Button size="sm" variant="outline" onClick={()=> setSegPaManagerRows([...segPaManagerRows, { name: '', email: '' }])}>Add manager</Button>
+                                <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
                       </div>
 
                       {/* Private Segment */}
@@ -1545,6 +1678,34 @@ export default function Team() {
                             </div>
                           </div>
                         </div>
+
+                        {/* Managers under Private Segment */}
+                        <Accordion type="single" collapsible className="w-full pt-2">
+                          <AccordionItem value="seg-pr-managers">
+                            <AccordionTrigger className="text-sm">Managers under Private Segment Leader</AccordionTrigger>
+                            <AccordionContent>
+                              <div className="space-y-2">
+                                {segPrManagerRows.map((row, idx) => (
+                                  <div key={`seg-pr-row-${idx}`} className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                    <Input placeholder="Full name" className="h-9" value={row.name} onChange={(e)=>{
+                                      const v=[...segPrManagerRows]; v[idx]={...v[idx], name:e.target.value}; setSegPrManagerRows(v);
+                                    }} />
+                                    <Input placeholder="Email" className="h-9" value={row.email} onChange={(e)=>{
+                                      const v=[...segPrManagerRows]; v[idx]={...v[idx], email:e.target.value}; setSegPrManagerRows(v);
+                                    }} />
+                                    <div className="flex items-center gap-2">
+                                      <Button size="sm" variant="outline" onClick={()=>{
+                                        const v=[...segPrManagerRows]; v.splice(idx,1); setSegPrManagerRows(v);
+                                      }}>Remove</Button>
+                                    </div>
+                                  </div>
+                                ))}
+                                <Button size="sm" variant="outline" onClick={()=> setSegPrManagerRows([...segPrManagerRows, { name: '', email: '' }])}>Add manager</Button>
+                                <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
                       </div>
                       </div>
 

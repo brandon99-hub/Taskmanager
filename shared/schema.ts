@@ -133,6 +133,17 @@ export const adminRoles = pgTable("admin_roles", {
   uniqueUserRole: index("unique_user_role").on(table.userId, table.roleType, table.segment),
 }));
 
+// New: Managers under a head admin role
+export const adminRoleMembers = pgTable("admin_role_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  headRoleId: varchar("head_role_id").references(() => adminRoles.id, { onDelete: 'cascade' }).notNull(),
+  managerUserId: varchar("manager_user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  uniqueHeadManager: index("unique_head_manager").on(table.headRoleId, table.managerUserId),
+}));
+
 // Employee roles table
 export const employeeRoles = pgTable("employee_roles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -599,6 +610,17 @@ export const adminRolesRelations = relations(adminRoles, ({ one }) => ({
   }),
 }));
 
+export const adminRoleMembersRelations = relations(adminRoleMembers, ({ one }) => ({
+  headRole: one(adminRoles, {
+    fields: [adminRoleMembers.headRoleId],
+    references: [adminRoles.id],
+  }),
+  managerUser: one(users, {
+    fields: [adminRoleMembers.managerUserId],
+    references: [users.id],
+  }),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({
   email: true,
@@ -790,6 +812,8 @@ export type InsertExternalNotificationRecipient = typeof externalNotificationRec
 
 export type AdminRole = typeof adminRoles.$inferSelect;
 export type InsertAdminRole = z.infer<typeof insertAdminRoleSchema>;
+export type AdminRoleMember = typeof adminRoleMembers.$inferSelect;
+export type InsertAdminRoleMember = typeof adminRoleMembers.$inferInsert;
 
 // Invoice reports table for tracking sent invoices
 export const invoiceReports = pgTable("invoice_reports", {

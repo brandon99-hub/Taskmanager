@@ -16,6 +16,9 @@ import path from "path";
 import { notificationService } from "./services/notificationService";
 import { calendarService, GoogleCalendarService } from "./services/calendarService";
 import { calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress } from "../client/src/lib/utils";
+import { eq } from "drizzle-orm";
+import { db } from "./db";
+import { users } from "../shared/schema";
 
 // Utility function for date validation and conversion
 function validateAndConvertDates(data: any, dateFields: string[]): { cleanedData: any; errors: string[] } {
@@ -717,7 +720,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create user with admin credentials
+  // Create user with admin credentials (idempotent upsert)
   app.post('/api/admin/users', isAuthenticated, async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
@@ -737,33 +740,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (role === 'segment_leader' && !segment) {
         return res.status(400).json({ message: 'Segment is required for segment leader role' });
       }
-      
-      const result = await storage.createUserWithCredentials(
-        { email, firstName, lastName, role, segment },
-        req.user.id
-      );
-      
-      // Send admin role assignment notification
-      const { notificationService } = await import('./services/notificationService');
-      await notificationService.sendAdminRoleAssignedNotification({
-        user: result.user,
+
+      // Upsert user by email
+      const existing = await storage.getUserByEmail(String(email).trim().toLowerCase());
+      let user: any;
+      let temporaryPassword: string | undefined;
+      const now = new Date();
+
+      if (existing) {
+        // Update names only, no email send
+        await db.update(users).set({ firstName, lastName, updatedAt: now } as any).where(eq(users.id, existing.id));
+        user = { ...existing, firstName, lastName };
+      } else {
+        // Create new user and send credentials
+        const result = await storage.createUserWithCredentials(
+          { email, firstName, lastName, role, segment },
+          req.user.id
+        );
+        user = result.user;
+        temporaryPassword = result.temporaryPassword;
+      }
+
+      // Ensure admin role assignment (idempotent) and base role admin
+      await storage.assignAdminRole({
+        userId: user.id,
         roleType: role,
-        segment,
-        assignedBy: req.user,
-        temporaryPassword: result.temporaryPassword
-      });
-      
-      // Return user info without password in response
-      res.status(201).json({
-        user: result.user,
-        temporaryPassword: result.temporaryPassword,
-        message: 'User created successfully. Please securely share the temporary password.'
-      });
+        segment: role === 'segment_leader' ? segment : undefined,
+        assignedBy: req.user.id,
+      } as any);
+
+      // Only send email if newly created
+      if (temporaryPassword) {
+        const { notificationService } = await import('./services/notificationService');
+        await notificationService.sendAdminRoleAssignedNotification({
+          user,
+          roleType: role,
+          segment,
+          assignedBy: req.user,
+          temporaryPassword,
+        });
+        return res.status(201).json({ user, temporaryPassword, message: 'User created and credentials sent' });
+      }
+
+      return res.status(200).json({ user, message: 'User updated and role ensured' });
     } catch (error) {
       console.error("Error creating user with credentials:", error);
-      if (error instanceof Error && error.message.includes('already exists')) {
-        return res.status(400).json({ message: 'User with this email already exists' });
-      }
       res.status(500).json({ message: "Failed to create user" });
     }
   });
@@ -3248,6 +3269,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Hierarchy: list managers under a head role
+  app.get('/api/admin/roles/:headRoleId/managers', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const { headRoleId } = req.params;
+      const managers = await storage.listManagersForHead(headRoleId);
+      res.json(managers);
+    } catch (error) {
+      console.error('Error listing managers:', error);
+      res.status(500).json({ message: 'Failed to list managers' });
+    }
+  });
+
+  // Hierarchy: add managers under a head role (create users if absent)
+  app.post('/api/admin/roles/:headRoleId/managers', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const { headRoleId } = req.params;
+      const { managers } = req.body || {};
+      if (!Array.isArray(managers)) {
+        return res.status(400).json({ message: 'managers must be an array' });
+      }
+
+      const createdOrFound: any[] = [];
+      for (const m of managers) {
+        if (!m?.email) continue;
+        const email = String(m.email).trim().toLowerCase();
+        const firstName = (m.firstName || email.split('@')[0]).toString();
+        const lastName = (m.lastName || '').toString();
+        let user = await storage.getUserByEmail(email);
+        let tempForEmail: string | undefined;
+        if (!user) {
+          // Create with temp password (using existing helper), then set base role to manager
+          const { user: newUser, temporaryPassword } = await storage.createUserWithCredentials({
+            email,
+            firstName,
+            lastName,
+            role: 'project_manager' as any, // placeholder to satisfy signature; override role below
+          } as any, req.user.id);
+          await db.update(users).set({ role: 'manager' }).where(eq(users.id, newUser.id));
+          user = newUser as any;
+          tempForEmail = temporaryPassword;
+        } else {
+          // Existing user: generate a fresh temporary password and force change
+          const temporaryPassword = Math.random().toString(36).slice(-8);
+          await storage.updateUserPassword(user.id, temporaryPassword, true);
+          tempForEmail = temporaryPassword;
+          // Ensure base role at least manager unless already admin
+          await db.update(users).set({ role: (user.role === 'admin' ? 'admin' : 'manager') as any }).where(eq(users.id, user.id));
+        }
+        // Auto-send credentials email to manager
+        try {
+          const { notificationService } = await import('./services/notificationService');
+          await notificationService.sendAdminRoleAssignedNotification({
+            user,
+            roleType: 'manager' as any,
+            assignedBy: req.user,
+            temporaryPassword: tempForEmail,
+          });
+        } catch (e) {
+          console.error('Failed to send manager credentials email:', e);
+        }
+        if (user && user.id) {
+          createdOrFound.push({ id: user.id });
+        }
+      }
+
+      await storage.addManagersToHead(headRoleId, createdOrFound, req.user.id);
+      res.json({ message: 'Managers linked and credentials sent', count: createdOrFound.length });
+    } catch (error) {
+      console.error('Error adding managers:', error);
+      res.status(500).json({ message: 'Failed to add managers' });
+    }
+  });
+
+  // Hierarchy: remove a manager from a head
+  app.delete('/api/admin/roles/:headRoleId/managers/:userId', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const { headRoleId, userId } = req.params;
+      await storage.removeManagerFromHead(headRoleId, userId);
+      res.json({ message: 'Manager removed' });
+    } catch (error) {
+      console.error('Error removing manager:', error);
+      res.status(500).json({ message: 'Failed to remove manager' });
+    }
+  });
+
+  // Resend credentials for a manager (under a head)
+  app.post('/api/admin/roles/managers/resend', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const { headRoleId, email } = req.body || {};
+      if (!headRoleId || !email) {
+        return res.status(400).json({ message: 'headRoleId and email are required' });
+      }
+      const user = await storage.getUserByEmail(String(email).trim().toLowerCase());
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      const temporaryPassword = Math.random().toString(36).slice(-8);
+      await storage.updateUserPassword(user.id, temporaryPassword, true);
+      const { notificationService } = await import('./services/notificationService');
+      await notificationService.sendAdminRoleAssignedNotification({
+        user,
+        roleType: 'manager' as any,
+        assignedBy: req.user,
+        temporaryPassword,
+      });
+      res.json({ message: 'Manager credentials re-sent with a new temporary password' });
+    } catch (error) {
+      console.error('Error resending manager credentials:', error);
+      res.status(500).json({ message: 'Failed to resend credentials' });
+    }
+  });
 
   const httpServer = createServer(app);
   return httpServer;
