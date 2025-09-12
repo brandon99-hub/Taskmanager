@@ -46,9 +46,9 @@ const createProjectSchema = z.object({
 
   contactEmail: z.string().email("Invalid contact email").max(200, "Contact email too long"),
 
-  startDate: z.string().min(1, "Start date is required"),
+  startDate: z.string().optional().nullable(),
 
-  endDate: z.string().min(1, "End date is required"),
+  endDate: z.string().optional().nullable(),
 
   segment: z.enum(["academic", "parastals", "private"]).default("private"),
 
@@ -63,19 +63,13 @@ const createProjectSchema = z.object({
   status: z.enum(["planning", "active", "on_hold", "completed", "on_support", "inactive"]).optional(),
 
 }).refine((data) => {
-
+  if (!data.startDate || !data.endDate) return true;
   const start = new Date(data.startDate);
-
   const end = new Date(data.endDate);
-
   return end > start;
-
 }, {
-
   message: "End date must be after start date",
-
   path: ["endDate"],
-
 });
 
 
@@ -1510,9 +1504,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         budget: data.budget ? Number(data.budget.replace(/,/g, '')) : undefined,
 
-        startDate: new Date(data.startDate),
+        startDate: data.startDate ? new Date(data.startDate as string) : undefined,
 
-        endDate: new Date(data.endDate),
+        endDate: data.endDate ? new Date(data.endDate as string) : undefined,
 
         teamId: data.teamId === "none" ? undefined : data.teamId || undefined,
 
@@ -2022,8 +2016,23 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     // If there are no modules to process (e.g., phases without modules), skip the toast entirely
     if (modulesForToast.length > 0) {
-      completeModules = modulesForToast.filter(t => t.name && t.name.trim().length > 0 && t.dueDate);
-      const incompleteModules = modulesForToast.filter(t => !t.name || t.name.trim().length === 0 || !t.dueDate);
+      // A module is processable if:
+      // - name is present, AND
+      // - (has dueDate) OR (isMilestone true AND has at least one subtask with both startDate and dueDate)
+      const isProcessable = (t: any) => {
+        if (!t?.name || t.name.trim().length === 0) return false;
+        // Modules and milestones with explicit due date are processable
+        if (t?.dueDate) return true;
+        // Allow saving non-Phase 3 milestones with just a name (dates/subtasks optional)
+        const isNonPhase3Milestone = (t?.phaseNumber !== 3) && (t?.isMilestone === true || !!t?.milestoneId);
+        if (isNonPhase3Milestone) return true;
+        // For Phase 3, still allow milestones if subtasks provide dates
+        const subtasks = Array.isArray(t?.subtasks) ? t.subtasks : [];
+        return subtasks.some((s: any) => s?.startDate && s?.dueDate);
+      };
+
+      completeModules = modulesForToast.filter(isProcessable);
+      const incompleteModules = modulesForToast.filter((t: any) => !isProcessable(t));
 
       console.log('Complete modules after filtering (processable only):', completeModules);
       console.log('Incomplete modules (processable only):', incompleteModules);
@@ -3513,8 +3522,15 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     
     
     const newPhases = [...phases];
-
-    newPhases[phaseIndex].modules = [...(newPhases[phaseIndex].modules || []), newModule];
+    // Minimal fix: for non-Phase-3, if milestones array exists (created by updateMilestoneInPhase), append to milestones so UI shows the new row
+    if ((newPhases[phaseIndex].phaseNumber !== 3) && Array.isArray((newPhases[phaseIndex] as any).milestones)) {
+      (newPhases[phaseIndex] as any).milestones = [
+        ...(((newPhases[phaseIndex] as any).milestones) || []),
+        { ...newModule }
+      ];
+    } else {
+      newPhases[phaseIndex].modules = [...(newPhases[phaseIndex].modules || []), newModule];
+    }
 
     setPhases(newPhases);
 
@@ -3525,8 +3541,11 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   const removeModule = (phaseIndex: number, moduleIndex: number) => {
 
     const newPhases = [...phases];
-
-    newPhases[phaseIndex].modules = newPhases[phaseIndex].modules.filter((_: any, i: number) => i !== moduleIndex);
+    if ((newPhases[phaseIndex].phaseNumber !== 3) && Array.isArray((newPhases[phaseIndex] as any).milestones)) {
+      (newPhases[phaseIndex] as any).milestones = (newPhases[phaseIndex] as any).milestones.filter((_: any, i: number) => i !== moduleIndex);
+    } else {
+      newPhases[phaseIndex].modules = newPhases[phaseIndex].modules.filter((_: any, i: number) => i !== moduleIndex);
+    }
 
     setPhases(newPhases);
 
@@ -3546,39 +3565,44 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     
     
-    // Ensure modules array exists
-
-    if (!newPhases[phaseIndex].modules) {
-
-      newPhases[phaseIndex].modules = [];
-
+    // Ensure collection exists depending on current render source (milestones vs modules)
+    const usingMilestones = (newPhases[phaseIndex].phaseNumber !== 3) && Array.isArray((newPhases[phaseIndex] as any).milestones);
+    if (usingMilestones) {
+      if (!Array.isArray((newPhases[phaseIndex] as any).milestones)) {
+        (newPhases[phaseIndex] as any).milestones = [];
+      }
+    } else {
+      if (!newPhases[phaseIndex].modules) {
+        newPhases[phaseIndex].modules = [];
+      }
     }
 
     
     
-    // Ensure module exists
-
-    if (!newPhases[phaseIndex].modules[moduleIndex]) {
-
-      console.error('Module not found at index:', moduleIndex);
-
+    // Ensure item exists
+    const collection = usingMilestones ? (newPhases[phaseIndex] as any).milestones : newPhases[phaseIndex].modules;
+    if (!collection[moduleIndex]) {
+      console.error('Module/Milestone not found at index:', moduleIndex);
       return;
-
     }
 
     
     
-    newPhases[phaseIndex].modules[moduleIndex] = {
-
-      ...newPhases[phaseIndex].modules[moduleIndex],
-
-      [field]: value
-
-    };
+    if (usingMilestones) {
+      (newPhases[phaseIndex] as any).milestones[moduleIndex] = {
+        ...(newPhases[phaseIndex] as any).milestones[moduleIndex],
+        [field]: value
+      };
+    } else {
+      newPhases[phaseIndex].modules[moduleIndex] = {
+        ...newPhases[phaseIndex].modules[moduleIndex],
+        [field]: value
+      };
+    }
 
     
     
-    console.log('Updated module:', newPhases[phaseIndex].modules[moduleIndex]);
+    console.log('Updated module/milestone:', usingMilestones ? (newPhases[phaseIndex] as any).milestones[moduleIndex] : newPhases[phaseIndex].modules[moduleIndex]);
 
     setPhases(newPhases);
 
@@ -4111,6 +4135,14 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           await apiRequest('POST', '/api/subtasks', payload);
 
         }
+
+        // Live refresh milestone and gantt dates after subtask change
+        try {
+          if (project?.id) {
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'milestones'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
+          }
+        } catch { /* noop */ }
 
       } catch (error: any) {
 
@@ -5031,24 +5063,19 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                     <FormItem>
 
-                      <FormLabel className="text-sm font-medium text-gray-700">Start Date *</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Start Date (optional)</FormLabel>
 
                       <FormControl>
-
                         <Input 
-
                           type="date" 
-
                           className="h-11"
-
-                          {...field} 
-
+                          value={field.value || ''}
+                          onChange={field.onChange}
+                          onBlur={field.onBlur}
+                          name={field.name}
                           data-testid="input-project-start-date"
-
                           onFocus={handleInputFocus}
-
                         />
-
                       </FormControl>
 
                       <FormMessage />
@@ -5071,24 +5098,19 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                     <FormItem>
 
-                      <FormLabel className="text-sm font-medium text-gray-700">End Date *</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">End Date (optional)</FormLabel>
 
                       <FormControl>
-
                         <Input 
-
                           type="date" 
-
                           className="h-11"
-
-                          {...field} 
-
+                          value={field.value || ''}
+                          onChange={field.onChange}
+                          onBlur={field.onBlur}
+                          name={field.name}
                           data-testid="input-project-end-date"
-
                           onFocus={handleInputFocus}
-
                         />
-
                       </FormControl>
 
                       <FormMessage />

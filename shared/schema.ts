@@ -205,8 +205,8 @@ export const projects = pgTable("projects", {
   contactPerson: varchar("contact_person"),
   contactPhone: varchar("contact_phone"),
   contactEmail: varchar("contact_email"),
-  startDate: timestamp("start_date").notNull(),
-  endDate: timestamp("end_date").notNull(),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
   status: projectStatusEnum("status").notNull().default("planning"), // Use existing projectStatus enum
   segment: projectSegmentEnum("segment").notNull().default("private"), // Added segment field
   budget: decimal("budget", { precision: 12, scale: 2 }), // Keep as budget in DB, will display as Contract Amount in frontend

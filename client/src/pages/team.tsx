@@ -66,7 +66,7 @@ export default function Team() {
     financeEmail: 'finance@company.com',
     accountManagerEmail: 'accountmanager@company.com'
   });
-
+  
   // Loading state for admin role save
   const [isSavingAdminRoles, setIsSavingAdminRoles] = useState(false);
   // Resend button disabled states
@@ -78,7 +78,48 @@ export default function Team() {
   const [segAcManagerRows, setSegAcManagerRows] = useState<Array<{ name: string; email: string }>>([]);
   const [segPaManagerRows, setSegPaManagerRows] = useState<Array<{ name: string; email: string }>>([]);
   const [segPrManagerRows, setSegPrManagerRows] = useState<Array<{ name: string; email: string }>>([]);
+  // Persisted managers by head id
+  const [managersByHead, setManagersByHead] = useState<Record<string, any[]>>({});
 
+  // Fetch admin roles data when modal opens
+  const { data: adminRolesData } = useQuery({
+    queryKey: ['/api/admin/roles'],
+    queryFn: async () => {
+      const res = await fetch('/api/admin/roles', { 
+        credentials: 'include' 
+      });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!isAuthenticated && isSegmentLeaderModalOpen,
+  });
+
+  const getHeadId = (roleType: 'project_manager' | 'finance_head' | 'segment_leader', segment?: 'academic' | 'parastals' | 'private') => {
+    if (!adminRolesData) return undefined as string | undefined;
+    const r = adminRolesData.find((x: any) => x.roleType === roleType && (roleType !== 'segment_leader' || x.segment === segment));
+    return r?.id as string | undefined;
+  };
+
+  const loadManagersForHead = async (headId?: string) => {
+    if (!headId) return;
+    try {
+      const res = await apiRequest('GET', `/api/admin/roles/${headId}/managers`);
+      const list = await res.json();
+      setManagersByHead(prev => ({ ...prev, [headId]: Array.isArray(list) ? list : [] }));
+    } catch {
+      setManagersByHead(prev => ({ ...prev, [headId]: [] }));
+    }
+  };
+
+  useEffect(() => {
+    if (!isSegmentLeaderModalOpen || !adminRolesData) return;
+    loadManagersForHead(getHeadId('project_manager'));
+    loadManagersForHead(getHeadId('finance_head'));
+    loadManagersForHead(getHeadId('segment_leader', 'academic'));
+    loadManagersForHead(getHeadId('segment_leader', 'parastals'));
+    loadManagersForHead(getHeadId('segment_leader', 'private'));
+  }, [isSegmentLeaderModalOpen, adminRolesData]);
+  
   // Fetch finance and account manager emails for auto-fill
   const { data: systemEmails } = useQuery({
     queryKey: ['/api/system-config/emails'],
@@ -94,17 +135,6 @@ export default function Team() {
   });
   
   // Fetch admin roles data when modal opens
-  const { data: adminRolesData } = useQuery({
-    queryKey: ['/api/admin/roles'],
-    queryFn: async () => {
-      const res = await fetch('/api/admin/roles', { 
-        credentials: 'include' 
-      });
-      if (!res.ok) return null;
-      return res.json();
-    },
-    enabled: !!isAuthenticated && isSegmentLeaderModalOpen,
-  });
 
   // Helper: validate email
   const isValidEmail = (email: string | undefined) => !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !email.includes('@company.com');
@@ -376,11 +406,11 @@ export default function Team() {
           const isSameEmail = prev && prev.toLowerCase() === roleConfig.email.toLowerCase();
 
           const response = await apiRequest('POST', '/api/admin/users', {
-            email: roleConfig.email,
-            firstName: roleConfig.firstName,
-            lastName: roleConfig.lastName,
-            role: roleConfig.role,
-            segment: roleConfig.segment
+              email: roleConfig.email,
+              firstName: roleConfig.firstName,
+              lastName: roleConfig.lastName,
+              role: roleConfig.role,
+              segment: roleConfig.segment
           });
 
           if (response.ok) {
@@ -390,7 +420,7 @@ export default function Team() {
               unchanged.push({ displayName: roleConfig.displayName, email: roleConfig.email });
             } else if (prev && prev !== roleConfig.email) {
               updated.push({ displayName: roleConfig.displayName, oldEmail: prev, newEmail: roleConfig.email });
-            } else {
+          } else {
               assigned.push({ displayName: roleConfig.displayName, email: roleConfig.email });
             }
           }
@@ -1222,13 +1252,13 @@ export default function Team() {
                                       {systemEmails?.financeEmail && <span className="text-xs text-green-600 ml-2">(Auto-filled)</span>}
                                     </FormLabel>
                                     <div className="flex items-center gap-2">
-                                      <FormControl>
-                                        <Input 
-                                          placeholder="finance@company.com" 
-                                          className="h-11"
-                                          {...field} 
-                                        />
-                                      </FormControl>
+                                    <FormControl>
+                                      <Input 
+                                        placeholder="finance@company.com" 
+                                        className="h-11"
+                                        {...field} 
+                                      />
+                                    </FormControl>
                                       <Button
                                         variant="outline"
                                         size="sm"
@@ -1282,13 +1312,13 @@ export default function Team() {
                                       {systemEmails?.accountManagerEmail && <span className="text-xs text-green-600 ml-2">(Auto-filled)</span>}
                                     </FormLabel>
                                     <div className="flex items-center gap-2">
-                                      <FormControl>
-                                        <Input 
-                                          placeholder="accountmanager@company.com" 
-                                          className="h-11"
-                                          {...field} 
-                                        />
-                                      </FormControl>
+                                    <FormControl>
+                                      <Input 
+                                        placeholder="accountmanager@company.com" 
+                                        className="h-11"
+                                        {...field} 
+                                      />
+                                    </FormControl>
                                       <Button
                                         variant="outline"
                                         size="sm"
@@ -1373,12 +1403,12 @@ export default function Team() {
                             <div>
                               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                               <div className="flex items-center gap-2">
-                                <Input 
-                                  placeholder="manager@company.com"
-                                  className="h-10"
-                                  value={adminRoleData.projectManager.email}
-                                  onChange={(e) => setAdminRoleData({ ...adminRoleData, projectManager: { ...adminRoleData.projectManager, email: e.target.value } })}
-                                />
+                              <Input 
+                                placeholder="manager@company.com"
+                                className="h-10"
+                                value={adminRoleData.projectManager.email}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, projectManager: { ...adminRoleData.projectManager, email: e.target.value } })}
+                              />
                                 <Button
                                   type="button"
                                   size="icon"
@@ -1391,8 +1421,8 @@ export default function Team() {
                                   <span className="sr-only">Resend credentials</span>
                                   <RefreshCw className="h-4 w-4" />
                                 </Button>
-                              </div>
                             </div>
+                          </div>
                           </div>
 
                           {/* Managers under Project Manager */}
@@ -1418,6 +1448,14 @@ export default function Team() {
                                   ))}
                                   <Button size="sm" variant="outline" onClick={()=> setPmManagerRows([...pmManagerRows, { name: '', email: '' }])}>Add manager</Button>
                                   <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                                  {/* Existing managers */}
+                                  {(() => { const hid = getHeadId('project_manager'); const lst = hid ? managersByHead[hid] : undefined; return (lst && lst.length > 0) ? (
+                                    <div className="mt-3 space-y-2">
+                                      {lst.map((m: any, i: number) => (
+                                        <div key={`pm-mgr-${i}`} className="text-sm text-gray-700">{m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} ({m.user?.email || ''})</div>
+                                      ))}
+                                    </div>
+                                  ) : null; })()}
                                 </div>
                               </AccordionContent>
                             </AccordionItem>
@@ -1443,12 +1481,12 @@ export default function Team() {
                             <div>
                               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                               <div className="flex items-center gap-2">
-                                <Input 
-                                  placeholder="finance.head@company.com"
-                                  className="h-10"
-                                  value={adminRoleData.financeHead.email}
-                                  onChange={(e) => setAdminRoleData({ ...adminRoleData, financeHead: { ...adminRoleData.financeHead, email: e.target.value } })}
-                                />
+                              <Input 
+                                placeholder="finance.head@company.com"
+                                className="h-10"
+                                value={adminRoleData.financeHead.email}
+                                onChange={(e) => setAdminRoleData({ ...adminRoleData, financeHead: { ...adminRoleData.financeHead, email: e.target.value } })}
+                              />
                                 <Button
                                   type="button"
                                   size="icon"
@@ -1461,8 +1499,8 @@ export default function Team() {
                                   <span className="sr-only">Resend credentials</span>
                                   <RefreshCw className="h-4 w-4" />
                                 </Button>
-                              </div>
                             </div>
+                          </div>
                           </div>
 
                           {/* Managers under Finance Head */}
@@ -1488,6 +1526,13 @@ export default function Team() {
                                   ))}
                                   <Button size="sm" variant="outline" onClick={()=> setFhManagerRows([...fhManagerRows, { name: '', email: '' }])}>Add manager</Button>
                                   <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                                  {(() => { const hid = getHeadId('finance_head'); const lst = hid ? managersByHead[hid] : undefined; return (lst && lst.length > 0) ? (
+                                    <div className="mt-3 space-y-2">
+                                      {lst.map((m: any, i: number) => (
+                                        <div key={`fh-mgr-${i}`} className="text-sm text-gray-700">{m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} ({m.user?.email || ''})</div>
+                                      ))}
+                                    </div>
+                                  ) : null; })()}
                                 </div>
                               </AccordionContent>
                             </AccordionItem>
@@ -1517,12 +1562,12 @@ export default function Team() {
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                             <div className="flex items-center gap-2">
-                              <Input 
-                                placeholder="leader@academic.com"
-                                className="h-10"
-                                value={adminRoleData.academic.email}
-                                onChange={(e) => setAdminRoleData({ ...adminRoleData, academic: { ...adminRoleData.academic, email: e.target.value } })}
-                              />
+                            <Input 
+                              placeholder="leader@academic.com"
+                              className="h-10"
+                              value={adminRoleData.academic.email}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, academic: { ...adminRoleData.academic, email: e.target.value } })}
+                            />
                               <Button
                                 type="button"
                                 size="icon"
@@ -1535,8 +1580,8 @@ export default function Team() {
                                 <span className="sr-only">Resend credentials</span>
                                 <RefreshCw className="h-4 w-4" />
                               </Button>
-                            </div>
                           </div>
+                        </div>
                         </div>
 
                         {/* Managers under Academic Segment */}
@@ -1562,6 +1607,13 @@ export default function Team() {
                                 ))}
                                 <Button size="sm" variant="outline" onClick={()=> setSegAcManagerRows([...segAcManagerRows, { name: '', email: '' }])}>Add manager</Button>
                                 <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                                {(() => { const hid = getHeadId('segment_leader', 'academic'); const lst = hid ? managersByHead[hid] : undefined; return (lst && lst.length > 0) ? (
+                                  <div className="mt-3 space-y-2">
+                                    {lst.map((m: any, i: number) => (
+                                      <div key={`seg-ac-mgr-${i}`} className="text-sm text-gray-700">{m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} ({m.user?.email || ''})</div>
+                                    ))}
+                                  </div>
+                                ) : null; })()}
                               </div>
                             </AccordionContent>
                           </AccordionItem>
@@ -1587,12 +1639,12 @@ export default function Team() {
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                             <div className="flex items-center gap-2">
-                              <Input 
-                                placeholder="leader@parastals.com"
-                                className="h-10"
-                                value={adminRoleData.parastals.email}
-                                onChange={(e) => setAdminRoleData({ ...adminRoleData, parastals: { ...adminRoleData.parastals, email: e.target.value } })}
-                              />
+                            <Input 
+                              placeholder="leader@parastals.com"
+                              className="h-10"
+                              value={adminRoleData.parastals.email}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, parastals: { ...adminRoleData.parastals, email: e.target.value } })}
+                            />
                               <Button
                                 type="button"
                                 size="icon"
@@ -1605,8 +1657,8 @@ export default function Team() {
                                 <span className="sr-only">Resend credentials</span>
                                 <RefreshCw className="h-4 w-4" />
                               </Button>
-                            </div>
                           </div>
+                        </div>
                         </div>
 
                         {/* Managers under Parastals Segment */}
@@ -1632,6 +1684,13 @@ export default function Team() {
                                 ))}
                                 <Button size="sm" variant="outline" onClick={()=> setSegPaManagerRows([...segPaManagerRows, { name: '', email: '' }])}>Add manager</Button>
                                 <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                                {(() => { const hid = getHeadId('segment_leader', 'parastals'); const lst = hid ? managersByHead[hid] : undefined; return (lst && lst.length > 0) ? (
+                                  <div className="mt-3 space-y-2">
+                                    {lst.map((m: any, i: number) => (
+                                      <div key={`seg-pa-mgr-${i}`} className="text-sm text-gray-700">{m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} ({m.user?.email || ''})</div>
+                                    ))}
+                                  </div>
+                                ) : null; })()}
                               </div>
                             </AccordionContent>
                           </AccordionItem>
@@ -1657,12 +1716,12 @@ export default function Team() {
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                             <div className="flex items-center gap-2">
-                              <Input 
-                                placeholder="leader@private.com"
-                                className="h-10"
-                                value={adminRoleData.private.email}
-                                onChange={(e) => setAdminRoleData({ ...adminRoleData, private: { ...adminRoleData.private, email: e.target.value } })}
-                              />
+                            <Input 
+                              placeholder="leader@private.com"
+                              className="h-10"
+                              value={adminRoleData.private.email}
+                              onChange={(e) => setAdminRoleData({ ...adminRoleData, private: { ...adminRoleData.private, email: e.target.value } })}
+                            />
                               <Button
                                 type="button"
                                 size="icon"
@@ -1675,8 +1734,8 @@ export default function Team() {
                                 <span className="sr-only">Resend credentials</span>
                                 <RefreshCw className="h-4 w-4" />
                               </Button>
-                            </div>
                           </div>
+                        </div>
                         </div>
 
                         {/* Managers under Private Segment */}
@@ -1702,6 +1761,13 @@ export default function Team() {
                                 ))}
                                 <Button size="sm" variant="outline" onClick={()=> setSegPrManagerRows([...segPrManagerRows, { name: '', email: '' }])}>Add manager</Button>
                                 <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
+                                {(() => { const hid = getHeadId('segment_leader', 'private'); const lst = hid ? managersByHead[hid] : undefined; return (lst && lst.length > 0) ? (
+                                  <div className="mt-3 space-y-2">
+                                    {lst.map((m: any, i: number) => (
+                                      <div key={`seg-pr-mgr-${i}`} className="text-sm text-gray-700">{m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} ({m.user?.email || ''})</div>
+                                    ))}
+                                  </div>
+                                ) : null; })()}
                               </div>
                             </AccordionContent>
                           </AccordionItem>

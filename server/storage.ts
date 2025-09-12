@@ -3785,6 +3785,64 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  // Update milestone start/end/expectedInvoiceDate from its subtasks (direct + via modules)
+  async updateMilestoneDatesFromSubtasks(milestoneId: string): Promise<void> {
+    try {
+      // Get modules under this milestone
+      const moduleRows = await db
+        .select({ moduleId: moduleMilestones.moduleId })
+        .from(moduleMilestones)
+        .where(eq(moduleMilestones.milestoneId, milestoneId));
+
+      const moduleIds = moduleRows.map(m => m.moduleId);
+
+      // Aggregate direct subtasks attached to the milestone
+      const [directAgg] = await db
+        .select({
+          minStart: sql<Date>`MIN(${subtasks.startDate})`,
+          maxDue: sql<Date>`MAX(${subtasks.dueDate})`,
+        })
+        .from(subtasks)
+        .where(eq(subtasks.milestoneId, milestoneId));
+
+      // Aggregate subtasks through modules mapped to the milestone
+      let moduleAgg: { minStart: Date | null; maxDue: Date | null } = { minStart: null, maxDue: null };
+      if (moduleIds.length > 0) {
+        const [agg] = await db
+          .select({
+            minStart: sql<Date>`MIN(${subtasks.startDate})`,
+            maxDue: sql<Date>`MAX(${subtasks.dueDate})`,
+          })
+          .from(subtasks)
+          .where(inArray(subtasks.moduleId, moduleIds));
+        moduleAgg = { minStart: (agg as any)?.minStart || null, maxDue: (agg as any)?.maxDue || null };
+      }
+
+      const directMin = (directAgg as any)?.minStart as Date | null;
+      const directMax = (directAgg as any)?.maxDue as Date | null;
+      const combinedMin = [directMin, moduleAgg.minStart].filter(Boolean).sort((a: any, b: any) => a.getTime() - b.getTime())[0] || null;
+      const combinedMax = [directMax, moduleAgg.maxDue].filter(Boolean).sort((a: any, b: any) => b.getTime() - a.getTime())[0] || null;
+
+      let expectedInvoiceDate: Date | null = null;
+      if (combinedMax) {
+        expectedInvoiceDate = new Date(combinedMax.getTime() + 24 * 60 * 60 * 1000);
+      }
+
+      await db
+        .update(milestones)
+        .set({
+          startDate: combinedMin as any,
+          endDate: combinedMax as any,
+          expectedInvoiceDate: expectedInvoiceDate as any,
+          updatedAt: new Date() as any,
+        } as any)
+        .where(eq(milestones.id, milestoneId));
+    } catch (error) {
+      console.error('Error updating milestone dates from subtasks:', error);
+      // Do not throw to avoid failing the parent operation; just log
+    }
+  }
+
   // New function to update milestone status from modules in Phase 3
   async updateMilestoneStatusFromModules(moduleId: string): Promise<void> {
     try {
@@ -4526,7 +4584,8 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           moduleId
         } as any);
 
-      // Module added to milestone
+      // Recompute milestone dates after association
+      await this.updateMilestoneDatesFromSubtasks(milestoneId);
     } catch (error) {
       console.error('Error adding module to milestone:', error);
       throw error;
@@ -4550,7 +4609,8 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         throw new Error('Module-milestone relationship not found');
       }
 
-      // Module removed from milestone
+      // Recompute milestone dates after dissociation
+      await this.updateMilestoneDatesFromSubtasks(milestoneId);
     } catch (error) {
       console.error('Error removing module from milestone:', error);
       throw error;
@@ -4723,6 +4783,22 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         createdById: subtask.createdById,
       } as any)
       .returning();
+    // Update milestone dates if subtask relates to a milestone directly or via module
+    try {
+      if (newSubtask?.milestoneId) {
+        await this.updateMilestoneDatesFromSubtasks(newSubtask.milestoneId);
+      } else if (newSubtask?.moduleId) {
+        const rows = await db
+          .select({ milestoneId: moduleMilestones.milestoneId })
+          .from(moduleMilestones)
+          .where(eq(moduleMilestones.moduleId, newSubtask.moduleId));
+        for (const r of rows) {
+          if (r.milestoneId) await this.updateMilestoneDatesFromSubtasks(r.milestoneId);
+        }
+      }
+    } catch (_err) {
+      // swallow
+    }
     return newSubtask;
   }
 
@@ -4767,6 +4843,23 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         await this.updateMilestoneStatusFromSubtasks(updatedSubtask.id);
       }
     }
+
+    // Update milestone dates if needed
+    try {
+      if (updatedSubtask?.milestoneId) {
+        await this.updateMilestoneDatesFromSubtasks(updatedSubtask.milestoneId);
+      } else if (updatedSubtask?.moduleId) {
+        const rows = await db
+          .select({ milestoneId: moduleMilestones.milestoneId })
+          .from(moduleMilestones)
+          .where(eq(moduleMilestones.moduleId, updatedSubtask.moduleId));
+        for (const r of rows) {
+          if (r.milestoneId) await this.updateMilestoneDatesFromSubtasks(r.milestoneId);
+        }
+      }
+    } catch (_err) {
+      // swallow
+    }
     
     return updatedSubtask;
   }
@@ -4774,7 +4867,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
   async deleteSubtask(id: string): Promise<void> {
     // Get subtask info before deletion to update module progress
     const [subtask] = await db
-      .select({ moduleId: subtasks.moduleId })
+      .select({ moduleId: subtasks.moduleId, milestoneId: subtasks.milestoneId })
       .from(subtasks)
       .where(eq(subtasks.id, id));
     
@@ -4796,6 +4889,24 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       await this.updateModuleProgressFromSubtasks(subtask.moduleId);
       // Trigger module status automation
       await this.updateModuleStatusFromSubtasks(subtask.moduleId);
+    }
+
+    // Update milestone dates if needed (via module relationship)
+    try {
+      if (subtask?.milestoneId) {
+        await this.updateMilestoneDatesFromSubtasks(subtask.milestoneId);
+      }
+      if (subtask?.moduleId) {
+        const rows = await db
+          .select({ milestoneId: moduleMilestones.milestoneId })
+          .from(moduleMilestones)
+          .where(eq(moduleMilestones.moduleId, subtask.moduleId));
+        for (const r of rows) {
+          if (r.milestoneId) await this.updateMilestoneDatesFromSubtasks(r.milestoneId);
+        }
+      }
+    } catch (_err) {
+      // swallow
     }
   }
 
@@ -5571,17 +5682,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       const [user] = await db.select().from(users).where(eq(users.id, userId));
       if (!user) return { role: 'employee', isProjectManager: false, isFinanceHead: false };
 
-      // If base admin or manager flags set, return directly
-      if (user.role === 'admin' || user.role === 'manager' || user.isProjectManager || user.isFinanceHead || user.assignedSegment) {
-        return {
-          role: user.role,
-          isProjectManager: !!user.isProjectManager,
-          isFinanceHead: !!user.isFinanceHead,
-          assignedSegment: user.assignedSegment || undefined,
-        };
-      }
-
-      // Inherit from head membership if present
+      // Gather membership-based inheritance
       const memberships = await db
         .select({
           headRoleType: adminRoles.roleType,
@@ -5591,23 +5692,24 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         .innerJoin(adminRoles, eq(adminRoleMembers.headRoleId, adminRoles.id))
         .where(and(eq(adminRoleMembers.managerUserId, userId), eq(adminRoles.isActive, true)));
 
-      // Reduce memberships to a single effective dashboard preference
-      let isPM = false; let isFH = false; let seg: any = undefined;
+      let inheritedPM = false; let inheritedFH = false; let inheritedSeg: any = undefined;
       for (const m of memberships) {
-        if (m.headRoleType === 'project_manager') isPM = true;
-        if (m.headRoleType === 'finance_head') isFH = true;
-        if (m.headRoleType === 'segment_leader' && m.headSegment) seg = m.headSegment;
-      }
-      if (isPM || isFH || seg) {
-        return {
-          role: user.role,
-          isProjectManager: isPM,
-          isFinanceHead: isFH,
-          assignedSegment: seg,
-        };
+        if (m.headRoleType === 'finance_head') inheritedFH = true;
+        if (m.headRoleType === 'project_manager') inheritedPM = true;
+        if (m.headRoleType === 'segment_leader' && m.headSegment) inheritedSeg = m.headSegment;
       }
 
-      return { role: user.role, isProjectManager: false, isFinanceHead: false };
+      // Merge base flags with inheritance, but prioritize finance head and segment from inheritance
+      const isFinanceHead = inheritedFH || !!user.isFinanceHead;
+      const assignedSegment = inheritedSeg ?? user.assignedSegment ?? undefined;
+      const isProjectManager = inheritedPM || (!!user.isProjectManager && !isFinanceHead && !assignedSegment);
+
+      return {
+        role: user.role,
+        isProjectManager,
+        isFinanceHead,
+        assignedSegment,
+      };
     } catch (error) {
       console.error('Error checking dashboard role:', error);
       return { role: 'employee', isProjectManager: false, isFinanceHead: false };

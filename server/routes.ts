@@ -740,7 +740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (role === 'segment_leader' && !segment) {
         return res.status(400).json({ message: 'Segment is required for segment leader role' });
       }
-
+      
       // Upsert user by email
       const existing = await storage.getUserByEmail(String(email).trim().toLowerCase());
       let user: any;
@@ -753,10 +753,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         user = { ...existing, firstName, lastName };
       } else {
         // Create new user and send credentials
-        const result = await storage.createUserWithCredentials(
-          { email, firstName, lastName, role, segment },
-          req.user.id
-        );
+      const result = await storage.createUserWithCredentials(
+        { email, firstName, lastName, role, segment },
+        req.user.id
+      );
         user = result.user;
         temporaryPassword = result.temporaryPassword;
       }
@@ -771,12 +771,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Only send email if newly created
       if (temporaryPassword) {
-        const { notificationService } = await import('./services/notificationService');
-        await notificationService.sendAdminRoleAssignedNotification({
+      const { notificationService } = await import('./services/notificationService');
+      await notificationService.sendAdminRoleAssignedNotification({
           user,
-          roleType: role,
-          segment,
-          assignedBy: req.user,
+        roleType: role,
+        segment,
+        assignedBy: req.user,
           temporaryPassword,
         });
         return res.status(201).json({ user, temporaryPassword, message: 'User created and credentials sent' });
@@ -1119,12 +1119,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/projects', isAuthenticated, async (req: any, res) => {
     try {
-      const start = new Date(req.body.startDate);
-      const end = new Date(req.body.endDate);
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      const start = req.body.startDate ? new Date(req.body.startDate) : undefined;
+      const end = req.body.endDate ? new Date(req.body.endDate) : undefined;
+      if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime()))) {
         return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['startDate','endDate'], message: 'Invalid dates' }] });
       }
-      if (end < start) {
+      if (start && end && end < start) {
         return res.status(400).json({ message: 'Invalid project data', errors: [{ path: ['endDate'], message: 'End date must be after start date' }] });
       }
 
@@ -2389,12 +2389,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else if (cleaned.milestoneId) {
         parentMilestone = await storage.getMilestone(cleaned.milestoneId);
         if (!parentMilestone) return res.status(400).json({ message: 'Milestone not found' });
-        if (cleaned.startDate && parentMilestone.startDate && cleaned.startDate < parentMilestone.startDate) {
-          return res.status(400).json({ message: 'Subtask start cannot be before milestone start' });
-        }
-        if (cleaned.dueDate && parentMilestone.endDate && cleaned.dueDate > parentMilestone.endDate) {
-          return res.status(400).json({ message: 'Subtask due date cannot be after milestone end' });
-        }
         project = await storage.getProject(parentMilestone.projectId);
       } else {
         return res.status(400).json({ message: 'Either moduleId or milestoneId is required' });
