@@ -249,10 +249,10 @@ export default function MetricsCards() {
 
       case 'finance_head':
         return [
-          baseCards.totalBudget,
-          baseCards.collectedAmount,
-          baseCards.pendingAmount,
-          baseCards.activeProjects
+          baseCards.activeProjects,
+          baseCards.completedModules,
+          baseCards.overdueModules,
+          baseCards.onSupportProjects
         ];
 
       case 'segment_leader_academic':
