@@ -38,25 +38,7 @@ export function setupRateLimiting(app: Express) {
       return false;
     },
     
-    // Enhanced key generator with better IP detection
-    keyGenerator: (req: Request) => {
-      // Enhanced IP detection for various proxy configurations
-      const clientIP = req.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
-                      req.get('X-Real-IP') ||
-                      req.get('X-Client-IP') ||
-                      req.get('CF-Connecting-IP') || // Cloudflare
-                      req.get('X-Forwarded') ||
-                      req.ip ||
-                      req.connection.remoteAddress ||
-                      req.socket.remoteAddress ||
-                      'unknown';
-      
-      // Add user agent fingerprinting for better rate limiting
-      const userAgent = req.get('User-Agent') || 'unknown';
-      const userAgentHash = require('crypto').createHash('md5').update(userAgent).digest('hex').substring(0, 8);
-      
-      return `${clientIP}:${userAgentHash}`;
-    },
+    // Use default key generator which respects Express trust proxy. Avoid user-supplied headers.
     
     // Enhanced rate limit handling
     handler: (req: Request, res: Response) => {

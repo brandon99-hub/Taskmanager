@@ -21,7 +21,8 @@ export function getSession() {
     throw new Error("DATABASE_URL environment variable is required");
   }
 
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000;
+  // Idle timeout in minutes (default 30). Matches cookie maxAge and store TTL.
+  const sessionTtl = parseInt(process.env.SESSION_IDLE_TIMEOUT_MINUTES || "30", 10) * 60 * 1000;
 
   // Robust connect-pg-simple import for both ESM/CJS
   const PgSessionFactory: any = (connectPg as any).default ?? (connectPg as any);
@@ -51,6 +52,7 @@ export function getSession() {
       path: "/",
       domain: process.env.COOKIE_DOMAIN || undefined,
     },
+    // Sliding expiration: extends on every request so users stay logged in while active
     rolling: true,
     unset: "destroy",
   });
@@ -66,7 +68,8 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 export async function setupAuth(app: Express) {
-  app.set("trust proxy", true);
+  // Respect deployment proxy configuration (0/false = direct, 1 = single proxy)
+  app.set("trust proxy", process.env.TRUST_PROXY === '1' ? 1 : false);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());

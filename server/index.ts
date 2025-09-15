@@ -25,6 +25,8 @@ process.on('uncaughtException', (error) => {
 const app = express();
 
 // Security middleware (order is important)
+// Configure trust proxy BEFORE any middleware that reads IPs (rate limiting, sessions)
+app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : false);
 setupSecurityHeaders(app);
 setupCORS(app);
 setupRateLimiting(app);

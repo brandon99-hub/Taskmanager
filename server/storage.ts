@@ -718,7 +718,7 @@ export class DatabaseStorage implements IStorage {
         projectId: milestones.projectId,
         milestoneCount: count(milestones.id),
         completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
-        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'sent' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
         totalFees: sql<number>`COALESCE(SUM(${milestones.feeAmount}), 0)`,
       })
       .from(milestones)
@@ -804,7 +804,7 @@ export class DatabaseStorage implements IStorage {
         projectId: milestones.projectId,
         milestoneCount: count(milestones.id),
         completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
-        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'sent' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
         totalFees: sql<number>`COALESCE(SUM(${milestones.feeAmount}), 0)`,
       })
       .from(milestones)

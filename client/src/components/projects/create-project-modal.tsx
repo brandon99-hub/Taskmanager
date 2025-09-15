@@ -3892,6 +3892,48 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
       }
 
+      // Live-recalculate parent milestone dates from all subtasks (direct + via modules)
+      try {
+        const startDates: Date[] = [];
+        const dueDates: Date[] = [];
+        const pushDatesFrom = (subtasksList?: any[]) => {
+          if (!Array.isArray(subtasksList)) return;
+          for (const st of subtasksList) {
+            if (st?.startDate) {
+              const d = new Date(st.startDate);
+              if (!isNaN(d.getTime())) startDates.push(d);
+            }
+            if (st?.dueDate) {
+              const d = new Date(st.dueDate);
+              if (!isNaN(d.getTime())) dueDates.push(d);
+            }
+          }
+        };
+        // Direct milestone subtasks
+        pushDatesFrom(milestone.subtasks);
+        // Module-linked subtasks under this milestone if any
+        const msModules = (milestone as any).modules || [];
+        for (const m of msModules) pushDatesFrom(m?.subtasks);
+        const minStart = startDates.length ? new Date(Math.min(...startDates.map(d => d.getTime()))) : null;
+        const maxDue = dueDates.length ? new Date(Math.max(...dueDates.map(d => d.getTime()))) : null;
+        (milestone as any).startDate = minStart ? minStart.toISOString().split('T')[0] : '';
+        // Non-Phase 3 uses dueDate as the field name; also keep endDate for consistency
+        const dueStr = maxDue ? maxDue.toISOString().split('T')[0] : '';
+        (milestone as any).dueDate = dueStr;
+        (milestone as any).endDate = dueStr;
+        if (maxDue) {
+          const inv = new Date(maxDue);
+          inv.setDate(inv.getDate() + 1);
+          (milestone as any).expectedInvoiceDate = inv.toISOString().split('T')[0];
+          const col = new Date(inv);
+          col.setDate(col.getDate() + 30);
+          (milestone as any).expectedCollectionDate = col.toISOString().split('T')[0];
+        } else {
+          (milestone as any).expectedInvoiceDate = '';
+          (milestone as any).expectedCollectionDate = '';
+        }
+      } catch {}
+
     setPhases(newPhases);
 
       return;
@@ -4565,6 +4607,46 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       [field]: value
 
     };
+
+    // Live-recalculate parent milestone dates from all subtasks (direct + via modules)
+    try {
+      const milestone = phase.milestones[milestoneIndex];
+      const collectDates = () => {
+        const startDates: Date[] = [];
+        const dueDates: Date[] = [];
+        const pushDatesFrom = (subtasksList?: any[]) => {
+          if (!Array.isArray(subtasksList)) return;
+          for (const st of subtasksList) {
+            if (st?.startDate) {
+              const d = new Date(st.startDate);
+              if (!isNaN(d.getTime())) startDates.push(d);
+            }
+            if (st?.dueDate) {
+              const d = new Date(st.dueDate);
+              if (!isNaN(d.getTime())) dueDates.push(d);
+            }
+          }
+        };
+        // Direct milestone subtasks
+        pushDatesFrom((milestone as any).subtasks);
+        // Module-linked subtasks
+        const msModules = (milestone as any).modules || [];
+        for (const m of msModules) pushDatesFrom(m?.subtasks);
+        return { startDates, dueDates };
+      };
+      const { startDates, dueDates } = collectDates();
+      const minStart = startDates.length ? new Date(Math.min(...startDates.map(d => d.getTime()))) : null;
+      const maxDue = dueDates.length ? new Date(Math.max(...dueDates.map(d => d.getTime()))) : null;
+      (milestone as any).startDate = minStart ? minStart.toISOString().split('T')[0] : '';
+      (milestone as any).endDate = maxDue ? maxDue.toISOString().split('T')[0] : '';
+      if (maxDue) {
+        const inv = new Date(maxDue);
+        inv.setDate(inv.getDate() + 1);
+        (milestone as any).expectedInvoiceDate = inv.toISOString().split('T')[0];
+      } else {
+        (milestone as any).expectedInvoiceDate = '';
+      }
+    } catch {}
 
     setPhases(newPhases);
 
@@ -6003,10 +6085,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                                           value={subtask.startDate || ''}
 
-                                                          min={milestone.startDate || ''}
-
-                                                          max={subtask.dueDate || milestone.endDate || ''}
-
+                                                          // Allow subtask dates to extend module/milestone; parent dates will auto-expand from subtasks
                                                           onChange={(e) => {
 
                                                             const startDate = e.target.value;
@@ -6055,9 +6134,24 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                                           value={subtask.dueDate || ''}
 
-                                                          min={subtask.startDate || milestone.startDate || ''}
+                                                          // Allow subtask dates to extend module/milestone; parent dates will auto-expand from subtasks
+                                         onFocus={(e) => {
 
-                                                          max={milestone.endDate || ''}
+                                          // Auto-navigate to start date month when opening due date picker
+
+                                          if (subtask.startDate) {
+
+                                            const startDate = new Date(subtask.startDate);
+
+                                            const year = startDate.getFullYear();
+
+                                            const month = String(startDate.getMonth() + 1).padStart(2, '0');
+
+                                            e.target.setAttribute('data-month', `${year}-${month}`);
+
+                                          }
+
+                                        }}
 
                                                           onChange={(e) => {
 
@@ -6825,10 +6919,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                       value={subtask.startDate || ''}
 
-                                        min={module.startDate || ''}
-
-                                        max={subtask.dueDate || module.dueDate || ''}
-
+                                        // Allow subtask dates to extend module/milestone; parent dates will auto-expand from subtasks
                                               onChange={(e) => {
 
                                                 const startDate = e.target.value;
@@ -6883,10 +6974,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                       value={subtask.dueDate || ''}
 
-                                        min={subtask.startDate || module.startDate || ''}
-
-                                        max={module.dueDate || ''}
-
+                                        // Allow subtask dates to extend module/milestone; parent dates will auto-expand from subtasks
                                         onFocus={(e) => {
 
                                           // Auto-navigate to start date month when opening due date picker
