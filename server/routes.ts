@@ -1218,15 +1218,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Verify current password (check both hashed password and temporary password)
-      const isValidCurrentPassword = user.password === currentPassword || 
-        user.temporaryPassword === currentPassword;
+      const { verifyPassword } = await import('./auth');
+      const isValidHashedPassword = await verifyPassword(currentPassword, user.password);
+      const isValidTemporaryPassword = user.temporaryPassword && user.temporaryPassword === currentPassword;
+      const isValidCurrentPassword = isValidHashedPassword || isValidTemporaryPassword;
         
       if (!isValidCurrentPassword) {
         return res.status(400).json({ message: 'Current password is incorrect' });
       }
       
       // Hash the new password before storing
-      const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+      const { hashPassword } = await import('./auth');
+      const hashedNewPassword = await hashPassword(newPassword);
       
       // Update password (properly hashed and clear temporary password)
       await storage.updateUserPassword(req.user.id, hashedNewPassword, user.mustChangePassword || false);
