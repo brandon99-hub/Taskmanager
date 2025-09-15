@@ -873,6 +873,16 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
       setMilestones(milestonesWithFormattedDates);
 
+      // Auto-calculate contract amount from milestone fees when editing
+      const totalAmount = milestonesWithFormattedDates.reduce((total, milestone) => {
+        const cleanValue = (milestone.feeAmount || '0').replace(/,/g, '');
+        const fee = parseFloat(cleanValue) || 0;
+        return total + fee;
+      }, 0);
+      
+      const formattedAmount = totalAmount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      form.setValue('budget', formattedAmount, { shouldValidate: true });
+
     } else if (isEditMode && existingMilestones.length === 0) {
 
       console.log('No existing milestones found for project:', project?.id);

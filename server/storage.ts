@@ -3994,27 +3994,52 @@ TaskFlow System
 
   async updatePhaseStatusFromModules(projectId: string, phaseNumber: number): Promise<void> {
     try {
-      // For Phase 3, check milestone billing status instead of module status
-      if (phaseNumber === 3) {
-        // Get all milestones for this phase
-        const phaseMilestones = await db
-          .select({ billingStatus: milestones.billingStatus })
-          .from(milestones)
-          .where(eq(milestones.projectId, projectId));
+      // For all phases, check both module status and milestone billing status
+      let allCompleted = false;
+      let anyInProgress = false;
 
-        if (phaseMilestones.length === 0) {
-          return; // No milestones in this phase
-        }
+      // Check milestone billing status for all phases
+      const phaseMilestones = await db
+        .select({ billingStatus: milestones.billingStatus })
+        .from(milestones)
+        .where(eq(milestones.projectId, projectId));
 
+      if (phaseMilestones.length > 0) {
         // Check milestone billing status distribution
         // Phase is completed when all milestones are 'sent' or 'paid'
-        const allCompleted = phaseMilestones.every(milestone => 
+        allCompleted = phaseMilestones.every(milestone => 
           ['sent', 'paid', 'processing'].includes(milestone.billingStatus)
         );
         // Phase is in progress when any milestone is 'to_send' or beyond
-        const anyInProgress = phaseMilestones.some(milestone => 
+        anyInProgress = phaseMilestones.some(milestone => 
           ['to_send', 'sent', 'paid', 'processing'].includes(milestone.billingStatus)
         );
+      }
+
+      // Also check module status for additional context
+      const phaseModules = await db
+        .select({ status: modules.status })
+        .from(modules)
+        .where(
+          and(
+            eq(modules.projectId, projectId),
+            eq(modules.phaseNumber, phaseNumber)
+          )
+        );
+
+      if (phaseModules.length > 0) {
+        // Module status can also indicate progress
+        const modulesCompleted = phaseModules.every(module => 
+          ['completed', 'done'].includes(module.status)
+        );
+        const modulesInProgress = phaseModules.some(module => 
+          ['in_progress', 'ongoing', 'started', 'fc_review', 'qa', 'client_review'].includes(module.status)
+        );
+
+        // Combine milestone and module status
+        allCompleted = allCompleted || modulesCompleted;
+        anyInProgress = anyInProgress || modulesInProgress;
+      }
 
         // Get current phase
         const [currentPhase] = await db
@@ -4058,72 +4083,6 @@ TaskFlow System
               )
             );
         }
-        return;
-      }
-
-      // For other phases (1,2,4,5,6), check module status directly
-      const phaseModules = await db
-        .select({ status: modules.status })
-        .from(modules)
-        .where(
-          and(
-            eq(modules.projectId, projectId),
-            eq(modules.phaseNumber, phaseNumber)
-          )
-        );
-
-      if (phaseModules.length === 0) {
-        return; // No modules in this phase
-      }
-
-      // Check module status distribution (using 'completed' status)
-      const allCompleted = phaseModules.every(module => module.status === 'completed');
-      const anyInProgress = phaseModules.some(module => module.status === 'in_progress');
-
-      // Get current phase
-      const [currentPhase] = await db
-        .select({ status: projectPhases.status })
-        .from(projectPhases)
-        .where(
-          and(
-            eq(projectPhases.projectId, projectId),
-            eq(projectPhases.phaseNumber, phaseNumber)
-          )
-        );
-
-      if (!currentPhase) {
-        return; // Phase not found
-      }
-
-      let newStatus = currentPhase.status;
-
-      // Auto-complete phase when all modules are completed
-      if (allCompleted && currentPhase.status !== 'completed') {
-        newStatus = 'completed';
-      }
-      // Auto-set phase to in_progress when any module is in_progress
-      else if (anyInProgress && currentPhase.status === 'not_started') {
-        newStatus = 'in_progress';
-      }
-
-      // Update phase status if it needs to change
-      if (newStatus !== currentPhase.status) {
-        await db
-          .update(projectPhases)
-          .set({
-            status: newStatus as any,
-            completedAt: newStatus === 'completed' ? new Date() : undefined,
-            updatedAt: new Date() as any
-          } as any)
-          .where(
-            and(
-              eq(projectPhases.projectId, projectId),
-              eq(projectPhases.phaseNumber, phaseNumber)
-            )
-          );
-
-        // Phase status updated
-      }
     } catch (error) {
       console.error('Error updating phase status from modules:', error);
       throw error;
@@ -4152,17 +4111,13 @@ TaskFlow System
       let allCompleted = false;
       let anyInProgress = false;
 
-      // For Phase 3, check milestone billing status
-      if (phase.phaseNumber === 3) {
+      // Check milestone billing status for all phases
       const phaseMilestones = await db
-          .select({ billingStatus: milestones.billingStatus })
-          .from(milestones)
-          .where(eq(milestones.projectId, phase.projectId));
+        .select({ billingStatus: milestones.billingStatus })
+        .from(milestones)
+        .where(eq(milestones.projectId, phase.projectId));
 
-        if (phaseMilestones.length === 0) {
-          return; // No milestones in this phase
-        }
-
+      if (phaseMilestones.length > 0) {
         // Phase is completed when all milestones are 'sent' or 'paid'
         allCompleted = phaseMilestones.every(milestone => 
           ['sent', 'paid', 'processing'].includes(milestone.billingStatus)
@@ -4171,27 +4126,31 @@ TaskFlow System
         anyInProgress = phaseMilestones.some(milestone => 
           ['to_send', 'sent', 'paid', 'processing'].includes(milestone.billingStatus)
         );
-      } else {
-        // For other phases, check module status
+      }
+
+      // Also check module status for additional context
+      if (!allCompleted && !anyInProgress) {
         const phaseModules = await db
-        .select({ status: modules.status })
-        .from(modules)
-        .where(
-          and(
-            eq(modules.projectId, phase.projectId),
-            eq(modules.phaseNumber, phase.phaseNumber)
-          )
-        );
+          .select({ status: modules.status })
+          .from(modules)
+          .where(
+            and(
+              eq(modules.projectId, phase.projectId),
+              eq(modules.phaseNumber, phase.phaseNumber)
+            )
+          );
 
-        if (phaseModules.length === 0) {
-          return; // No modules in this phase
+        if (phaseModules.length > 0) {
+          // Check module status distribution
+          const modulesCompleted = phaseModules.every(module => module.status === 'completed');
+          const modulesInProgress = phaseModules.some(module => 
+            ['in_progress', 'ongoing', 'started'].includes(module.status)
+          );
+          
+          // Combine milestone and module status
+          allCompleted = allCompleted || modulesCompleted;
+          anyInProgress = anyInProgress || modulesInProgress;
         }
-
-        // Check module status distribution
-        allCompleted = phaseModules.every(module => module.status === 'completed');
-        anyInProgress = phaseModules.some(module => 
-          ['in_progress', 'ongoing', 'started'].includes(module.status)
-        );
       }
 
       let newStatus = phase.status;
@@ -4381,6 +4340,29 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
         } as any)
         .where(eq(milestones.id, id))
         .returning();
+      
+      // If billing status was updated, trigger phase status update
+      if (milestone.billingStatus) {
+        // Get the project ID for this milestone
+        const [milestoneInfo] = await db
+          .select({ projectId: milestones.projectId })
+          .from(milestones)
+          .where(eq(milestones.id, id));
+        
+        if (milestoneInfo?.projectId) {
+          // Update phase status for all phases when milestone billing status changes
+          // Get all phases for this project and update their status
+          const projectPhasesList = await db
+            .select({ phaseNumber: projectPhases.phaseNumber })
+            .from(projectPhases)
+            .where(eq(projectPhases.projectId, milestoneInfo.projectId));
+          
+          // Update each phase status
+          for (const phase of projectPhasesList) {
+            await this.updatePhaseStatusFromModules(milestoneInfo.projectId, phase.phaseNumber);
+          }
+        }
+      }
       
       return updatedMilestone;
     } catch (error) {

@@ -1910,6 +1910,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             phaseNumber: m.phaseNumber,
             phaseName: m.phaseName,
             subtasks: (m as any).subtasks || [],
+            isMilestone: true,
+            billingStatus: m.billingStatus || 'none',
           }));
         tasks = [...tasks, ...milestoneTasks];
       } catch (e) {
@@ -1933,13 +1935,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Calculate progress for each task based on subtasks
+      // Calculate progress for each task based on subtasks and billing status
       const tasksWithCalculatedProgress = tasks.map(task => {
         let calculatedProgress = task.progressPercent;
+        
         // If task has subtasks, calculate progress based on subtask status
         if (task.subtasks && task.subtasks.length > 0) {
           calculatedProgress = calculateSubtaskWeightBasedProgress(task.subtasks);
         }
+        
+        // For milestones, also consider billing status for progress calculation
+        if (task.isMilestone && task.billingStatus) {
+          let billingProgress = 0;
+          switch (task.billingStatus) {
+            case 'none':
+            case 'to_send':
+              billingProgress = 0;
+              break;
+            case 'sent':
+              billingProgress = 50;
+              break;
+            case 'paid':
+              billingProgress = 100;
+              break;
+            case 'overdue':
+              billingProgress = 25;
+              break;
+            case 'processing':
+              billingProgress = 75;
+              break;
+          }
+          
+          // Use the higher of subtask progress or billing progress
+          calculatedProgress = Math.max(calculatedProgress, billingProgress);
+        }
+        
         return { ...task, progress: calculatedProgress };
       });
 
@@ -1972,6 +2002,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           phaseNumber: task.phaseNumber,
           phaseName: task.phaseName,
           subtasks: task.subtasks || [],
+          isMilestone: (task as any).isMilestone || false,
+          billingStatus: (task as any).billingStatus || null,
         })),
       };
 
@@ -2932,7 +2964,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const phases = await storage.getProjectPhases(projectId);
-      let tasks = await storage.getTasksByProject(projectId);
+      let tasks: any[] = await storage.getTasksByProject(projectId) as any[];
+
+      // Also include non-Phase-3 milestones as task-like entries
+      try {
+        const projectMilestones = await storage.getMilestonesByProject(projectId);
+        const milestoneTasks = (projectMilestones || [])
+          .filter((m: any) => m && (m as any).phaseNumber !== 3)
+          .map((m: any) => ({
+            id: m.id,
+            name: m.name,
+            startDate: m.startDate,
+            dueDate: m.endDate,
+            status: m.status || 'not_started',
+            progressPercent: 0,
+            assignedUser: null,
+            priority: m.priority || 'medium',
+            phaseNumber: m.phaseNumber,
+            phaseName: m.phaseName,
+            subtasks: (m as any).subtasks || [],
+            isMilestone: true,
+            billingStatus: m.billingStatus || 'none',
+          }));
+        tasks = [...tasks, ...milestoneTasks];
+      } catch (e) {
+        console.warn('Dashboard Gantt: failed to include milestones as tasks:', (e as any)?.message || e);
+      }
 
       // Auto-assign phases to modules if they don't have phases
       if (phases.length > 0 && tasks.length > 0) {
@@ -2951,13 +3008,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Calculate progress for each task based on subtasks
+      // Calculate progress for each task based on subtasks and billing status
       const tasksWithCalculatedProgress = tasks.map(task => {
         let calculatedProgress = task.progressPercent;
         
         // If task has subtasks, calculate progress based on subtask status
         if (task.subtasks && task.subtasks.length > 0) {
           calculatedProgress = calculateSubtaskWeightBasedProgress(task.subtasks);
+        }
+        
+        // For milestones, also consider billing status for progress calculation
+        if ((task as any).isMilestone && (task as any).billingStatus) {
+          let billingProgress = 0;
+          switch ((task as any).billingStatus) {
+            case 'none':
+            case 'to_send':
+              billingProgress = 0;
+              break;
+            case 'sent':
+              billingProgress = 50;
+              break;
+            case 'paid':
+              billingProgress = 100;
+              break;
+            case 'overdue':
+              billingProgress = 25;
+              break;
+            case 'processing':
+              billingProgress = 75;
+              break;
+          }
+          
+          // Use the higher of subtask progress or billing progress
+          calculatedProgress = Math.max(calculatedProgress, billingProgress);
         }
         
         return {
@@ -2996,6 +3079,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           phaseNumber: task.phaseNumber,
           phaseName: task.phaseName,
           subtasks: task.subtasks || [],
+          isMilestone: (task as any).isMilestone || false,
+          billingStatus: (task as any).billingStatus || null,
         })),
       };
 

@@ -16,7 +16,7 @@ import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangl
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { calculateWeightBasedProgress } from "@/lib/utils";
+import { calculateWeightBasedProgress, calculateProjectProgress } from "@/lib/utils";
 
 export default function Projects() {
   const auth = useAuth() as any;
@@ -51,14 +51,36 @@ export default function Projects() {
 
   // Fetch milestones for all projects to calculate weight-based progress
   const { data: allMilestones = [], isLoading: milestonesLoading } = useQuery<any[]>({
-    queryKey: ['/api/tasks'],
+    queryKey: ['/api/milestones'],
     queryFn: async () => {
-      const res = await fetch('/api/tasks', { 
+      const res = await fetch('/api/milestones', { 
         credentials: 'include', 
         cache: 'no-store' 
       });
-      if (!res.ok) throw new Error('Failed to fetch tasks');
+      if (!res.ok) throw new Error('Failed to fetch milestones');
       return res.json();
+    },
+    enabled: !!isAuthenticated,
+  });
+
+  // Fetch subtasks for all projects to calculate comprehensive progress
+  const { data: allSubtasks = [], isLoading: subtasksLoading } = useQuery<any[]>({
+    queryKey: ['/api/dashboard/kanban-subtasks'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard/kanban-subtasks', { 
+        credentials: 'include', 
+        cache: 'no-store' 
+      });
+      if (!res.ok) throw new Error('Failed to fetch subtasks');
+      const grouped = await res.json();
+      // Flatten the grouped subtasks into a single array
+      const keys = ['overdue', 'review', 'recentlyDone', 'highPriorityTodo', 'fcReview'];
+      const flat: any[] = [];
+      for (const k of keys) {
+        const arr = Array.isArray(grouped?.[k]) ? grouped[k] : [];
+        for (const item of arr) flat.push({ ...item, type: 'subtask' });
+      }
+      return flat;
     },
     enabled: !!isAuthenticated,
   });
@@ -135,10 +157,17 @@ export default function Projects() {
     return overdueTasks.filter((task: any) => task.projectId === projectId).length;
   };
 
-  // Calculate weight-based progress for a project using our utility function
+  // Calculate comprehensive project progress using both milestones and subtasks
   const getProjectWeightBasedProgress = (projectId: string) => {
-    const projectMilestones = allMilestones.filter(milestone => milestone.projectId === projectId);
-    return calculateWeightBasedProgress(projectMilestones);
+    const projectMilestones = allMilestones.filter(milestone => 
+      milestone.projectId === projectId || milestone.project?.id === projectId
+    );
+    
+    const projectSubtasks = allSubtasks.filter(subtask => 
+      subtask.projectId === projectId || subtask.project?.id === projectId
+    );
+    
+    return calculateProjectProgress(projectMilestones, projectSubtasks);
   };
 
   const handleDeactivateProject = async (e: React.MouseEvent, project: any) => {
@@ -438,7 +467,11 @@ export default function Projects() {
                                 <div className="flex items-center gap-2">
                                   <span className="text-gray-600">Contract Amount:</span>
                                   <span className="font-medium">
-                                    {project.budget ? `KSh ${parseFloat(project.budget).toLocaleString()}` : 'N/A'}
+                                    {project.budget
+                                      ? `KSh ${parseFloat(project.budget).toLocaleString()}`
+                                      : (project.totalFees && Number(project.totalFees) > 0
+                                          ? `KSh ${Number(project.totalFees).toLocaleString()}`
+                                          : 'N/A')}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -471,7 +504,7 @@ export default function Projects() {
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>Weight-based progress (Critical=4, High=3, Medium=2, Low=1)</p>
+                            <p>Comprehensive progress combining milestones and subtasks (Critical=4, High=3, Medium=2, Low=1)</p>
                           </TooltipContent>
                         </Tooltip>
                       </td>
@@ -665,7 +698,7 @@ export default function Projects() {
                           <Progress value={getProjectWeightBasedProgress(project.id)} className="h-2 cursor-help" data-testid={`progress-project-${project.id}`} />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Weight-based progress (Critical=4, High=3, Medium=2, Low=1)</p>
+                          <p>Comprehensive progress combining milestones and subtasks (Critical=4, High=3, Medium=2, Low=1)</p>
                         </TooltipContent>
                       </Tooltip>
 

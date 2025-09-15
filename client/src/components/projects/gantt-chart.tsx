@@ -71,6 +71,31 @@ interface GanttChartProps {
   onPhaseClick?: (phaseId: string) => void;
 }
 
+// Enhanced status mapping that considers both task status and billing status
+const getEffectiveStatus = (task: any) => {
+  // For milestones, prioritize billing status over task status
+  if (task.isMilestone && task.billingStatus) {
+    switch (task.billingStatus) {
+      case 'paid':
+        return 'completed';
+      case 'sent':
+      case 'processing':
+        return 'in_progress';
+      case 'to_send':
+        return 'in_progress';
+      case 'overdue':
+        return 'overdue';
+      case 'none':
+        return task.status || 'not_started';
+      default:
+        return task.status || 'not_started';
+    }
+  }
+  
+  // For regular tasks, use task status
+  return task.status || 'not_started';
+};
+
 const getStatusColor = (status: string) => {
   switch (status) {
     case 'completed':
@@ -783,7 +808,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                             >
                               {expandedMilestones.has(task.id) ? '▼' : '▶'}
                             </button>
-                            <div className={`w-3 h-3 rounded-full ${getStatusColor(task.status)} shadow-sm`} />
+                            <div className={`w-3 h-3 rounded-full ${getStatusColor(getEffectiveStatus(task))} shadow-sm`} />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-sm text-gray-900 truncate">
@@ -811,7 +836,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                           <div className="relative h-full">
                             {/* Task Bar */}
                             <div
-                              className={`absolute top-2 h-10 rounded-lg cursor-pointer transition-all hover:opacity-80 hover:scale-105 shadow-lg ${getStatusColor(task.status)} border-2 border-white`}
+                              className={`absolute top-2 h-10 rounded-lg cursor-pointer transition-all hover:opacity-80 hover:scale-105 shadow-lg ${getStatusColor(getEffectiveStatus(task))} border-2 border-white`}
                               style={{
                                 left: `${x}px`,
                                 width: `${Math.max(20, width)}px`,
@@ -932,7 +957,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
               <div key={task.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className={`w-3 h-3 rounded-full ${getStatusColor(task.status)}`} />
+                    <div className={`w-3 h-3 rounded-full ${getStatusColor(getEffectiveStatus(task))}`} />
                     <div>
                       <h4 className="font-medium text-gray-900">{task.name}</h4>
                       <p className="text-sm text-gray-600">
@@ -1159,7 +1184,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                                   >
                                     {expandedMilestones.has(task.id) ? '▼' : '▶'}
                                   </button>
-                                  <div className={`w-3 h-3 rounded-full ${getStatusColor(task.status)} shadow-sm`} />
+                                  <div className={`w-3 h-3 rounded-full ${getStatusColor(getEffectiveStatus(task))} shadow-sm`} />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="font-medium text-sm text-gray-900 truncate">
@@ -1187,7 +1212,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                                 <div className="relative h-full">
                                   {/* Task Bar */}
                                   <div
-                                    className={`absolute top-2 h-10 rounded-lg cursor-pointer transition-all hover:opacity-80 hover:scale-105 shadow-lg ${getStatusColor(task.status)} border-2 border-white`}
+                                    className={`absolute top-2 h-10 rounded-lg cursor-pointer transition-all hover:opacity-80 hover:scale-105 shadow-lg ${getStatusColor(getEffectiveStatus(task))} border-2 border-white`}
                                     style={{
                                       left: `${x}px`,
                                       width: `${Math.max(20, width)}px`,
@@ -1307,7 +1332,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                     <div key={task.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-3">
-                          <div className={`w-3 h-3 rounded-full ${getStatusColor(task.status)}`} />
+                          <div className={`w-3 h-3 rounded-full ${getStatusColor(getEffectiveStatus(task))}`} />
                           <div>
                             <h4 className="font-medium text-gray-900">{task.name}</h4>
                             <p className="text-sm text-gray-600">
