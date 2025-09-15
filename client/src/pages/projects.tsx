@@ -455,23 +455,27 @@ export default function Projects() {
           </Card>
         ) : viewMode === "table" ? (
           /* Table View */
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse bg-white rounded-lg overflow-hidden shadow-sm">
+          <div className="space-y-2">
+            <div className="text-xs text-gray-500 text-center">
+              💡 Scroll horizontally to see all columns
+            </div>
+            <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 border border-gray-200 rounded-lg">
+            <table className="min-w-full border-collapse bg-white rounded-lg overflow-hidden shadow-sm" style={{ minWidth: '1200px' }}>
               <thead>
                 <tr className="border-b border-gray-200 text-xs md:text-sm">
-                  <th className="text-left p-3">Client</th>
-                  <th className="text-left p-3 hidden md:table-cell">Segment</th>
-                  <th className="text-left p-3">Status</th>
-                  <th className="text-left p-3">Progress</th>
-                  <th className="text-left p-3 hidden lg:table-cell">Overdue</th>
-                  <th className="text-left p-3 hidden lg:table-cell">Client Email</th>
-                  <th className="text-left p-3 hidden xl:table-cell">Contract Amount</th>
-                  <th className="text-left p-3 hidden xl:table-cell">Paid</th>
-                  <th className="text-left p-3 hidden xl:table-cell">Milestones</th>
-                  <th className="text-left p-3 hidden xl:table-cell">Start Date</th>
-                  <th className="text-left p-3 hidden xl:table-cell">End Date</th>
-                  <th className="text-left p-3 hidden xl:table-cell">Duration</th>
-                  <th className="text-left p-3">Actions</th>
+                  <th className="text-left p-3 min-w-[200px]">Client</th>
+                  <th className="text-left p-3 hidden md:table-cell min-w-[100px]">Segment</th>
+                  <th className="text-left p-3 min-w-[80px]">Status</th>
+                  <th className="text-left p-3 min-w-[100px]">Progress</th>
+                  <th className="text-left p-3 hidden lg:table-cell min-w-[80px]">Overdue</th>
+                  <th className="text-left p-3 hidden lg:table-cell min-w-[150px]">Client Email</th>
+                  <th className="text-left p-3 hidden xl:table-cell min-w-[120px]">Contract Amount</th>
+                  <th className="text-left p-3 hidden xl:table-cell min-w-[100px]">Paid</th>
+                  <th className="text-left p-3 hidden xl:table-cell min-w-[100px]">Milestones</th>
+                  <th className="text-left p-3 hidden xl:table-cell min-w-[100px]">Start Date</th>
+                  <th className="text-left p-3 hidden xl:table-cell min-w-[100px]">End Date</th>
+                  <th className="text-left p-3 hidden xl:table-cell min-w-[80px]">Duration</th>
+                  <th className="text-left p-3 min-w-[120px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -650,6 +654,7 @@ export default function Projects() {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         ) : (
           /* Grid View */
