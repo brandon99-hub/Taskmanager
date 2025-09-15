@@ -210,6 +210,8 @@ export interface IStorage {
     pendingAmount: number;
     milestonesCount: number;
     completedMilestonesCount: number;
+    overdueMilestonesCount: number;
+    overdueSubtasksCount: number;
     projectsOnSupport: number;
     onSupportProjects: number;
   }>;
@@ -237,6 +239,8 @@ export interface IStorage {
     pendingAmount: number;
     milestonesCount: number;
     completedMilestonesCount: number;
+    overdueMilestonesCount: number;
+    overdueSubtasksCount: number;
     projectsOnSupport: number;
     onSupportProjects: number;
   }>;
@@ -300,6 +304,10 @@ export interface IStorage {
   getOverdueBreakdownForUser(userId: string): Promise<{
     overdueModules: (Module & { project: Project; assignedUser: User | null })[];
     overdueSubtasks: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+  }>;
+  getCompletedBreakdownForUser(userId: string): Promise<{
+    completedModules: (Module & { project: Project; assignedUser: User | null })[];
+    completedSubtasks: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
   }>;
 
   // Aggregated assignments for a user across all teams/projects
@@ -461,6 +469,8 @@ export class DatabaseStorage implements IStorage {
     pendingAmount: number;
     milestonesCount: number;
     completedMilestonesCount: number;
+    overdueMilestonesCount: number;
+    overdueSubtasksCount: number;
     projectsOnSupport: number;
     onSupportProjects: number;
   }> {
@@ -477,6 +487,14 @@ export class DatabaseStorage implements IStorage {
     const pendingAmount = await db.select({ total: sql`SUM(${projects.budget}) - SUM(${invoiceCollections.amount})` }).from(projects).leftJoin(invoiceCollections, eq(projects.id, invoiceCollections.projectId));
     const milestonesCount = await db.select({ count: count() }).from(milestones);
     const completedMilestonesCount = await db.select({ count: count() }).from(milestones).where(eq(milestones.billingStatus, 'paid'));
+    const overdueMilestonesCount = await db.select({ count: count() }).from(milestones).where(and(
+      sql`${milestones.endDate} < CURRENT_DATE`,
+      sql`${milestones.billingStatus} != 'paid'`
+    ));
+    const overdueSubtasksCount = await db.select({ count: count() }).from(subtasks).where(and(
+      sql`${subtasks.dueDate} < CURRENT_DATE`,
+      sql`${subtasks.status} NOT IN ('completed', 'cancelled')`
+    ));
     const projectsOnSupport = await db.select({ count: count() }).from(projects).where(eq(projects.status, "on_support"));
     const onSupportProjects = await db.select({ count: count() }).from(projects).where(eq(projects.status, "on_support"));
 
@@ -491,6 +509,8 @@ export class DatabaseStorage implements IStorage {
       pendingAmount: Number(pendingAmount[0]?.total) || 0,
       milestonesCount: milestonesCount[0]?.count || 0,
       completedMilestonesCount: completedMilestonesCount[0]?.count || 0,
+      overdueMilestonesCount: overdueMilestonesCount[0]?.count || 0,
+      overdueSubtasksCount: overdueSubtasksCount[0]?.count || 0,
       projectsOnSupport: projectsOnSupport[0]?.count || 0,
       onSupportProjects: onSupportProjects[0]?.count || 0,
     };
@@ -1970,6 +1990,8 @@ export class DatabaseStorage implements IStorage {
     pendingAmount: number;
     milestonesCount: number;
     completedMilestonesCount: number;
+    overdueMilestonesCount: number;
+    overdueSubtasksCount: number;
     projectsOnSupport: number;
     onSupportProjects: number;
   }> {
@@ -2050,6 +2072,8 @@ export class DatabaseStorage implements IStorage {
       pendingAmount: 0, // Placeholder
       milestonesCount: milestonesCountResult.count,
       completedMilestonesCount: completedMilestonesCountResult.count,
+      overdueMilestonesCount: 0, // Placeholder for segment metrics
+      overdueSubtasksCount: 0, // Placeholder for segment metrics
       projectsOnSupport: onSupportProjectsResult.count,
       onSupportProjects: onSupportProjectsResult.count,
     };
@@ -5930,8 +5954,9 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       // Generate temporary password
       const temporaryPassword = Math.random().toString(36).slice(-8);
       
-      // Hash the password (you'll need to implement password hashing)
-      // const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+      // Hash the password properly
+      const { hashPassword } = await import('./auth');
+      const hashedPassword = await hashPassword(temporaryPassword);
       
       // Create user with admin base role so they have full admin capabilities
       const [newUser] = await db
@@ -5941,7 +5966,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           firstName: userData.firstName,
           lastName: userData.lastName,
           role: 'admin',
-          password: temporaryPassword, // TODO: Hash this properly
+          password: hashedPassword, // Now properly hashed
           temporaryPassword: temporaryPassword,
           passwordGeneratedAt: new Date(),
           mustChangePassword: true, // Force password change on first login
@@ -5969,8 +5994,12 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
   // Add method to handle password changes
   async updateUserPassword(userId: string, newPassword: string, isFirstChange: boolean = false): Promise<void> {
     try {
+      // Hash the password properly
+      const { hashPassword } = await import('./auth');
+      const hashedPassword = await hashPassword(newPassword);
+      
       const updateData: any = {
-        password: newPassword,
+        password: hashedPassword, // Now properly hashed
         lastPasswordChange: new Date(),
         updatedAt: new Date(),
       };
@@ -6042,6 +6071,54 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
     return {
       overdueModules: overdueModules.map(row => ({ ...row.modules, project: row.projects, assignedUser: row.users })),
       overdueSubtasks: overdueSubtasks.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
+    };
+  }
+
+  async getCompletedBreakdownForUser(userId: string): Promise<{
+    completedModules: (Module & { project: Project; assignedUser: User | null })[];
+    completedSubtasks: (Subtask & { module: Module; project: Project; assignedUser: User | null })[];
+  }> {
+    // Get completed modules through user's completed subtasks
+    const completedModules = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          or(
+            eq(subtasks.assignedUserId, userId),
+            eq(subtasks.assignedDevId, userId),
+            eq(subtasks.assignedConsultantId, userId)
+          ),
+          eq(subtasks.status, 'completed')
+        )
+      )
+      .execute();
+
+    // Get completed subtasks
+    const completedSubtasks = await db
+      .select()
+      .from(subtasks)
+      .innerJoin(modules, eq(subtasks.moduleId, modules.id))
+      .innerJoin(projects, eq(modules.projectId, projects.id))
+      .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+      .where(
+        and(
+          or(
+            eq(subtasks.assignedUserId, userId),
+            eq(subtasks.assignedDevId, userId),
+            eq(subtasks.assignedConsultantId, userId)
+          ),
+          eq(subtasks.status, 'completed')
+        )
+      )
+      .execute();
+
+    return {
+      completedModules: completedModules.map(row => ({ ...row.modules, project: row.projects, assignedUser: row.users })),
+      completedSubtasks: completedSubtasks.map(row => ({ ...row.subtasks, module: row.modules, project: row.projects, assignedUser: row.users })),
     };
   }
 

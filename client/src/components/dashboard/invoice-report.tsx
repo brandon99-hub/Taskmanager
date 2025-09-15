@@ -251,7 +251,7 @@ export default function InvoiceReport() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-medium text-blue-700">
-                  {isMonthFiltered ? 'Monthly Expected' : 'Yearly Expected'}
+                  {isMonthFiltered ? 'Monthly Contracted' : 'Yearly Contracted'}
                 </p>
                 <Target className="h-5 w-5 text-blue-600" />
               </div>

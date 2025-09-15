@@ -27,15 +27,17 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
     if (dashboardType === 'project_manager') {
       return type === "completed" ? '/api/dashboard/completed-modules' : '/api/dashboard/overdue-modules';
     } else if (dashboardType === 'employee') {
-      return type === "completed" ? '/api/dashboard/completed-modules' : '/api/dashboard/overdue-breakdown';
+      return type === "completed" ? '/api/dashboard/completed-subtasks' : '/api/dashboard/overdue-breakdown';
     } else {
-      return type === "completed" ? '/api/dashboard/completed-milestones' : '/api/dashboard/overdue-tasks';
+      return type === "completed" ? '/api/dashboard/completed-milestones' : '/api/dashboard/overdue-combined';
     }
   };
 
   const getTerminology = () => {
-    if (dashboardType === 'project_manager' || dashboardType === 'employee') {
+    if (dashboardType === 'project_manager') {
       return { singular: 'module', plural: 'modules', title: 'Modules' };
+    } else if (dashboardType === 'employee') {
+      return { singular: 'subtask', plural: 'subtasks', title: 'Subtasks' };
     } else {
       return { singular: 'milestone', plural: 'milestones', title: 'Milestones' };
     }
@@ -43,6 +45,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
 
   const terms = getTerminology();
   const isProjectManager = dashboardType === 'project_manager';
+  const isEmployee = dashboardType === 'employee';
 
   const { data: data, isLoading } = useQuery<any>({
     queryKey: [getApiEndpoint()],
@@ -50,7 +53,8 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
   });
 
   // Handle different response formats
-  const items = Array.isArray(data) ? data : (data?.overdueModules || data?.overdueSubtasks || []);
+  const isCombinedData = Array.isArray(data) && data.length > 0 && data[0]?.project && (data[0]?.milestones || data[0]?.subtasks);
+  const items = isCombinedData ? data : (Array.isArray(data) ? data : (data?.completedSubtasks || data?.overdueSubtasks || data?.overdueModules || []));
 
   const formatCurrency = (amount: string | number) => {
     const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
@@ -100,21 +104,33 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
   };
 
   // Group items by project
-  const itemsByProject = items.reduce((acc: any, item: any) => {
-    const projectId = item.project?.id || 'unknown';
-    if (!acc[projectId]) {
-      acc[projectId] = {
-        project: item.project,
-        items: []
+  const itemsByProject = isCombinedData ? 
+    // For combined data, items are already grouped by project
+    items.reduce((acc: any, projectGroup: any) => {
+      acc[projectGroup.project.id] = {
+        project: projectGroup.project,
+        items: [...projectGroup.milestones, ...projectGroup.subtasks]
       };
-    }
-    acc[projectId].items.push(item);
-    return acc;
-  }, {});
+      return acc;
+    }, {}) :
+    // For regular data, group items by project
+    items.reduce((acc: any, item: any) => {
+      const projectId = item.project?.id || 'unknown';
+      if (!acc[projectId]) {
+        acc[projectId] = {
+          project: item.project,
+          items: []
+        };
+      }
+      acc[projectId].items.push(item);
+      return acc;
+    }, {});
 
-  const totalItems = items.length;
-  const totalValue = isProjectManager ? 0 : items.reduce((sum: number, m: any) => sum + (parseFloat(m.feeAmount || '0')), 0);
-  const paidValue = isProjectManager ? 0 : items.reduce((sum: number, m: any) => 
+  const totalItems = isCombinedData ? 
+    items.reduce((sum: number, projectGroup: any) => sum + projectGroup.totalOverdue, 0) :
+    items.length;
+  const totalValue = (isProjectManager || isEmployee) ? 0 : items.reduce((sum: number, m: any) => sum + (parseFloat(m.feeAmount || '0')), 0);
+  const paidValue = (isProjectManager || isEmployee) ? 0 : items.reduce((sum: number, m: any) => 
     sum + (m.billingStatus === 'paid' ? parseFloat(m.feeAmount || '0') : 0), 0
   );
   const pendingValue = totalValue - paidValue;
@@ -173,7 +189,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                   </CardContent>
                 </Card>
                 
-                {isProjectManager ? (
+                {(isProjectManager || isEmployee) ? (
                   <Card className="bg-gradient-to-r from-green-50 to-green-100">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
@@ -254,51 +270,78 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <div className="divide-y divide-gray-200">
-                          {projectGroup.items.map((item: any) => (
-                            <div key={item.id} className="p-4 hover:bg-gray-50">
-                              <div className="flex items-start justify-between">
-                                <div className="flex-1 space-y-2">
-                                  <div className="flex items-center gap-2">
-                                    <h4 className="font-medium text-gray-900">{item.name}</h4>
-                                    <Badge className={getPriorityColor(item.priority)}>
-                                      {item.priority}
-                                    </Badge>
-                                    {!isProjectManager && (
-                                      <Badge className={getBillingStatusColor(item.billingStatus)}>
-                                        {item.billingStatus}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  
-                                  {item.description && (
-                                    <p className="text-sm text-gray-600">{item.description}</p>
-                                  )}
-                                  
-                                  <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
-                                    <div className="flex items-center gap-1">
-                                      <Calendar className="h-4 w-4" />
-                                      <span>Due: {formatDate(item.dueDate)}</span>
-                                    </div>
+                        {isCombinedData ? (
+                          <div className="space-y-6">
+                            {/* Milestones Section */}
+                            {projectGroup.items.filter((item: any) => item.type === 'milestone').length > 0 && (
+                              <div>
+                                <div className="px-4 py-2 bg-blue-50 border-b">
+                                  <h4 className="font-medium text-blue-900">Overdue Milestones</h4>
+                                </div>
+                                <div className="divide-y divide-gray-200">
+                                  {projectGroup.items.filter((item: any) => item.type === 'milestone').map((item: any) => (
+                                    <div key={item.id} className="p-4 hover:bg-gray-50">
+                                      <div className="flex items-start justify-between">
+                                        <div className="flex-1 space-y-2">
+                                          <div className="flex items-center gap-2">
+                                            <h4 className="font-medium text-gray-900">{item.name}</h4>
+                                            <Badge className={getPriorityColor(item.priority)}>
+                                              {item.priority}
+                                            </Badge>
+                                            <Badge className={getBillingStatusColor(item.billingStatus)}>
+                                              {item.billingStatus}
+                                            </Badge>
+                                          </div>
+                                          
+                                          {item.description && (
+                                            <p className="text-sm text-gray-600">{item.description}</p>
+                                          )}
+                                          
+                                          <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
+                                            <div className="flex items-center gap-1">
+                                              <Calendar className="h-4 w-4" />
+                                              <span>Due: {formatDate(item.endDate)}</span>
+                                            </div>
                                     
-                                    {item.completedAt && (
+                                    {item.paymentReceivedAt && (
                                       <div className="flex items-center gap-1">
                                         <CheckCircle className="h-4 w-4 text-green-600" />
-                                        <span>Completed: {formatDate(item.completedAt)}</span>
+                                        <span>Paid: {formatDate(item.paymentReceivedAt)}</span>
                                       </div>
                                     )}
                                     
-                                    {!isProjectManager && (
+                                    {!isProjectManager && !isEmployee && (
                                       <div className="flex items-center gap-1">
                                         <DollarSign className="h-4 w-4" />
                                         <span>{formatCurrency(item.feeAmount)}</span>
                                       </div>
                                     )}
                                     
-                                    {item.assignedUser && (
+                                    {isEmployee && item.module && (
+                                      <div className="flex items-center gap-1">
+                                        <FileText className="h-4 w-4" />
+                                        <span>Module: {item.module.name}</span>
+                                      </div>
+                                    )}
+                                    
+                                    {isEmployee && item.estimatedHours && (
+                                      <div className="flex items-center gap-1">
+                                        <Clock className="h-4 w-4" />
+                                        <span>{item.estimatedHours}h estimated</span>
+                                      </div>
+                                    )}
+                                    
+                                    {isEmployee && item.actualHours && (
+                                      <div className="flex items-center gap-1">
+                                        <Clock className="h-4 w-4" />
+                                        <span>{item.actualHours}h actual</span>
+                                      </div>
+                                    )}
+                                    
+                                    {item.createdBy && (
                                       <div className="flex items-center gap-1">
                                         <User className="h-4 w-4" />
-                                        <span>{item.assignedUser.firstName || item.assignedUser.email}</span>
+                                        <span>{item.createdBy.firstName || item.createdBy.email}</span>
                                       </div>
                                     )}
                                   </div>
@@ -318,12 +361,180 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                             </div>
                           ))}
                         </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </TabsContent>
+                      </div>
+                    )}
+                    
+                    {/* Subtasks Section */}
+                    {projectGroup.items.filter((item: any) => item.type === 'subtask').length > 0 && (
+                      <div>
+                        <div className="px-4 py-2 bg-orange-50 border-b">
+                          <h4 className="font-medium text-orange-900">Overdue Subtasks</h4>
+                        </div>
+                        <div className="divide-y divide-gray-200">
+                          {projectGroup.items.filter((item: any) => item.type === 'subtask').map((item: any) => (
+                            <div key={item.id} className="p-4 hover:bg-gray-50">
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1 space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-medium text-gray-900">{item.name}</h4>
+                                    <Badge className={getPriorityColor(item.priority)}>
+                                      {item.priority}
+                                    </Badge>
+                                    <Badge variant="outline" className="text-orange-600">
+                                      Subtask
+                                    </Badge>
+                                  </div>
+                                  
+                                  {item.description && (
+                                    <p className="text-sm text-gray-600">{item.description}</p>
+                                  )}
+                                  
+                                  <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
+                                    <div className="flex items-center gap-1">
+                                      <Calendar className="h-4 w-4" />
+                                      <span>Due: {formatDate(item.dueDate)}</span>
+                                    </div>
+                                    
+                                    {item.module && (
+                                      <div className="flex items-center gap-1">
+                                        <FileText className="h-4 w-4" />
+                                        <span>Module: {item.module.name}</span>
+                                      </div>
+                                    )}
+                                    
+                                    {item.estimatedHours && (
+                                      <div className="flex items-center gap-1">
+                                        <Clock className="h-4 w-4" />
+                                        <span>{item.estimatedHours}h estimated</span>
+                                      </div>
+                                    )}
+                                    
+                                    {item.actualHours && (
+                                      <div className="flex items-center gap-1">
+                                        <Clock className="h-4 w-4" />
+                                        <span>{item.actualHours}h actual</span>
+                                      </div>
+                                    )}
+                                    
+                                    {item.assignedUser && (
+                                      <div className="flex items-center gap-1">
+                                        <User className="h-4 w-4" />
+                                        <span>{item.assignedUser.firstName || item.assignedUser.email}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => window.open(`/projects/${item.project.id}`, '_blank')}
+                                  >
+                                    <ExternalLink className="h-4 w-4 mr-1" />
+                                    View Project
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-200">
+                    {projectGroup.items.map((item: any) => (
+                      <div key={item.id} className="p-4 hover:bg-gray-50">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-medium text-gray-900">{item.name}</h4>
+                              <Badge className={getPriorityColor(item.priority)}>
+                                {item.priority}
+                              </Badge>
+                              {!isProjectManager && !isEmployee && (
+                                <Badge className={getBillingStatusColor(item.billingStatus)}>
+                                  {item.billingStatus}
+                                </Badge>
+                              )}
+                            </div>
+                            
+                            {item.description && (
+                              <p className="text-sm text-gray-600">{item.description}</p>
+                            )}
+                            
+                            <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
+                              <div className="flex items-center gap-1">
+                                <Calendar className="h-4 w-4" />
+                                <span>Due: {formatDate(item.endDate || item.dueDate)}</span>
+                              </div>
+                              
+                              {item.paymentReceivedAt && (
+                                <div className="flex items-center gap-1">
+                                  <CheckCircle className="h-4 w-4 text-green-600" />
+                                  <span>Paid: {formatDate(item.paymentReceivedAt)}</span>
+                                </div>
+                              )}
+                              
+                              {!isProjectManager && !isEmployee && (
+                                <div className="flex items-center gap-1">
+                                  <DollarSign className="h-4 w-4" />
+                                  <span>{formatCurrency(item.feeAmount)}</span>
+                                </div>
+                              )}
+                              
+                              {isEmployee && item.module && (
+                                <div className="flex items-center gap-1">
+                                  <FileText className="h-4 w-4" />
+                                  <span>Module: {item.module.name}</span>
+                                </div>
+                              )}
+                              
+                              {isEmployee && item.estimatedHours && (
+                                <div className="flex items-center gap-1">
+                                  <Clock className="h-4 w-4" />
+                                  <span>{item.estimatedHours}h estimated</span>
+                                </div>
+                              )}
+                              
+                              {isEmployee && item.actualHours && (
+                                <div className="flex items-center gap-1">
+                                  <Clock className="h-4 w-4" />
+                                  <span>{item.actualHours}h actual</span>
+                                </div>
+                              )}
+                              
+                              {item.createdBy && (
+                                <div className="flex items-center gap-1">
+                                  <User className="h-4 w-4" />
+                                  <span>{item.createdBy.firstName || item.createdBy.email}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.open(`/projects/${item.projectId || item.project?.id}`, '_blank')}
+                            >
+                              <ExternalLink className="h-4 w-4 mr-1" />
+                              View Project
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </TabsContent>
                 
-                <TabsContent value="by-project" className="space-y-4">
+        <TabsContent value="by-project" className="space-y-4">
                   <div className="grid gap-4">
                     {Object.values(itemsByProject).map((projectGroup: any) => (
                       <Card key={projectGroup.project?.id}>
@@ -336,7 +547,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                               <span>Total {terms.title}:</span>
                               <span className="font-medium">{projectGroup.items.length}</span>
                             </div>
-                            {!isProjectManager && (
+                            {!isProjectManager && !isEmployee && (
                               <>
                                 <div className="flex items-center justify-between text-sm">
                                   <span>Total Value:</span>
@@ -356,6 +567,27 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                                 </div>
                               </>
                             )}
+                            
+                            {isEmployee && (
+                              <>
+                                <div className="flex items-center justify-between text-sm">
+                                  <span>Total Hours:</span>
+                                  <span className="font-medium">
+                                    {projectGroup.items.reduce((sum: number, m: any) => 
+                                      sum + (parseFloat(m.estimatedHours || '0')), 0
+                                    )}h estimated
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm">
+                                  <span>Actual Hours:</span>
+                                  <span className="font-medium text-blue-600">
+                                    {projectGroup.items.reduce((sum: number, m: any) => 
+                                      sum + (parseFloat(m.actualHours || '0')), 0
+                                    )}h actual
+                                  </span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         </CardContent>
                       </Card>
@@ -365,7 +597,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                 
                 <TabsContent value="summary" className="space-y-4">
                   <div className="grid gap-4">
-                    {!isProjectManager && (
+                    {!isProjectManager && !isEmployee && (
                       <Card>
                         <CardHeader>
                           <CardTitle>Billing Status Summary</CardTitle>
@@ -390,6 +622,40 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                                 </div>
                               );
                             })}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                    
+                    {isEmployee && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>Time Tracking Summary</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-600">Total Estimated Hours:</span>
+                              <span className="font-medium">
+                                {items.reduce((sum: number, m: any) => sum + (parseFloat(m.estimatedHours || '0')), 0)}h
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-600">Total Actual Hours:</span>
+                              <span className="font-medium text-blue-600">
+                                {items.reduce((sum: number, m: any) => sum + (parseFloat(m.actualHours || '0')), 0)}h
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-600">Efficiency:</span>
+                              <span className="font-medium">
+                                {(() => {
+                                  const estimated = items.reduce((sum: number, m: any) => sum + (parseFloat(m.estimatedHours || '0')), 0);
+                                  const actual = items.reduce((sum: number, m: any) => sum + (parseFloat(m.actualHours || '0')), 0);
+                                  return estimated > 0 ? Math.round((actual / estimated) * 100) : 0;
+                                })()}%
+                              </span>
+                            </div>
                           </div>
                         </CardContent>
                       </Card>

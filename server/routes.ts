@@ -210,6 +210,203 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Combined overdue items endpoint for admins (milestones + subtasks organized by project)
+  app.get('/api/dashboard/overdue-combined', isAuthenticated, async (req: any, res) => {
+    try {
+      const { db } = await import('./db');
+      const { milestones, subtasks, modules, projects, users } = await import('../shared/schema');
+      const { eq, and, sql } = await import('drizzle-orm');
+
+      const now = new Date();
+      
+      // Get overdue milestones
+      const overdueMilestones = await db
+        .select({
+          id: milestones.id,
+          name: milestones.name,
+          description: milestones.description,
+          feeAmount: milestones.feeAmount,
+          billingStatus: milestones.billingStatus,
+          expectedInvoiceDate: milestones.expectedInvoiceDate,
+          expectedCollectionDate: milestones.expectedCollectionDate,
+          startDate: milestones.startDate,
+          endDate: milestones.endDate,
+          paymentReceivedAt: milestones.paymentReceivedAt,
+          priority: milestones.priority,
+          projectId: milestones.projectId,
+          // Project details
+          projectDbId: projects.id,
+          projectName: projects.name,
+          projectClient: projects.client,
+          projectSegment: projects.segment,
+          projectStatus: projects.status,
+          // User details
+          userId: users.id,
+          userFirstName: users.firstName,
+          userLastName: users.lastName,
+          userEmail: users.email,
+        })
+        .from(milestones)
+        .leftJoin(projects, eq(milestones.projectId, projects.id))
+        .leftJoin(users, eq(milestones.createdById, users.id))
+        .where(
+          and(
+            sql`${milestones.endDate} < ${now}`,
+            sql`${milestones.billingStatus} != 'paid'`
+          )
+        );
+
+      // Get overdue subtasks
+      const overdueSubtasks = await db
+        .select({
+          id: subtasks.id,
+          name: subtasks.name,
+          description: subtasks.description,
+          status: subtasks.status,
+          priority: subtasks.priority,
+          dueDate: subtasks.dueDate,
+          estimatedHours: subtasks.estimatedHours,
+          actualHours: subtasks.actualHours,
+          createdAt: subtasks.createdAt,
+          updatedAt: subtasks.updatedAt,
+          // Module details
+          moduleId: modules.id,
+          moduleName: modules.name,
+          moduleDescription: modules.description,
+          // Project details
+          projectId: projects.id,
+          projectName: projects.name,
+          projectClient: projects.client,
+          projectSegment: projects.segment,
+          projectStatus: projects.status,
+          // User details
+          userId: users.id,
+          userFirstName: users.firstName,
+          userLastName: users.lastName,
+          userEmail: users.email,
+        })
+        .from(subtasks)
+        .leftJoin(modules, eq(subtasks.moduleId, modules.id))
+        .leftJoin(projects, eq(modules.projectId, projects.id))
+        .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+        .where(
+          and(
+            sql`${subtasks.dueDate} < ${now}`,
+            sql`${subtasks.status} NOT IN ('completed', 'cancelled')`
+          )
+        )
+        .orderBy(subtasks.dueDate);
+
+      // Transform milestones
+      const transformedMilestones = overdueMilestones.map(milestone => ({
+        id: milestone.id,
+        name: milestone.name,
+        description: milestone.description,
+        feeAmount: milestone.feeAmount,
+        billingStatus: milestone.billingStatus,
+        expectedInvoiceDate: milestone.expectedInvoiceDate,
+        expectedCollectionDate: milestone.expectedCollectionDate,
+        startDate: milestone.startDate,
+        endDate: milestone.endDate,
+        paymentReceivedAt: milestone.paymentReceivedAt,
+        priority: milestone.priority,
+        projectId: milestone.projectId,
+        type: 'milestone',
+        project: {
+          id: milestone.projectDbId,
+          name: milestone.projectName,
+          client: milestone.projectClient,
+          segment: milestone.projectSegment,
+          status: milestone.projectStatus,
+        },
+        createdBy: {
+          id: milestone.userId,
+          firstName: milestone.userFirstName,
+          lastName: milestone.userLastName,
+          email: milestone.userEmail,
+        }
+      }));
+
+      // Transform subtasks
+      const transformedSubtasks = overdueSubtasks.map(subtask => ({
+        id: subtask.id,
+        name: subtask.name,
+        description: subtask.description,
+        status: subtask.status,
+        priority: subtask.priority,
+        dueDate: subtask.dueDate,
+        estimatedHours: subtask.estimatedHours,
+        actualHours: subtask.actualHours,
+        createdAt: subtask.createdAt,
+        updatedAt: subtask.updatedAt,
+        type: 'subtask',
+        moduleId: subtask.moduleId,
+        module: {
+          id: subtask.moduleId,
+          name: subtask.moduleName,
+          description: subtask.moduleDescription,
+        },
+        project: {
+          id: subtask.projectId,
+          name: subtask.projectName,
+          client: subtask.projectClient,
+          segment: subtask.projectSegment,
+          status: subtask.projectStatus,
+        },
+        assignedUser: {
+          id: subtask.userId,
+          firstName: subtask.userFirstName,
+          lastName: subtask.userLastName,
+          email: subtask.userEmail,
+        }
+      }));
+
+      // Group by project
+      const projectGroups: { [key: string]: { project: any; milestones: any[]; subtasks: any[] } } = {};
+      
+      // Add milestones to project groups
+      transformedMilestones.forEach(milestone => {
+        const projectId = milestone.projectId;
+        if (!projectGroups[projectId]) {
+          projectGroups[projectId] = {
+            project: milestone.project,
+            milestones: [],
+            subtasks: []
+          };
+        }
+        projectGroups[projectId].milestones.push(milestone);
+      });
+
+      // Add subtasks to project groups
+      transformedSubtasks.forEach(subtask => {
+        const projectId = subtask.project?.id;
+        if (projectId && !projectGroups[projectId]) {
+          projectGroups[projectId] = {
+            project: subtask.project,
+            milestones: [],
+            subtasks: []
+          };
+        }
+        if (projectId) {
+          projectGroups[projectId].subtasks.push(subtask);
+        }
+      });
+
+      // Convert to array format
+      const result = Object.values(projectGroups).map(group => ({
+        project: group.project,
+        milestones: group.milestones,
+        subtasks: group.subtasks,
+        totalOverdue: group.milestones.length + group.subtasks.length
+      }));
+
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching combined overdue items:", error);
+      res.status(500).json({ message: "Failed to fetch combined overdue items" });
+    }
+  });
+
   // New enhanced kanban tasks endpoint
   app.get('/api/dashboard/kanban-tasks', isAuthenticated, async (req: any, res) => {
     try {
@@ -354,13 +551,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Completed milestones endpoint for modal
   app.get('/api/dashboard/completed-milestones', isAuthenticated, async (req: any, res) => {
     try {
-      const completedTasks = req.user.role === 'employee'
-        ? await storage.getTasksByUser(req.user.id)
-        : await storage.getTasks();
+      const { db } = await import('./db');
+      const { milestones, projects, users } = await import('../shared/schema');
+      const { eq, and } = await import('drizzle-orm');
+
+      // Get completed milestones (billingStatus = 'paid') with project and user details
+      const completedMilestones = await db
+        .select({
+          id: milestones.id,
+          name: milestones.name,
+          description: milestones.description,
+          feeAmount: milestones.feeAmount,
+          billingStatus: milestones.billingStatus,
+          expectedInvoiceDate: milestones.expectedInvoiceDate,
+          expectedCollectionDate: milestones.expectedCollectionDate,
+          startDate: milestones.startDate,
+          endDate: milestones.endDate,
+          paymentReceivedAt: milestones.paymentReceivedAt,
+          priority: milestones.priority,
+          projectId: milestones.projectId,
+          // Project details
+          projectDbId: projects.id,
+          projectName: projects.name,
+          projectClient: projects.client,
+          projectSegment: projects.segment,
+          projectStatus: projects.status,
+          // User details
+          userId: users.id,
+          userFirstName: users.firstName,
+          userLastName: users.lastName,
+          userEmail: users.email,
+        })
+        .from(milestones)
+        .leftJoin(projects, eq(milestones.projectId, projects.id))
+        .leftJoin(users, eq(milestones.createdById, users.id))
+        .where(eq(milestones.billingStatus, 'paid'));
+
+      console.log('Found', completedMilestones.length, 'completed milestones in database');
       
-      // Filter for completed tasks with project and user details
-      const completed = completedTasks.filter((task: any) => task.status === 'done');
-      res.json(completed);
+      // Transform the flat result into the expected nested structure
+      const transformedMilestones = completedMilestones.map(milestone => ({
+        id: milestone.id,
+        name: milestone.name,
+        description: milestone.description,
+        feeAmount: milestone.feeAmount,
+        billingStatus: milestone.billingStatus,
+        expectedInvoiceDate: milestone.expectedInvoiceDate,
+        expectedCollectionDate: milestone.expectedCollectionDate,
+        startDate: milestone.startDate,
+        endDate: milestone.endDate,
+        paymentReceivedAt: milestone.paymentReceivedAt,
+        priority: milestone.priority,
+        projectId: milestone.projectId,
+        project: {
+          id: milestone.projectDbId,
+          name: milestone.projectName,
+          client: milestone.projectClient,
+          segment: milestone.projectSegment,
+          status: milestone.projectStatus,
+        },
+        createdBy: {
+          id: milestone.userId,
+          firstName: milestone.userFirstName,
+          lastName: milestone.userLastName,
+          email: milestone.userEmail,
+        }
+      }));
+
+      res.json(transformedMilestones);
     } catch (error) {
       console.error("Error fetching completed milestones:", error);
       res.status(500).json({ message: "Failed to fetch completed milestones" });
@@ -380,6 +638,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching completed modules:", error);
       res.status(500).json({ message: "Failed to fetch completed modules" });
+    }
+  });
+
+  // Completed subtasks endpoint for employees
+  app.get('/api/dashboard/completed-subtasks', isAuthenticated, async (req: any, res) => {
+    try {
+      if (req.user.role !== 'employee') {
+        return res.status(403).json({ message: 'This endpoint is only for employees' });
+      }
+      
+      const breakdown = await storage.getCompletedBreakdownForUser(req.user.id);
+      res.json(breakdown);
+    } catch (error) {
+      console.error("Error fetching completed subtasks:", error);
+      res.status(500).json({ message: "Failed to fetch completed subtasks" });
     }
   });
 

@@ -15,6 +15,8 @@ interface DashboardMetrics {
   completedSubtasks?: number;
   completedModules?: number;
   completedMilestonesCount?: number;
+  overdueMilestonesCount?: number;
+  overdueSubtasksCount?: number;
   totalModules?: number;
   overdueModules?: number;
   overdueSubtasks?: number;
@@ -143,13 +145,13 @@ export default function MetricsCards() {
         modalType: "completed"
       },
       overdueModules: {
-        title: dashboardType === 'employee' ? "Overdue Modules & Subtasks" : (dashboardType === 'project_manager' ? "Overdue Modules" : "Overdue Milestones"),
-        value: dashboardType === 'employee' ? (metrics?.totalOverdue || 0) : (metrics?.overdueModules || 0),
+        title: dashboardType === 'employee' ? "Overdue Subtasks" : (dashboardType === 'project_manager' ? "Overdue Modules" : "Overdue Milestones"),
+        value: dashboardType === 'employee' ? (metrics?.overdueSubtasksCount || 0) : (dashboardType === 'project_manager' ? (metrics?.overdueModules || 0) : (metrics?.overdueMilestonesCount || 0)),
         icon: AlertTriangle,
         color: "bg-error",
-        change: dashboardType === 'employee' ? `${metrics?.totalOverdue || 0} overdue` : `${metrics?.overdueModules || 0} overdue`,
+        change: "",
         changeLabel: "",
-        detail: dashboardType === 'employee' ? "Modules & Subtasks" : "",
+        detail: dashboardType === 'employee' ? "Subtasks" : (dashboardType === 'project_manager' ? "Modules" : `${metrics?.overdueSubtasksCount || 0} overdue subtasks`),
         detailColor: "text-red-600",
         isNegative: true,
         testId: "card-overdue-tasks",

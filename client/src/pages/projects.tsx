@@ -454,12 +454,8 @@ export default function Projects() {
             </CardContent>
           </Card>
         ) : viewMode === "table" ? (
-          /* Table View */
-          <div className="space-y-2">
-            <div className="text-xs text-gray-500 text-center">
-              💡 Scroll horizontally to see all columns
-            </div>
-            <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 border border-gray-200 rounded-lg">
+           /* Table View */
+           <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 border border-gray-200 rounded-lg">
             <table className="min-w-full border-collapse bg-white rounded-lg overflow-hidden shadow-sm" style={{ minWidth: '1200px' }}>
               <thead>
                 <tr className="border-b border-gray-200 text-xs md:text-sm">
@@ -654,7 +650,6 @@ export default function Projects() {
                 })}
               </tbody>
             </table>
-            </div>
           </div>
         ) : (
           /* Grid View */
