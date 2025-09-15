@@ -67,6 +67,43 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   return bcrypt.compare(password, hash);
 }
 
+// Enhanced session management
+export class SessionManager {
+  static async invalidateUserSessions(userId: string, excludeCurrentSession?: string) {
+    const { db } = await import('./db');
+    const { sessions } = await import('../shared/schema');
+    const { and, eq, ne, sql } = await import('drizzle-orm');
+    
+    // Invalidate all sessions for a user except current one
+    await db.delete(sessions)
+      .where(
+        and(
+          sql`sess->>'userId' = ${userId}`,
+          excludeCurrentSession ? ne(sessions.sid, excludeCurrentSession) : undefined
+        )
+      );
+  }
+  
+  static async invalidateAllSessions() {
+    const { db } = await import('./db');
+    const { sessions } = await import('../shared/schema');
+    
+    // Invalidate all sessions (for security incidents)
+    await db.delete(sessions);
+  }
+  
+  static async getActiveSessions(userId: string) {
+    const { db } = await import('./db');
+    const { sessions } = await import('../shared/schema');
+    const { sql } = await import('drizzle-orm');
+    
+    // Get all active sessions for a user
+    return await db.select()
+      .from(sessions)
+      .where(sql`sess->>'userId' = ${userId}`);
+  }
+}
+
 export async function setupAuth(app: Express) {
   // Respect deployment proxy configuration (0/false = direct, 1 = single proxy)
   app.set("trust proxy", process.env.TRUST_PROXY === '1' ? 1 : false);
@@ -340,9 +377,48 @@ export async function setupAuth(app: Express) {
       await storage.updateUserPassword(user.id, hashedPassword);
       await storage.updateUserResetToken(user.id, null, null);
 
-      res.json({ message: "Password reset successfully" });
+      // Invalidate all existing sessions for security
+      await SessionManager.invalidateUserSessions(user.id);
+
+      res.json({ message: "Password reset successfully. Please log in again." });
     } catch (error) {
       res.status(500).json({ message: "Failed to reset password" });
+    }
+  });
+
+  // Change password endpoint (for authenticated users)
+  app.post('/api/auth/change-password', isAuthenticated, async (req: any, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const userId = req.user.id;
+      
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current password and new password are required" });
+      }
+
+      // Verify current password
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const isValidCurrentPassword = await verifyPassword(currentPassword, user.password);
+      if (!isValidCurrentPassword) {
+        return res.status(400).json({ message: "Current password is incorrect" });
+      }
+
+      // Hash new password
+      const hashedPassword = await hashPassword(newPassword);
+      
+      // Update user password
+      await storage.updateUserPassword(userId, hashedPassword);
+
+      // Invalidate all existing sessions except current one
+      await SessionManager.invalidateUserSessions(userId, req.sessionID);
+
+      res.json({ message: "Password changed successfully. Please log in again." });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to change password" });
     }
   });
 }

@@ -799,7 +799,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!email || !roleType) {
         return res.status(400).json({ message: 'Email and roleType are required' });
       }
-      if (!['project_manager', 'finance_head', 'segment_leader'].includes(roleType)) {
+      if (!['project_manager', 'finance_head', 'segment_leader', 'manager'].includes(roleType)) {
         return res.status(400).json({ message: 'Invalid roleType' });
       }
       const user = await storage.getUserByEmail(email);
@@ -1100,6 +1100,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(projects);
     } catch (error) {
       console.error("Error fetching projects:", error);
+      res.status(500).json({ message: "Failed to fetch projects" });
+    }
+  });
+
+  // Get paginated projects
+  app.get('/api/projects/paginated', isAuthenticated, async (req: any, res) => {
+    try {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 20;
+      const { segment, status } = req.query;
+      
+      let result;
+      if (req.user.role === 'employee') {
+        const userProjects = await storage.getProjectsForUser(req.user.id);
+        result = { 
+          data: userProjects, 
+          pagination: { 
+            page: 1, 
+            limit: userProjects.length, 
+            total: userProjects.length, 
+            totalPages: 1 
+          } 
+        };
+      } else {
+        result = await storage.getProjectsPaginated(page, limit);
+      }
+      
+      // Apply segment filter if provided
+      if (segment && ['academic', 'parastals', 'private'].includes(segment as string)) {
+        result.data = result.data.filter((p: any) => p.segment === segment);
+      }
+      
+      // Apply status filter if provided
+      if (status && ['planning', 'active', 'on_hold', 'completed', 'terminated'].includes(status as string)) {
+        result.data = result.data.filter((p: any) => p.status === status);
+      }
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching paginated projects:", error);
       res.status(500).json({ message: "Failed to fetch projects" });
     }
   });
@@ -3391,9 +3431,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             email,
             firstName,
             lastName,
-            role: 'project_manager' as any, // placeholder to satisfy signature; override role below
+            role: 'manager' as any, // Create as manager, not project_manager
           } as any, req.user.id);
-          await db.update(users).set({ role: 'manager' }).where(eq(users.id, newUser.id));
           user = newUser as any;
           tempForEmail = temporaryPassword;
         } else {

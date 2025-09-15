@@ -96,6 +96,15 @@ export interface IStorage {
 
   // Project operations
   getProjects(): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number })[]>;
+  getProjectsPaginated(page?: number, limit?: number): Promise<{
+    data: (Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number })[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  }>;
   getProject(id: string): Promise<(Project & { manager: User; team: Team | null; modules: Module[] }) | undefined>;
   getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number })[]>;
   createProject(project: InsertProject): Promise<Project>;
@@ -200,6 +209,7 @@ export interface IStorage {
     collectedAmount: number;
     pendingAmount: number;
     milestonesCount: number;
+    completedMilestonesCount: number;
     projectsOnSupport: number;
     onSupportProjects: number;
   }>;
@@ -226,6 +236,7 @@ export interface IStorage {
     collectedAmount: number;
     pendingAmount: number;
     milestonesCount: number;
+    completedMilestonesCount: number;
     projectsOnSupport: number;
     onSupportProjects: number;
   }>;
@@ -449,6 +460,7 @@ export class DatabaseStorage implements IStorage {
     collectedAmount: number;
     pendingAmount: number;
     milestonesCount: number;
+    completedMilestonesCount: number;
     projectsOnSupport: number;
     onSupportProjects: number;
   }> {
@@ -464,6 +476,7 @@ export class DatabaseStorage implements IStorage {
     const collectedAmount = await db.select({ total: sql`SUM(${invoiceCollections.amount})` }).from(invoiceCollections);
     const pendingAmount = await db.select({ total: sql`SUM(${projects.budget}) - SUM(${invoiceCollections.amount})` }).from(projects).leftJoin(invoiceCollections, eq(projects.id, invoiceCollections.projectId));
     const milestonesCount = await db.select({ count: count() }).from(milestones);
+    const completedMilestonesCount = await db.select({ count: count() }).from(milestones).where(eq(milestones.billingStatus, 'paid'));
     const projectsOnSupport = await db.select({ count: count() }).from(projects).where(eq(projects.status, "on_support"));
     const onSupportProjects = await db.select({ count: count() }).from(projects).where(eq(projects.status, "on_support"));
 
@@ -477,6 +490,7 @@ export class DatabaseStorage implements IStorage {
       collectedAmount: Number(collectedAmount[0]?.total) || 0,
       pendingAmount: Number(pendingAmount[0]?.total) || 0,
       milestonesCount: milestonesCount[0]?.count || 0,
+      completedMilestonesCount: completedMilestonesCount[0]?.count || 0,
       projectsOnSupport: projectsOnSupport[0]?.count || 0,
       onSupportProjects: onSupportProjects[0]?.count || 0,
     };
@@ -750,6 +764,98 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  async getProjectsPaginated(page: number = 1, limit: number = 20): Promise<{
+    data: (Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number })[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  }> {
+    const offset = (page - 1) * limit;
+    
+    // Get total count
+    const [totalCount] = await db.select({ count: count() }).from(projects);
+    
+    // Step 1: fetch base projects with manager and team (paginated)
+    const baseRows = await db
+      .select({
+        project: projects,
+        manager: users,
+        team: teams,
+      })
+      .from(projects)
+      .leftJoin(users, eq(projects.managerId, users.id))
+      .leftJoin(teams, eq(projects.teamId, teams.id))
+      .orderBy(desc(projects.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    const projectIds = baseRows.map(r => r.project.id);
+    if (projectIds.length === 0) {
+      return {
+        data: [],
+        pagination: {
+          page,
+          limit,
+          total: totalCount.count,
+          totalPages: Math.ceil(totalCount.count / limit)
+        }
+      };
+    }
+
+    // Step 2: aggregate milestones per project
+    const aggRows = await db
+      .select({
+        projectId: milestones.projectId,
+        milestoneCount: count(milestones.id),
+        completedMilestoneCount: sql<number>`SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN 1 ELSE 0 END)`,
+        paidAmount: sql<number>`COALESCE(SUM(CASE WHEN ${milestones.billingStatus} = 'paid' THEN ${milestones.feeAmount} ELSE 0 END), 0)`,
+        totalFees: sql<number>`COALESCE(SUM(${milestones.feeAmount}), 0)`,
+      })
+      .from(milestones)
+      .where(inArray(milestones.projectId, projectIds))
+      .groupBy(milestones.projectId);
+
+    const projectIdToAgg: Record<string, { milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number }> = {};
+    for (const row of aggRows) {
+      projectIdToAgg[row.projectId] = {
+        milestoneCount: Number(row.milestoneCount || 0),
+        completedMilestoneCount: Number(row.completedMilestoneCount || 0),
+        paidAmount: Number(row.paidAmount || 0),
+        totalFees: Number(row.totalFees || 0),
+      };
+    }
+
+    // Step 3: merge
+    const data = baseRows.map(r => {
+      const agg = projectIdToAgg[r.project.id] || { milestoneCount: 0, completedMilestoneCount: 0, paidAmount: 0, totalFees: 0 };
+      return {
+        ...r.project,
+        manager: r.manager!,
+        team: r.team ?? null,
+        milestoneCount: agg.milestoneCount,
+        completedMilestoneCount: agg.completedMilestoneCount,
+        paidAmount: agg.paidAmount,
+        totalFees: agg.totalFees,
+      };
+    });
+
+    const total = totalCount.count;
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages
+      }
+    };
+  }
+
   async getProjectsForUser(userId: string): Promise<(Project & { manager: User; team: Team | null; milestoneCount: number; completedMilestoneCount: number; paidAmount: number; totalFees: number })[]> {
     // Get unique project IDs that the user has access to
     const userProjectIds = new Set<string>();
@@ -864,16 +970,29 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createProject(project: InsertProject): Promise<Project> {
-    const [newProject] = await db.insert(projects).values(project as any).returning();
+    // Set budget to 0 initially - it will be calculated from milestone fees
+    const projectData = { ...project, budget: "0" };
+    const [newProject] = await db.insert(projects).values(projectData as any).returning();
+    
+    // Recalculate budget from milestone fees if any exist
+    await this.recalculateProjectBudget(newProject.id);
+    
     return newProject;
   }
 
   async updateProject(id: string, project: Partial<InsertProject>): Promise<Project> {
+    // Remove budget from update if it exists - budget is auto-calculated from milestones
+    const { budget, ...projectData } = project;
+    
     const [updatedProject] = await db
       .update(projects)
-              .set({ ...project, updatedAt: new Date() } as any)
+      .set({ ...projectData, updatedAt: new Date() } as any)
       .where(eq(projects.id, id))
       .returning();
+    
+    // Recalculate budget from milestone fees
+    await this.recalculateProjectBudget(id);
+    
     return updatedProject;
   }
 
@@ -1850,6 +1969,7 @@ export class DatabaseStorage implements IStorage {
     collectedAmount: number;
     pendingAmount: number;
     milestonesCount: number;
+    completedMilestonesCount: number;
     projectsOnSupport: number;
     onSupportProjects: number;
   }> {
@@ -1902,6 +2022,16 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(projects, eq(milestones.projectId, projects.id))
       .where(eq(projects.segment, segment as any));
 
+    // Get completed milestones count for this segment (billingStatus = 'paid')
+    const [completedMilestonesCountResult] = await db
+      .select({ count: count() })
+      .from(milestones)
+      .leftJoin(projects, eq(milestones.projectId, projects.id))
+      .where(and(
+        eq(projects.segment, segment as any),
+        eq(milestones.billingStatus, 'paid')
+      ));
+
     // Get on_support projects count for this segment
     const [onSupportProjectsResult] = await db
       .select({ count: count() })
@@ -1919,6 +2049,7 @@ export class DatabaseStorage implements IStorage {
       collectedAmount: 0, // Placeholder
       pendingAmount: 0, // Placeholder
       milestonesCount: milestonesCountResult.count,
+      completedMilestonesCount: completedMilestonesCountResult.count,
       projectsOnSupport: onSupportProjectsResult.count,
       onSupportProjects: onSupportProjectsResult.count,
     };
@@ -2595,7 +2726,7 @@ export class DatabaseStorage implements IStorage {
       workloadPercentage: number;
     }[];
   } | null> {
-        // Get all teams with their subtask performance metrics - FIXED: Use subtasks instead of modules
+        // Optimized query with date range filter and better indexing
     const teamMetrics = await db
       .select({
         teamId: teams.id,
@@ -2614,10 +2745,14 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           sql`${subtasks.id} IS NOT NULL`, // Only teams with actual subtasks
-          sql`${subtasks.status} NOT IN ('cancelled', 'on_hold')` // Exclude cancelled/on-hold subtasks
+          sql`${subtasks.status} NOT IN ('cancelled', 'on_hold')`, // Exclude cancelled/on-hold subtasks
+          // Add date range filter for better performance (last 90 days)
+          sql`${subtasks.createdAt} >= NOW() - INTERVAL '90 days'`
         )
       )
       .groupBy(teams.id)
+      .orderBy(sql`(SUM(CASE WHEN ${subtasks.status} = 'completed' THEN 1 ELSE 0 END) * 1.0 / NULLIF(COUNT(${subtasks.id}), 0)) DESC`) // Order by completion rate
+      .limit(1) // Only get the best team
       .execute();
 
     if (teamMetrics.length === 0) {

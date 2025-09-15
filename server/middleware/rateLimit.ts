@@ -3,10 +3,28 @@ import slowDown from 'express-slow-down';
 import type { Express, Request, Response, NextFunction } from 'express';
 
 export function setupRateLimiting(app: Express) {
-  // Enhanced general API rate limiting
+  // Role-based rate limiting configuration
+  const roleLimits = {
+    admin: { windowMs: 900000, max: 500 },
+    manager: { windowMs: 900000, max: 200 },
+    employee: { windowMs: 900000, max: 100 },
+    guest: { windowMs: 900000, max: 20 }
+  };
+
+  // Enhanced general API rate limiting with role-based limits
   const generalLimiter = rateLimit({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
-    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'), // Max 100 requests per window
+    max: (req: Request) => {
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      return roleLimits[role as keyof typeof roleLimits]?.max || 20;
+    },
+    keyGenerator: (req: Request) => {
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      const userId = user?.id || 'anonymous';
+      return `${role}:${userId}:${req.ip}`;
+    },
     message: {
       error: 'Too many requests',
       message: 'Too many requests from this IP, please try again later.',
@@ -38,22 +56,24 @@ export function setupRateLimiting(app: Express) {
       return false;
     },
     
-    // Use default key generator which respects Express trust proxy. Avoid user-supplied headers.
-    
     // Enhanced rate limit handling
     handler: (req: Request, res: Response) => {
-      // Log rate limit violations
-      console.warn(`Rate limit exceeded: ${req.method} ${req.path} from ${req.ip}`);
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      
+      // Log rate limit violations with role information
+      console.warn(`Rate limit exceeded: ${req.method} ${req.path} from ${req.ip} (role: ${role})`);
       
       // Return enhanced error response
       res.status(429).json({
         error: 'Rate Limit Exceeded',
-        message: 'Too many requests from this IP, please try again later.',
+        message: `Too many requests from this ${role} account, please try again later.`,
         code: 'RATE_LIMIT_EXCEEDED',
         retryAfter: Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000') / 1000 / 60),
         timestamp: new Date().toISOString(),
         path: req.path,
-        method: req.method
+        method: req.method,
+        role: role
       });
     },
     
@@ -97,6 +117,47 @@ export function setupRateLimiting(app: Express) {
     }
   });
   
+  // Endpoint-specific rate limiting
+  const endpointLimits = {
+    '/api/auth/login': { windowMs: 900000, max: 5 },
+    '/api/auth/register': { windowMs: 3600000, max: 3 },
+    '/api/auth/reset-password': { windowMs: 3600000, max: 3 },
+    '/api/projects': { windowMs: 900000, max: 50 },
+    '/api/dashboard/metrics': { windowMs: 60000, max: 30 },
+    '/api/reports/export': { windowMs: 3600000, max: 10 },
+    '/api/users': { windowMs: 3600000, max: 20 }
+  };
+
+  // Create endpoint-specific limiters
+  Object.entries(endpointLimits).forEach(([endpoint, limits]) => {
+    const limiter = rateLimit({
+      windowMs: limits.windowMs,
+      max: (req: Request) => {
+        const user = (req as any).user;
+        const role = user?.role || 'guest';
+        
+        // Adjust limits based on role
+        const multiplier = role === 'admin' ? 2 : role === 'manager' ? 1.5 : 1;
+        return Math.floor(limits.max * multiplier);
+      },
+      keyGenerator: (req: Request) => {
+        const user = (req as any).user;
+        const role = user?.role || 'guest';
+        const userId = user?.id || 'anonymous';
+        return `${endpoint}:${role}:${userId}:${req.ip}`;
+      },
+      message: {
+        error: 'Rate limit exceeded',
+        message: `Too many requests to ${endpoint}, please try again later.`,
+        retryAfter: Math.ceil(limits.windowMs / 1000 / 60) + ' minutes'
+      },
+      standardHeaders: true,
+      legacyHeaders: false,
+    });
+    
+    app.use(endpoint, limiter);
+  });
+
   // Apply general rate limiting to all API routes
   app.use('/api', generalLimiter);
   
@@ -110,7 +171,17 @@ export function setupRateLimiting(app: Express) {
   // Additional rate limiting for sensitive operations
   const sensitiveOperationsLimiter = rateLimit({
     windowMs: 3600000, // 1 hour
-    max: 10, // Max 10 requests per hour
+    max: (req: Request) => {
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      return role === 'admin' ? 20 : role === 'manager' ? 15 : 10;
+    },
+    keyGenerator: (req: Request) => {
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      const userId = user?.id || 'anonymous';
+      return `sensitive:${role}:${userId}:${req.ip}`;
+    },
     message: {
       error: 'Too many sensitive operations',
       message: 'Too many sensitive operations from this IP, please try again later.',
@@ -127,7 +198,17 @@ export function setupRateLimiting(app: Express) {
   // Rate limit export endpoints (prevent abuse)
   const exportLimiter = rateLimit({
     windowMs: 3600000, // 1 hour
-    max: 20, // Max 20 exports per hour
+    max: (req: Request) => {
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      return role === 'admin' ? 30 : role === 'manager' ? 20 : 10;
+    },
+    keyGenerator: (req: Request) => {
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      const userId = user?.id || 'anonymous';
+      return `export:${role}:${userId}:${req.ip}`;
+    },
     message: {
       error: 'Too many export requests',
       message: 'Export limit exceeded, please try again later.',

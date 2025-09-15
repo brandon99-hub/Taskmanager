@@ -38,7 +38,26 @@ export class ErrorBoundary extends Component<Props, State> {
       window.location.href = '/login';
       return;
     }
+
+    // Handle authentication errors
+    if (error?.message?.includes('401') || error?.message?.includes('Unauthorized')) {
+      localStorage.removeItem('taskflow-auth');
+      sessionStorage.clear();
+      window.location.href = '/login';
+      return;
+    }
+
+    // Handle permission errors
+    if (error?.message?.includes('403') || error?.message?.includes('Forbidden')) {
+      // Don't redirect, just show error
+      this.setState({ hasError: true, error });
+      return;
+    }
   }
+
+  resetError = () => {
+    this.setState({ hasError: false, error: null });
+  };
 
   render() {
     if (this.state.hasError) {
@@ -64,12 +83,20 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
             <h2 className="text-xl font-semibold text-gray-900 mb-2">Something went wrong</h2>
             <p className="text-gray-600 mb-4">We encountered an unexpected error. Please try refreshing the page.</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
-            >
-              Refresh Page
-            </button>
+            <div className="space-x-3">
+              <button
+                onClick={() => window.location.reload()}
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+              >
+                Refresh Page
+              </button>
+              <button
+                onClick={this.resetError}
+                className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
           </div>
         </div>
       );

@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { useScreenSize } from "@/hooks/use-mobile";
+import { useScreenSize, useResponsiveDesign, useTouchInteractions } from "@/hooks/use-mobile";
 import Navigation from "@/components/layout/navigation";
 import CreateProjectModal from "@/components/projects/create-project-modal";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +24,8 @@ export default function Projects() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { isMobile, isTablet } = useScreenSize();
+  const responsive = useResponsiveDesign();
+  const { onTouchStart, onTouchMove, onTouchEnd } = useTouchInteractions();
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -53,12 +55,18 @@ export default function Projects() {
   const { data: allMilestones = [], isLoading: milestonesLoading } = useQuery<any[]>({
     queryKey: ['/api/milestones'],
     queryFn: async () => {
-      const res = await fetch('/api/milestones', { 
-        credentials: 'include', 
-        cache: 'no-store' 
-      });
-      if (!res.ok) throw new Error('Failed to fetch milestones');
-      return res.json();
+      try {
+        const res = await fetch('/api/milestones', { 
+          credentials: 'include', 
+          cache: 'no-store' 
+        });
+        if (!res.ok) throw new Error('Failed to fetch milestones');
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Error fetching milestones:', error);
+        return [];
+      }
     },
     enabled: !!isAuthenticated,
   });
@@ -67,20 +75,32 @@ export default function Projects() {
   const { data: allSubtasks = [], isLoading: subtasksLoading } = useQuery<any[]>({
     queryKey: ['/api/dashboard/kanban-subtasks'],
     queryFn: async () => {
-      const res = await fetch('/api/dashboard/kanban-subtasks', { 
-        credentials: 'include', 
-        cache: 'no-store' 
-      });
-      if (!res.ok) throw new Error('Failed to fetch subtasks');
-      const grouped = await res.json();
-      // Flatten the grouped subtasks into a single array
-      const keys = ['overdue', 'review', 'recentlyDone', 'highPriorityTodo', 'fcReview'];
-      const flat: any[] = [];
-      for (const k of keys) {
-        const arr = Array.isArray(grouped?.[k]) ? grouped[k] : [];
-        for (const item of arr) flat.push({ ...item, type: 'subtask' });
+      try {
+        const res = await fetch('/api/dashboard/kanban-subtasks', { 
+          credentials: 'include', 
+          cache: 'no-store' 
+        });
+        if (!res.ok) throw new Error('Failed to fetch subtasks');
+        const grouped = await res.json();
+        
+        // Ensure grouped is an object
+        if (!grouped || typeof grouped !== 'object') {
+          console.warn('Invalid subtasks data received:', grouped);
+          return [];
+        }
+        
+        // Flatten the grouped subtasks into a single array
+        const keys = ['overdue', 'review', 'recentlyDone', 'highPriorityTodo', 'fcReview'];
+        const flat: any[] = [];
+        for (const k of keys) {
+          const arr = Array.isArray(grouped?.[k]) ? grouped[k] : [];
+          for (const item of arr) flat.push({ ...item, type: 'subtask' });
+        }
+        return flat;
+      } catch (error) {
+        console.error('Error fetching subtasks:', error);
+        return [];
       }
-      return flat;
     },
     enabled: !!isAuthenticated,
   });
@@ -90,7 +110,9 @@ export default function Projects() {
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
   
   const filteredProjects = useMemo(() => {
-    let filtered = projects;
+    // Ensure projects is an array
+    const safeProjects = Array.isArray(projects) ? projects : [];
+    let filtered = safeProjects;
     
     // Apply search query filter
     const q = query.trim().toLowerCase();
@@ -147,23 +169,61 @@ export default function Projects() {
     if (isMobile && viewMode !== "grid") setViewMode("grid");
   }, [isMobile]);
 
+  // Handle swipe gestures for mobile
+  const handleSwipe = () => {
+    if (!responsive.swipeEnabled) return;
+    
+    const swipeResult = onTouchEnd();
+    if (swipeResult?.isLeftSwipe) {
+      // Swipe left - next page
+      goToNextPage();
+    } else if (swipeResult?.isRightSwipe) {
+      // Swipe right - previous page
+      goToPrevPage();
+    }
+  };
+
   const { data: overdueTasks = [] } = useQuery<any[]>({
     queryKey: ['/api/dashboard/overdue-tasks'],
+    queryFn: async () => {
+      try {
+        const res = await fetch('/api/dashboard/overdue-tasks', { 
+          credentials: 'include', 
+          cache: 'no-store' 
+        });
+        if (!res.ok) throw new Error('Failed to fetch overdue tasks');
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Error fetching overdue tasks:', error);
+        return [];
+      }
+    },
     enabled: !!isAuthenticated,
   });
 
   // Get overdue tasks count for each project
   const getProjectOverdueCount = (projectId: string) => {
-    return overdueTasks.filter((task: any) => task.projectId === projectId).length;
+    const safeOverdueTasks = Array.isArray(overdueTasks) ? overdueTasks : [];
+    return safeOverdueTasks.filter((task: any) => task.projectId === projectId).length;
   };
 
   // Calculate comprehensive project progress using both milestones and subtasks
   const getProjectWeightBasedProgress = (projectId: string) => {
-    const projectMilestones = allMilestones.filter(milestone => 
+    // Debug logging to understand what we're getting
+    if (allSubtasks && !Array.isArray(allSubtasks)) {
+      console.warn('allSubtasks is not an array:', typeof allSubtasks, allSubtasks);
+    }
+    
+    // Ensure we have arrays before calling filter
+    const safeMilestones = Array.isArray(allMilestones) ? allMilestones : [];
+    const safeSubtasks = Array.isArray(allSubtasks) ? allSubtasks : [];
+    
+    const projectMilestones = safeMilestones.filter(milestone => 
       milestone.projectId === projectId || milestone.project?.id === projectId
     );
     
-    const projectSubtasks = allSubtasks.filter(subtask => 
+    const projectSubtasks = safeSubtasks.filter(subtask => 
       subtask.projectId === projectId || subtask.project?.id === projectId
     );
     
@@ -311,7 +371,7 @@ export default function Projects() {
               <CardTitle className="text-lg">Filters & Search</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className={`grid gap-4 ${responsive.gridCols} md:grid-cols-2 lg:grid-cols-4`}>
                 <div className="relative lg:col-span-2">
                   <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                   <Input
@@ -369,7 +429,7 @@ export default function Projects() {
 
         {/* Projects Display */}
         {projectsLoading ? (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <div className={`grid gap-6 ${responsive.gridCols} md:grid-cols-2 lg:grid-cols-3`}>
             {[...Array(6)].map((_, i) => (
               <Card key={i} className="animate-pulse">
                 <CardHeader>
@@ -467,10 +527,10 @@ export default function Projects() {
                                 <div className="flex items-center gap-2">
                                   <span className="text-gray-600">Contract Amount:</span>
                                   <span className="font-medium">
-                                    {project.budget
-                                      ? `KSh ${parseFloat(project.budget).toLocaleString()}`
-                                      : (project.totalFees && Number(project.totalFees) > 0
-                                          ? `KSh ${Number(project.totalFees).toLocaleString()}`
+                                    {(project.totalFees && Number(project.totalFees) > 0)
+                                      ? `KSh ${Number(project.totalFees).toLocaleString()}`
+                                      : (project.budget && parseFloat(project.budget) > 0
+                                          ? `KSh ${parseFloat(project.budget).toLocaleString()}`
                                           : 'N/A')}
                                   </span>
                                 </div>
@@ -529,10 +589,10 @@ export default function Projects() {
                         {project.contactEmail || 'N/A'}
                       </td>
                       <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
-                        {project.budget
-                          ? `KSh ${parseFloat(project.budget).toLocaleString()}`
-                          : (project.totalFees && Number(project.totalFees) > 0
-                              ? `KSh ${Number(project.totalFees).toLocaleString()}`
+                        {(project.totalFees && Number(project.totalFees) > 0)
+                          ? `KSh ${Number(project.totalFees).toLocaleString()}`
+                          : (project.budget && parseFloat(project.budget) > 0
+                              ? `KSh ${parseFloat(project.budget).toLocaleString()}`
                               : 'N/A')}
                       </td>
                       <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
@@ -593,7 +653,12 @@ export default function Projects() {
           </div>
         ) : (
           /* Grid View */
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div 
+            className={`grid gap-6 ${responsive.gridCols} md:grid-cols-2 lg:grid-cols-3`}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={handleSwipe}
+          >
             {currentProjects.map((project: any) => {
               const overdueCount = getProjectOverdueCount(project.id);
               const milestoneCount = project.milestoneCount ?? 0;
@@ -732,10 +797,12 @@ export default function Projects() {
                           </span>
                         </div>
 
-                        {project.budget && (
+                        {((project.totalFees && Number(project.totalFees) > 0) || (project.budget && parseFloat(project.budget) > 0)) && (
                           <div className="flex items-center" data-testid={`text-project-budget-${project.id}`}>
                             <DollarSign className="h-4 w-4 mr-2" />
-                            <span>KSh {parseFloat(project.budget).toLocaleString()}</span>
+                            <span>KSh {(project.totalFees && Number(project.totalFees) > 0) 
+                              ? Number(project.totalFees).toLocaleString()
+                              : parseFloat(project.budget).toLocaleString()}</span>
                           </div>
                         )}
 
@@ -763,13 +830,20 @@ export default function Projects() {
                               KSh {(project.paidAmount || 0).toLocaleString()} paid
                             </span>
                           </div>
-                          {project.budget && (
+                          {((project.totalFees && Number(project.totalFees) > 0) || (project.budget && parseFloat(project.budget) > 0)) && (
                             <div className="flex items-center justify-between text-xs mt-1">
                               <span className="text-gray-600">
-                                Outstanding: KSh {(parseFloat(project.budget || '0') - (project.paidAmount || 0)).toLocaleString()}
+                                Outstanding: KSh {((project.totalFees && Number(project.totalFees) > 0) 
+                                  ? (Number(project.totalFees) - (project.paidAmount || 0))
+                                  : (parseFloat(project.budget || '0') - (project.paidAmount || 0))
+                                ).toLocaleString()}
                               </span>
-                              <span className={`font-medium ${(project.paidAmount || 0) >= parseFloat(project.budget || '0') ? 'text-green-600' : 'text-orange-600'}`}>
-                                {Math.round(((project.paidAmount || 0) / parseFloat(project.budget || '1')) * 100)}% paid
+                              <span className={`font-medium ${(project.paidAmount || 0) >= ((project.totalFees && Number(project.totalFees) > 0) 
+                                ? Number(project.totalFees) 
+                                : parseFloat(project.budget || '0')) ? 'text-green-600' : 'text-orange-600'}`}>
+                                {Math.round(((project.paidAmount || 0) / ((project.totalFees && Number(project.totalFees) > 0) 
+                                  ? Number(project.totalFees) 
+                                  : parseFloat(project.budget || '1'))) * 100)}% paid
                               </span>
                             </div>
                           )}

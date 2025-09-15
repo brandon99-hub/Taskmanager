@@ -904,6 +904,8 @@ export class NotificationService {
         return 'Finance Head';
       case 'segment_leader':
         return `${segment?.charAt(0).toUpperCase()}${segment?.slice(1)} Segment Leader`;
+      case 'manager':
+        return 'Manager';
       default:
         return roleType;
     }

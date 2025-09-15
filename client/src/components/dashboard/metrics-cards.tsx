@@ -14,6 +14,7 @@ interface DashboardMetrics {
   assignedSubtasks?: number;
   completedSubtasks?: number;
   completedModules?: number;
+  completedMilestonesCount?: number;
   totalModules?: number;
   overdueModules?: number;
   overdueSubtasks?: number;
@@ -124,7 +125,9 @@ export default function MetricsCards() {
       },
       completedModules: {
         title: dashboardType === 'employee' ? "Modules Completed" : (dashboardType === 'project_manager' ? "Modules Completed" : "Milestones Completed"),
-        value: metrics?.completedModules || 0,
+        value: dashboardType === 'employee' || dashboardType === 'project_manager' 
+          ? (metrics?.completedModules || 0)
+          : (metrics?.completedMilestonesCount || 0),
         icon: CheckCircle,
         color: "bg-success",
         change: "",

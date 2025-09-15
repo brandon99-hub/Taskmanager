@@ -114,11 +114,63 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
+      staleTime: 5 * 60 * 1000, // 5 minutes instead of Infinity
+      retry: (failureCount, error) => {
+        // Don't retry on 4xx errors
+        if (error instanceof Error && error.message.includes('4')) {
+          return false;
+        }
+        return failureCount < 3;
+      },
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+      onError: (error) => {
+        console.error('Query error:', error);
+        
+        // Handle specific error types globally
+        if (error instanceof Error) {
+          if (error.message.includes('401')) {
+            // Redirect to login
+            window.location.href = '/login';
+          } else if (error.message.includes('403')) {
+            // Show access denied message
+            console.warn('Access denied for query');
+          }
+        }
+      }
     },
     mutations: {
-      retry: false,
+      retry: (failureCount, error) => {
+        // Don't retry mutations on 4xx errors
+        if (error instanceof Error && error.message.includes('4')) {
+          return false;
+        }
+        return failureCount < 2;
+      },
+      onError: (error) => {
+        console.error('Mutation error:', error);
+      }
     },
   },
 });
+
+// Enhanced query hook with better error handling
+export function useEnhancedQuery<T>(
+  queryKey: any[],
+  queryFn: () => Promise<T>,
+  options?: any
+) {
+  return queryClient.useQuery({
+    queryKey,
+    queryFn,
+    retry: (failureCount, error) => {
+      // Don't retry on 4xx errors
+      if (error instanceof Error && error.message.includes('4')) {
+        return false;
+      }
+      return failureCount < 3;
+    },
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    ...options
+  });
+}

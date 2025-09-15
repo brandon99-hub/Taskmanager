@@ -140,21 +140,25 @@ export default function Team() {
   const isValidEmail = (email: string | undefined) => !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !email.includes('@company.com');
 
   // Helper: does role exist already (or had been sent before)
-  const roleExists = (roleType: 'project_manager' | 'finance_head' | 'segment_leader', segment?: 'academic' | 'parastals' | 'private') => {
+  const roleExists = (roleType: 'project_manager' | 'finance_head' | 'segment_leader' | 'manager', segment?: 'academic' | 'parastals' | 'private') => {
     if (!adminRolesData) return false;
     if (roleType === 'segment_leader') {
       return !!adminRolesData.find((r: any) => r.roleType === 'segment_leader' && r.segment === segment && r.isActive);
+    }
+    if (roleType === 'manager') {
+      // For managers, check if their parent role exists (project_manager or finance_head)
+      return true; // Always allow resend for managers as they're under existing heads
     }
     return !!adminRolesData.find((r: any) => r.roleType === roleType && r.isActive);
   };
 
   // Resend credentials handler
-  const handleResend = async (key: string, params: { roleType: 'project_manager' | 'finance_head' | 'segment_leader'; segment?: 'academic' | 'parastals' | 'private'; email: string | undefined; displayName: string; }) => {
+  const handleResend = async (key: string, params: { roleType: 'project_manager' | 'finance_head' | 'segment_leader' | 'manager'; segment?: 'academic' | 'parastals' | 'private'; email: string | undefined; displayName: string; }) => {
     if (!isValidEmail(params.email)) {
       toast({ title: 'Invalid email', description: `Enter a valid email for ${params.displayName} before resending.`, variant: 'destructive' });
       return;
     }
-    if (!roleExists(params.roleType, params.segment)) {
+    if (params.roleType !== 'manager' && !roleExists(params.roleType, params.segment)) {
       toast({ title: 'Not yet assigned', description: `Assign ${params.displayName} first, then you can resend credentials.`, variant: 'destructive' });
       return;
     }
@@ -1451,8 +1455,28 @@ export default function Team() {
                                   {/* Existing managers */}
                                   {(() => { const hid = getHeadId('project_manager'); const lst = hid ? managersByHead[hid] : undefined; return (lst && lst.length > 0) ? (
                                     <div className="mt-3 space-y-2">
+                                      <div className="text-xs text-gray-500 mb-2">Existing managers under Project Manager:</div>
                                       {lst.map((m: any, i: number) => (
-                                        <div key={`pm-mgr-${i}`} className="text-sm text-gray-700">{m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} ({m.user?.email || ''})</div>
+                                        <div key={`pm-mgr-${i}`} className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                                          <div className="text-sm text-gray-700">
+                                            {m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} 
+                                            <span className="text-gray-500">({m.user?.email || ''})</span>
+                                          </div>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => handleResend(`pm-mgr-${i}`, { 
+                                              roleType: 'manager', 
+                                              email: m.user?.email, 
+                                              displayName: m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : 'Manager'
+                                            })}
+                                            disabled={resending[`pm-mgr-${i}`] || !m.user?.email}
+                                            className="h-8 px-3"
+                                          >
+                                            <RefreshCw className={`h-3 w-3 mr-1 ${resending[`pm-mgr-${i}`] ? 'animate-spin' : ''}`} />
+                                            Resend
+                                          </Button>
+                                        </div>
                                       ))}
                                     </div>
                                   ) : null; })()}
@@ -1528,8 +1552,28 @@ export default function Team() {
                                   <div className="text-xs text-gray-500">Managers are saved when you click "Save Changes".</div>
                                   {(() => { const hid = getHeadId('finance_head'); const lst = hid ? managersByHead[hid] : undefined; return (lst && lst.length > 0) ? (
                                     <div className="mt-3 space-y-2">
+                                      <div className="text-xs text-gray-500 mb-2">Existing managers under Finance Head:</div>
                                       {lst.map((m: any, i: number) => (
-                                        <div key={`fh-mgr-${i}`} className="text-sm text-gray-700">{m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} ({m.user?.email || ''})</div>
+                                        <div key={`fh-mgr-${i}`} className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                                          <div className="text-sm text-gray-700">
+                                            {m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : (m.user?.email || '')} 
+                                            <span className="text-gray-500">({m.user?.email || ''})</span>
+                                          </div>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => handleResend(`fh-mgr-${i}`, { 
+                                              roleType: 'manager', 
+                                              email: m.user?.email, 
+                                              displayName: m.user?.firstName && m.user?.lastName ? `${m.user.firstName} ${m.user.lastName}` : 'Manager'
+                                            })}
+                                            disabled={resending[`fh-mgr-${i}`] || !m.user?.email}
+                                            className="h-8 px-3"
+                                          >
+                                            <RefreshCw className={`h-3 w-3 mr-1 ${resending[`fh-mgr-${i}`] ? 'animate-spin' : ''}`} />
+                                            Resend
+                                          </Button>
+                                        </div>
                                       ))}
                                     </div>
                                   ) : null; })()}

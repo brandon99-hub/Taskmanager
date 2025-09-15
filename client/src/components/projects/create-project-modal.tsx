@@ -5251,7 +5251,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                     <FormItem>
 
-                      <FormLabel className="text-sm font-medium text-gray-700">Contract Amount (KSh)</FormLabel>
+                      <FormLabel className="text-sm font-medium text-gray-700">Contract Amount (KSh) - Auto-calculated from Milestones</FormLabel>
 
                       <FormControl>
 
@@ -5259,11 +5259,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                           type="text" 
 
-                          placeholder="0.00" 
+                          placeholder="Auto-calculated from milestone fees" 
 
-                          min="0" 
-
-                          className="h-11"
+                          className="h-11 bg-gray-50 cursor-not-allowed"
 
                           value={field.value || ''}
 
@@ -5299,7 +5297,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                           data-testid="input-project-budget"
 
-                          onFocus={handleInputFocus}
+                          readOnly
 
                         />
 
