@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Edit, Search, Filter, CalendarDays, DollarSign, User, Clock, AlertTriangle, UserCheck, CheckCircle, X, ChevronDown, ChevronRight, Bell } from 'lucide-react';
+import { Edit, Search, Filter, CalendarDays, DollarSign, User, Clock, AlertTriangle, UserCheck, CheckCircle, X, ChevronDown, ChevronRight, Bell, AlertCircle } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { isUnauthorizedError } from '@/lib/authUtils';
@@ -496,6 +496,18 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     return calculateSubtaskWeightBasedProgress(module.subtasks);
   };
 
+  // Check if a milestone is overdue
+  const isMilestoneOverdue = (module: Module) => {
+    if (!module.isMilestone || !module.dueDate) return false;
+    
+    const today = new Date();
+    const dueDate = new Date(module.dueDate);
+    const isOverdue = dueDate < today;
+    const isNotPaid = module.billingStatus !== 'paid';
+    
+    return isOverdue && isNotPaid;
+  };
+
   if (modules.length === 0) {
     return (
       <Card>
@@ -734,7 +746,9 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
               {sortedModules.map((module) => (
                 <React.Fragment key={module.id}>
                   {/* Main Module Row */}
-                  <tr className="border-b border-gray-100 hover:bg-gray-50">
+                  <tr className={`border-b border-gray-100 hover:bg-gray-50 ${
+                    isMilestoneOverdue(module) ? 'bg-red-50 border-red-200' : ''
+                  }`}>
                     <td className="p-3">
                       <Checkbox
                         checked={selectedModules.includes(module.id)}
@@ -790,7 +804,11 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                     <td className="p-3 text-sm text-gray-600">
                       {formatDate(module.startDate)}
                     </td>
-                    <td className="p-3 text-sm text-gray-600">
+                    <td className={`p-3 text-sm ${
+                      module.isMilestone && isMilestoneOverdue(module) 
+                        ? 'text-red-600 font-semibold' 
+                        : 'text-gray-600'
+                    }`}>
                       {formatDate(module.dueDate)}
                     </td>
                     <td className="p-3 text-sm text-gray-600">
@@ -809,9 +827,11 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                       {projectSegment ? projectSegment.charAt(0).toUpperCase() + projectSegment.slice(1) : 'Private'}
                     </td>
                                          <td className="p-3">
-                       {module.isMilestone ? (
-                         // For milestones, show billing status
-                         <Select
+                       <div>
+                         {module.isMilestone ? (
+                           // For milestones, show billing status
+                           <div>
+                             <Select
                            value={module.billingStatus || 'none'}
                            disabled={updateModuleStatusMutation.isPending}
                            onValueChange={(value) => updateModuleStatusMutation.mutate({
@@ -840,6 +860,17 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                              <SelectItem value="overdue">Overdue</SelectItem>
                            </SelectContent>
                          </Select>
+                         
+                         {/* Overdue Badge for Milestones */}
+                         {isMilestoneOverdue(module) && (
+                           <div className="mt-2">
+                             <Badge variant="destructive" className="text-xs">
+                               <AlertCircle className="h-3 w-3 mr-1" />
+                               Overdue
+                             </Badge>
+                           </div>
+                         )}
+                           </div>
                        ) : (
                          // For modules, show regular status
                          <Select
@@ -874,7 +905,8 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                              <SelectItem value="cancelled">Cancelled</SelectItem>
                            </SelectContent>
                          </Select>
-                                              )}
+                       )}
+                       </div>
                      </td>
 
                      <td className="p-3 text-sm text-gray-600">

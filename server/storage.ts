@@ -1774,25 +1774,26 @@ export class DatabaseStorage implements IStorage {
     const project = await this.getProject(projectId);
     if (!project) return;
 
-    const projectTasks = await this.getTasksByProject(projectId);
+    // Get actual milestones (not modules) for this project
+    const projectMilestones = await this.getMilestonesByProject(projectId);
     
-    if (projectTasks.length === 0) {
+    if (projectMilestones.length === 0) {
       // No milestones, keep as planning
       return;
     }
 
-    const totalMilestones = projectTasks.length;
-    const completedMilestones = projectTasks.filter(t => t.status === 'done').length;
-    const activeMilestones = projectTasks.filter(t => t.status === 'in_progress' || t.status === 'client_review').length; // Changed from 'review' to 'client_review'
+    const totalMilestones = projectMilestones.length;
+    const paidMilestones = projectMilestones.filter(m => m.billingStatus === 'paid').length;
+    const completedMilestones = projectMilestones.filter(m => m.billingStatus === 'paid').length; // For backward compatibility
 
     let newStatus = project.status; // Keep current status by default
 
-    // Automatic status logic
-    if (completedMilestones === totalMilestones && totalMilestones > 0) {
-      // All milestones completed
-      newStatus = 'completed';
-    } else if (activeMilestones > 0 || completedMilestones > 0) {
-      // At least one milestone is active or completed
+    // Automatic status logic based on milestone billing status
+    if (paidMilestones === totalMilestones && totalMilestones > 0) {
+      // All milestones are paid - move to on_support (SLA)
+      newStatus = 'on_support';
+    } else if (completedMilestones > 0 || paidMilestones > 0) {
+      // At least one milestone is completed or paid
       if (project.status === 'planning') {
         newStatus = 'active';
       }
@@ -4482,6 +4483,10 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
   async createMilestone(milestone: InsertMilestone): Promise<Milestone> {
     try {
       const [newMilestone] = await db.insert(milestones).values(milestone as any).returning();
+      
+      // Update project status based on milestones
+      await this.updateProjectStatusBasedOnMilestones(newMilestone.projectId);
+      
       return newMilestone;
     } catch (error) {
       console.error('Error creating milestone:', error);
@@ -4520,6 +4525,9 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           for (const phase of projectPhasesList) {
             await this.updatePhaseStatusFromModules(milestoneInfo.projectId, phase.phaseNumber);
           }
+          
+          // Update project status based on milestone billing status
+          await this.updateProjectStatusBasedOnMilestones(milestoneInfo.projectId);
         }
       }
       
@@ -4532,6 +4540,12 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
 
   async deleteMilestone(id: string): Promise<void> {
     try {
+      // Get project ID before deleting
+      const [milestoneInfo] = await db
+        .select({ projectId: milestones.projectId })
+        .from(milestones)
+        .where(eq(milestones.id, id));
+      
       // First delete any related records in moduleMilestones table (when implemented)
       // For now, we skip this since milestone-module relationship isn't active yet
       
@@ -4539,6 +4553,11 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       await db
         .delete(milestones)
         .where(eq(milestones.id, id));
+      
+      // Update project status based on remaining milestones
+      if (milestoneInfo?.projectId) {
+        await this.updateProjectStatusBasedOnMilestones(milestoneInfo.projectId);
+      }
         
       // Milestone deleted successfully
     } catch (error) {
