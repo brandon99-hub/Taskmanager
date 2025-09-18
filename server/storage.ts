@@ -3985,10 +3985,13 @@ export class DatabaseStorage implements IStorage {
         moduleAgg = { minStart: (agg as any)?.minStart || null, maxDue: (agg as any)?.maxDue || null };
       }
 
-      const directMin = (directAgg as any)?.minStart as Date | null;
-      const directMax = (directAgg as any)?.maxDue as Date | null;
-      const combinedMin = [directMin, moduleAgg.minStart].filter(Boolean).sort((a: any, b: any) => a.getTime() - b.getTime())[0] || null;
-      const combinedMax = [directMax, moduleAgg.maxDue].filter(Boolean).sort((a: any, b: any) => b.getTime() - a.getTime())[0] || null;
+      const directMin = (directAgg as any)?.minStart ? new Date((directAgg as any).minStart) : null;
+      const directMax = (directAgg as any)?.maxDue ? new Date((directAgg as any).maxDue) : null;
+      const moduleMinDate = moduleAgg.minStart ? new Date(moduleAgg.minStart) : null;
+      const moduleMaxDate = moduleAgg.maxDue ? new Date(moduleAgg.maxDue) : null;
+      
+      const combinedMin = [directMin, moduleMinDate].filter(Boolean).sort((a: any, b: any) => a.getTime() - b.getTime())[0] || null;
+      const combinedMax = [directMax, moduleMaxDate].filter(Boolean).sort((a: any, b: any) => b.getTime() - a.getTime())[0] || null;
 
       let expectedInvoiceDate: Date | null = null;
       if (combinedMax) {

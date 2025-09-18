@@ -3429,9 +3429,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
 
 
-        const milestoneResults: { milestone: any; success: boolean; error?: string }[] = [];
+      const milestoneResults: { milestone: any; success: boolean; error?: string }[] = [];
 
-        let index = 0;
+      let index = 0;
 
         for (const m of unprocessedMilestoneItems) {
 
@@ -3509,15 +3509,15 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         toast({ title: 'Success', description: `${okCount} milestone(s) processed successfully` });
 
-        } else {
+      } else {
 
-          toast({ title: 'Milestone Processing Issues', description: 'No milestone updates were applied', variant: 'destructive' });
+        toast({ title: 'Milestone Processing Issues', description: 'No milestone updates were applied', variant: 'destructive' });
 
-        }
-        
+    }
+    
         setIsProcessingMilestones(false);
 
-        setMilestoneProgress({ current: 0, total: 0, message: '' });
+    setMilestoneProgress({ current: 0, total: 0, message: '' });
       }
     }
 
@@ -3530,13 +3530,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     setIsFormDirty(false);
     setHasComplexDataChanges(false);
 
-    setIsOpen(false);
+      setIsOpen(false);
 
-    form.reset();
+      form.reset();
 
-    if (onClose) onClose();
+      if (onClose) onClose();
 
-    toast({ title: 'Success', description: isEditMode ? 'Project updated successfully' : 'Project created successfully' });
+      toast({ title: 'Success', description: isEditMode ? 'Project updated successfully' : 'Project created successfully' });
 
 
   };
