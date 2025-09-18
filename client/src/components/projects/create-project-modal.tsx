@@ -2972,18 +2972,16 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
               if (isEditMode && (module as any).id) {
 
-                // Check if module exists before updating
+                // Skip existence check for milestones (non-Phase-3) since they don't exist in modules table
+                if (!(module.phaseNumber !== 3 && (module as any).isMilestone)) {
+                  // Check if module exists before updating
+                  const existsResponse = await apiRequest('GET', `/api/modules/${(module as any).id}`);
 
-                const existsResponse = await apiRequest('GET', `/api/modules/${(module as any).id}`);
-
-                if (!existsResponse.ok) {
-
-                  console.warn(`Module ${(module as any).id} not found, skipping update`);
-
-                  success = true;
-
-                  break;
-
+                  if (!existsResponse.ok) {
+                    console.warn(`Module ${(module as any).id} not found, skipping update`);
+                    success = true;
+                    break;
+                  }
                 }
 
                 
