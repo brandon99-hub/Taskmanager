@@ -3,12 +3,12 @@ import slowDown from 'express-slow-down';
 import type { Express, Request, Response, NextFunction } from 'express';
 
 export function setupRateLimiting(app: Express) {
-  // Role-based rate limiting configuration
+  // Role-based rate limiting configuration (increased limits)
   const roleLimits = {
-    admin: { windowMs: 900000, max: 500 },
-    manager: { windowMs: 900000, max: 200 },
-    employee: { windowMs: 900000, max: 100 },
-    guest: { windowMs: 900000, max: 20 }
+    admin: { windowMs: 900000, max: 2000 },     // 2000 requests per 15 minutes
+    manager: { windowMs: 900000, max: 1000 },   // 1000 requests per 15 minutes
+    employee: { windowMs: 900000, max: 500 },   // 500 requests per 15 minutes
+    guest: { windowMs: 900000, max: 100 }       // 100 requests per 15 minutes
   };
 
   // Enhanced general API rate limiting with role-based limits
@@ -194,6 +194,31 @@ export function setupRateLimiting(app: Express) {
   // Apply to sensitive endpoints
   app.use('/api/users', sensitiveOperationsLimiter);
   app.use('/api/auth/reset-password', sensitiveOperationsLimiter);
+  
+  // Special rate limiting for batch endpoint (higher limits)
+  const batchLimiter = rateLimit({
+    windowMs: 60000, // 1 minute
+    max: (req: Request) => {
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      return role === 'admin' ? 50 : role === 'manager' ? 30 : role === 'employee' ? 20 : 5;
+    },
+    keyGenerator: (req: Request) => {
+      const user = (req as any).user;
+      const role = user?.role || 'guest';
+      const userId = user?.id || 'anonymous';
+      return `batch:${role}:${userId}:${req.ip}`;
+    },
+    message: {
+      error: 'Too many batch requests',
+      message: 'Batch request limit exceeded, please try again later.',
+      retryAfter: '1 minute'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+  
+  app.use('/api/batch', batchLimiter);
   
   // Rate limit export endpoints (prevent abuse)
   const exportLimiter = rateLimit({

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { batchQuery } from "@/lib/queryBatcher";
 import { formatCurrency, calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress } from "@/lib/utils";
 import { useScreenSize } from "@/hooks/use-mobile";
 
@@ -151,14 +152,11 @@ export default function ProjectDetail() {
     queryKey: ['/api/projects', projectId, 'modules'],
     queryFn: async () => {
       if (!projectId) return [];
-      const res = await fetch(`/api/projects/${projectId}/modules`, { 
-        credentials: 'include', 
-        cache: 'no-store' 
-      });
-      if (!res.ok) throw new Error('Failed to fetch modules');
-      return res.json();
+      return batchQuery(`/api/projects/${projectId}/modules`);
     },
     enabled: !!isAuthenticated && !!projectId,
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+    refetchOnWindowFocus: false,
   });
 
   // Fetch milestones directly from the milestones API
@@ -166,14 +164,11 @@ export default function ProjectDetail() {
     queryKey: ['/api/projects', projectId, 'milestones'],
     queryFn: async () => {
       if (!projectId) return [];
-      const res = await fetch(`/api/projects/${projectId}/milestones`, { 
-        credentials: 'include', 
-        cache: 'no-store' 
-      });
-      if (!res.ok) throw new Error('Failed to fetch milestones');
-      return res.json();
+      return batchQuery(`/api/projects/${projectId}/milestones`);
     },
     enabled: !!isAuthenticated && !!projectId,
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+    refetchOnWindowFocus: false,
   });
 
   // Auto-expand milestone if task parameter is present in URL
@@ -204,16 +199,8 @@ export default function ProjectDetail() {
         // Error creating phases, continue with fetch
       }
       
-      // Fetch the actual phases from server
-      const response = await fetch(`/api/projects/${projectId}/phases`, {
-        credentials: 'include'
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch phases');
-      }
-      
-      const serverPhases = await response.json();
+      // Fetch the actual phases from server using batcher
+      const serverPhases = await batchQuery(`/api/projects/${projectId}/phases`);
       
       // Transform server phase data to match client interface
       return serverPhases.map((phase: any) => ({
@@ -230,6 +217,8 @@ export default function ProjectDetail() {
       }));
     },
     enabled: !!isAuthenticated && !!projectId,
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+    refetchOnWindowFocus: false,
   });
 
 
@@ -257,18 +246,11 @@ export default function ProjectDetail() {
     queryFn: async () => {
       if (!projectId) return null;
       
-      const res = await fetch(`/api/projects/${projectId}/gantt`, {
-        credentials: 'include',
-        cache: 'no-store'
-      });
-      
-      if (!res.ok) {
-        throw new Error('Failed to fetch Gantt chart data');
-      }
-      
-      return res.json();
+      return batchQuery(`/api/projects/${projectId}/gantt`);
     },
     enabled: !!isAuthenticated && !!projectId,
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+    refetchOnWindowFocus: false,
   });
 
   // Fetch segment leader based on project segment

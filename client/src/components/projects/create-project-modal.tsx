@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 
 import { useQuery, useMutation } from "@tanstack/react-query";
 
@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import UnsavedChangesModal from "@/components/ui/unsaved-changes-modal";
 
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 
@@ -186,7 +187,23 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   // Track deleted milestones to ensure they're removed from database
   const [deletedMilestones, setDeletedMilestones] = useState<string[]>([]);
 
+  // Hybrid change detection state
+  const [isFormDirty, setIsFormDirty] = useState(false);
+  const [hasComplexDataChanges, setHasComplexDataChanges] = useState(false);
+  const [initialComplexData, setInitialComplexData] = useState<{
+    phases: any[];
+    milestones: NewMilestoneRow[];
+    modules: NewModuleRow[];
+    deletedSubtasks: string[];
+    deletedMilestones: string[];
+  } | null>(null);
+
+  // Combined dirty state
+  const isDirty = isFormDirty || hasComplexDataChanges;
   
+  // Custom modal state
+  const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
+  const [pendingCloseAction, setPendingCloseAction] = useState<(() => void) | null>(null);
   
   const [isProcessingMilestones, setIsProcessingMilestones] = useState(false);
 
@@ -200,24 +217,16 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   
   
+
   // Debug modules state changes
-
   useEffect(() => {
-
     // Silent monitoring
-
   }, [modules]);
 
-
-
   // Debug phases state changes
-
   useEffect(() => {
-
     // Silent monitoring - uncomment for debugging
-
     // console.log('Phases state changed:', phases);
-
   }, [phases]);
 
   
@@ -427,11 +436,117 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   });
 
+  // Track form dirty state changes
+  useEffect(() => {
+    setIsFormDirty(form.formState.isDirty);
+  }, [form.formState.isDirty]);
 
+  // Track complex data changes by comparing with initial state
+  useEffect(() => {
+    if (!initialComplexData) return;
+    
+    const currentComplexData = {
+      phases,
+      milestones,
+      modules,
+      deletedSubtasks,
+      deletedMilestones
+    };
+    
+    const hasChanges = JSON.stringify(currentComplexData) !== JSON.stringify(initialComplexData);
+    setHasComplexDataChanges(hasChanges);
+  }, [phases, milestones, modules, deletedSubtasks, deletedMilestones, initialComplexData]);
 
   // Get the current segment value from the form
-
   const currentSegment = form.watch('segment');
+
+  const handleOpenChange = useCallback((open: boolean) => {
+    // If trying to close the modal, check for unsaved changes first
+    if (!open && isDirty) {
+      // Show custom modal instead of browser confirm
+      setPendingCloseAction(() => () => {
+        setIsOpen(false);
+        const hasQuery = (search ?? "").length > 0;
+        if (hasQuery) setLocation(pathname);
+        if (onClose) onClose();
+      });
+      setShowUnsavedChangesModal(true);
+      return; // Don't close the modal yet
+    }
+
+    setIsOpen(open);
+
+    if (!open) {
+      // remove query params to prevent reopening on navigation within the page
+      const hasQuery = (search ?? "").length > 0;
+      if (hasQuery) setLocation(pathname);
+      if (onClose) onClose();
+    }
+  }, [isDirty, isEditMode, project, form, initialComplexData, search, pathname, onClose]);
+
+
+  const handleDiscardAndClose = useCallback(() => {
+    setShowUnsavedChangesModal(false);
+    
+    // Reset all data to initial state
+    if (isEditMode && project) {
+      form.reset({
+        client: project.client || "",
+        contactPerson: project.contactPerson || "",
+        contactPhone: project.contactPhone || "",
+        contactEmail: project.contactEmail || "",
+        startDate: project.startDate ? new Date(project.startDate).toISOString().slice(0, 10) : "",
+        endDate: project.endDate ? new Date(project.endDate).toISOString().slice(0, 10) : "",
+        segment: project.segment || "private",
+        teamId: project.teamId || "none",
+        budget: project.budget ? String(project.budget) : "",
+        status: project.status || "planning",
+      });
+
+      if (initialComplexData) {
+        setPhases(JSON.parse(JSON.stringify(initialComplexData.phases)));
+        setMilestones(JSON.parse(JSON.stringify(initialComplexData.milestones)));
+        setModules(JSON.parse(JSON.stringify(initialComplexData.modules)));
+        setDeletedSubtasks([...initialComplexData.deletedSubtasks]);
+        setDeletedMilestones([...initialComplexData.deletedMilestones]);
+      }
+    } else {
+      const currentSegment = form.getValues('segment') || 'private';
+      form.reset({
+        client: "",
+        contactPerson: "",
+        contactPhone: "",
+        contactEmail: "",
+        startDate: "",
+        endDate: "",
+        segment: currentSegment,
+        teamId: "none",
+        budget: "",
+        status: "planning",
+      });
+      setModules([]);
+      setPhases([]);
+      setMilestones([]);
+      setDeletedSubtasks([]);
+      setDeletedMilestones([]);
+    }
+
+    // Reset change detection state
+    setInitialComplexData(null);
+    setIsFormDirty(false);
+    setHasComplexDataChanges(false);
+
+    // Execute the pending close action
+    if (pendingCloseAction) {
+      pendingCloseAction();
+      setPendingCloseAction(null);
+    }
+  }, [isEditMode, project, form, initialComplexData, pendingCloseAction]);
+
+  const handleKeepEditing = useCallback(() => {
+    setShowUnsavedChangesModal(false);
+    setPendingCloseAction(null);
+  }, []);
 
   
   
@@ -615,7 +730,55 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   }, [project, form]);
 
+  // Initialize complex data tracking after data is loaded
+  useEffect(() => {
+    if (project && phases.length > 0 && !initialComplexData) {
+      // Set initial complex data state for change detection
+      setInitialComplexData({
+        phases: JSON.parse(JSON.stringify(phases)),
+        milestones: JSON.parse(JSON.stringify(milestones)),
+        modules: JSON.parse(JSON.stringify(modules)),
+        deletedSubtasks: [...deletedSubtasks],
+        deletedMilestones: [...deletedMilestones]
+      });
+    }
+  }, [project, phases, milestones, modules, deletedSubtasks, deletedMilestones, initialComplexData]);
 
+  // Add navigation guard for unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+        return 'You have unsaved changes. Are you sure you want to leave?';
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Handle ESC key to close modal
+      if (e.key === 'Escape' && isOpen && isDirty) {
+        e.preventDefault();
+        // Show custom modal instead of browser confirm
+        setPendingCloseAction(() => () => {
+          setIsOpen(false);
+          const hasQuery = (search ?? "").length > 0;
+          if (hasQuery) setLocation(pathname);
+          if (onClose) onClose();
+        });
+        setShowUnsavedChangesModal(true);
+      }
+    };
+
+    if (isOpen) {
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, isDirty, isEditMode, handleOpenChange]);
 
   // Reset team selection when segment changes (unless in edit mode)
 
@@ -1796,7 +1959,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     console.log('Form is submitting:', form.formState.isSubmitting);
 
-    
+    // Start processing UI immediately to give user feedback
+    setIsProcessingMilestones(true);
+    setMilestoneProgress({ current: 0, total: 0, message: 'Initializing...' });
 
     // Re-validate just before submit
     const ok = await form.trigger(undefined, { shouldFocus: true });
@@ -1805,6 +1970,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     if (!ok) {
 
       console.log('Form is not valid, cannot submit');
+
+      // Stop processing UI since validation failed
+      setIsProcessingMilestones(false);
+      setMilestoneProgress({ current: 0, total: 0, message: '' });
 
       // Bring user to first error in the form
 
@@ -2104,6 +2273,11 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
             setDeletedMilestones([]);
             setDeletedSubtasks([]);
             
+            // Reset change detection state after successful save
+            setInitialComplexData(null);
+            setIsFormDirty(false);
+            setHasComplexDataChanges(false);
+            
             // Only show success and close modal after milestones are processed successfully
             setIsOpen(false);
             form.reset();
@@ -2124,6 +2298,12 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         } else {
           console.log('No modules to process, showing success immediately');
           // No milestones to process, show success immediately
+          
+          // Reset change detection state after successful save
+          setInitialComplexData(null);
+          setIsFormDirty(false);
+          setHasComplexDataChanges(false);
+          
           setIsOpen(false);
           form.reset();
           if (onClose) onClose();
@@ -2642,12 +2822,62 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         .map(change => change.module);
       
+      // Also include milestones that have subtask changes (even if milestone itself didn't change)
+      const milestonesWithSubtaskChanges = validated.filter((module: any) => {
+        if (!module.isMilestone || module.phaseNumber === 3) return false;
+        
+        // Check if this milestone has subtasks that are new or modified
+        const hasNewSubtasks = module.subtasks && module.subtasks.some((subtask: any) => !subtask.id || subtask.tempId);
+        const hasModifiedSubtasks = module.subtasks && module.subtasks.some((subtask: any) => {
+          if (!subtask.id) return false; // Skip new subtasks (already handled above)
+          
+          // Find the original subtask to compare
+          const originalModule = existingModules.find((existing: any) => 
+            (existing.id === module.id || existing.milestoneId === module.id || existing.milestoneId === module.milestoneId)
+          );
+          
+          if (!originalModule) return false;
+          
+          const originalSubtask = originalModule.subtasks?.find((original: any) => original.id === subtask.id);
+          if (!originalSubtask) return false;
+          
+          // Compare key fields to detect changes
+          return (
+            subtask.name !== originalSubtask.name ||
+            subtask.description !== originalSubtask.description ||
+            subtask.status !== originalSubtask.status ||
+            subtask.startDate !== originalSubtask.startDate ||
+            subtask.dueDate !== originalSubtask.dueDate ||
+            subtask.estimatedDays !== originalSubtask.estimatedDays ||
+            subtask.assignedDevId !== originalSubtask.assignedDevId ||
+            subtask.assignedConsultantId !== originalSubtask.assignedConsultantId ||
+            subtask.progressPercent !== originalSubtask.progressPercent
+          );
+        });
+        
+        return hasNewSubtasks || hasModifiedSubtasks;
+      });
       
+      // Add milestones with subtask changes to processable modules
+      processableModules = [...processableModules, ...milestonesWithSubtaskChanges];
+      
+      // Remove duplicates based on id/milestoneId
+      const uniqueProcessableModules = processableModules.filter((module: any, index: number, array: any[]) => {
+        const moduleKey = module.id || module.milestoneId || `${module.name}-${module.phaseNumber}`;
+        return array.findIndex((m: any) => {
+          const mKey = m.id || m.milestoneId || `${m.name}-${m.phaseNumber}`;
+          return mKey === moduleKey;
+        }) === index;
+      });
+      
+      processableModules = uniqueProcessableModules;
       
       if (processableModules.length === 0) {
 
         console.log('No module changes detected, skipping module processing');
 
+      } else {
+        console.log(`Processing ${processableModules.length} modules/milestones (including ${milestonesWithSubtaskChanges.length} with subtask changes)`);
       }
 
     }
@@ -2667,8 +2897,6 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     // Process modules if there are any to process
 
     if (processableModules.length > 0) {
-
-      setIsProcessingMilestones(true);
 
       setMilestoneProgress({ current: 0, total: processableModules.length, message: 'Processing modules...' });
 
@@ -3179,19 +3407,33 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     } else if (milestoneItems.length > 0) {
 
-      // New: process non-Phase-3 milestone containers even when there are no modules
+      // Process non-Phase-3 milestone containers that weren't already processed in the main loop
+      // Filter out milestones that were already processed as part of processableModules
+      const processedMilestoneIds = new Set(
+        processableModules
+          .filter((module: any) => module.isMilestone && module.phaseNumber !== 3)
+          .map((module: any) => module.id || module.milestoneId)
+      );
+      
+      const unprocessedMilestoneItems = milestoneItems.filter((milestone: any) => {
+        const milestoneId = milestone.id || milestone.milestoneId;
+        return !processedMilestoneIds.has(milestoneId);
+      });
 
-      setIsProcessingMilestones(true);
+      if (unprocessedMilestoneItems.length === 0) {
+        console.log('All milestone items were already processed in the main loop');
+      } else {
+        console.log(`Processing ${unprocessedMilestoneItems.length} additional milestone items that weren't processed in main loop`);
+        
+        setMilestoneProgress({ current: 0, total: unprocessedMilestoneItems.length, message: 'Processing milestones...' });
 
-      setMilestoneProgress({ current: 0, total: milestoneItems.length, message: 'Processing milestones...' });
 
 
+        const milestoneResults: { milestone: any; success: boolean; error?: string }[] = [];
 
-      const milestoneResults: { milestone: any; success: boolean; error?: string }[] = [];
+        let index = 0;
 
-      let index = 0;
-
-      for (const m of milestoneItems) {
+        for (const m of unprocessedMilestoneItems) {
 
         try {
 
@@ -3243,7 +3485,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
           index += 1;
 
-          setMilestoneProgress({ current: index, total: milestoneItems.length, message: 'Processing milestones...' });
+          setMilestoneProgress({ current: index, total: unprocessedMilestoneItems.length, message: 'Processing milestones...' });
 
         }
 
@@ -3267,51 +3509,53 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         toast({ title: 'Success', description: `${okCount} milestone(s) processed successfully` });
 
-      } else {
+        } else {
 
-        toast({ title: 'Milestone Processing Issues', description: 'No milestone updates were applied', variant: 'destructive' });
+          toast({ title: 'Milestone Processing Issues', description: 'No milestone updates were applied', variant: 'destructive' });
 
-    }
-    
+        }
+        
         setIsProcessingMilestones(false);
 
-    setMilestoneProgress({ current: 0, total: 0, message: '' });
-
-      // finish like success path
-
-      setIsOpen(false);
-
-      form.reset();
-
-      if (onClose) onClose();
-
-      toast({ title: 'Success', description: isEditMode ? 'Project updated successfully' : 'Project created successfully' });
-
-    } else {
-
-      console.log('No modules to process, showing success immediately');
-
-      // No milestones to process, show success immediately
-
-      setIsOpen(false);
-
-      form.reset();
-
-      if (onClose) onClose();
-
-      toast({ title: 'Success', description: isEditMode ? 'Project updated successfully' : 'Project created successfully' });
-
+        setMilestoneProgress({ current: 0, total: 0, message: '' });
+      }
     }
 
-    
-    
-        setIsProcessingMilestones(false);
-
+    // Stop processing UI
+    setIsProcessingMilestones(false);
     setMilestoneProgress({ current: 0, total: 0, message: '' });
+
+    // Reset change detection state after successful save
+    setInitialComplexData(null);
+    setIsFormDirty(false);
+    setHasComplexDataChanges(false);
+
+    setIsOpen(false);
+
+    form.reset();
+
+    if (onClose) onClose();
+
+    toast({ title: 'Success', description: isEditMode ? 'Project updated successfully' : 'Project created successfully' });
+
 
   };
 
-
+  // Handle unsaved changes modal actions
+  const handleSaveAndClose = useCallback(async () => {
+    setShowUnsavedChangesModal(false);
+    try {
+      // Trigger form submission
+      await form.handleSubmit(onSubmit)();
+    } catch (error) {
+      console.error('Error saving before close:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to save changes. Please try again.',
+        variant: 'destructive'
+      });
+    }
+  }, [form, onSubmit, toast]);
 
   // Process modules for a milestone
 
@@ -4329,23 +4573,6 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
 
 
-  const handleOpenChange = (open: boolean) => {
-
-    setIsOpen(open);
-
-    if (!open) {
-
-      // remove query params to prevent reopening on navigation within the page
-
-      const hasQuery = (search ?? "").length > 0;
-
-      if (hasQuery) setLocation(pathname);
-
-      if (onClose) onClose();
-
-    }
-
-  };
 
 
 
@@ -4371,76 +4598,33 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
 
 
+  // Function to reset complex data to initial state
+  const resetComplexDataToInitial = () => {
+    if (initialComplexData) {
+      setPhases(JSON.parse(JSON.stringify(initialComplexData.phases)));
+      setMilestones(JSON.parse(JSON.stringify(initialComplexData.milestones)));
+      setModules(JSON.parse(JSON.stringify(initialComplexData.modules)));
+      setDeletedSubtasks([...initialComplexData.deletedSubtasks]);
+      setDeletedMilestones([...initialComplexData.deletedMilestones]);
+    }
+  };
+
+
   const handleCancel = () => {
-
-    if (isEditMode && project) {
-
-      // Reset to original project data
-
-      form.reset({
-
-        client: project.client || "",
-
-        contactPerson: project.contactPerson || "",
-
-        contactPhone: project.contactPhone || "",
-
-        contactEmail: project.contactEmail || "",
-
-        startDate: project.startDate ? new Date(project.startDate).toISOString().slice(0, 10) : "",
-
-        endDate: project.endDate ? new Date(project.endDate).toISOString().slice(0, 10) : "",
-
-        segment: project.segment || "private",
-
-        teamId: project.teamId || "none",
-
-        budget: project.budget ? String(project.budget) : "",
-
-        status: project.status || "planning",
-
+    // Check for unsaved changes before closing
+    if (isDirty) {
+      // Show custom modal instead of browser confirm
+      setPendingCloseAction(() => () => {
+        setIsOpen(false);
+        if (onClose) onClose();
       });
-
-      // Don't clear tasks in edit mode to preserve milestones
-
-    } else {
-
-      // For new projects, preserve current segment selection instead of resetting to private
-
-      const currentSegment = form.getValues('segment') || 'private';
-
-      form.reset({
-
-        client: "",
-
-        contactPerson: "",
-
-        contactPhone: "",
-
-        contactEmail: "",
-
-        startDate: "",
-
-        endDate: "",
-
-        segment: currentSegment, // Preserve current segment selection
-
-        teamId: "none",
-
-        budget: "",
-
-        status: "planning",
-
-      });
-
-      setModules([]);
-
+      setShowUnsavedChangesModal(true);
+      return; // Don't close the modal yet
     }
 
+    // No unsaved changes, close immediately
     setIsOpen(false);
-
     if (onClose) onClose();
-
   };
 
 
@@ -4827,7 +5011,14 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         <DialogHeader>
 
-          <DialogTitle>{isEditMode ? 'Edit Project' : 'Create New Project'}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {isEditMode ? 'Edit Project' : 'Create New Project'}
+            {isDirty && (
+              <span className="text-sm font-normal text-orange-600 bg-orange-100 px-2 py-1 rounded-md">
+                Unsaved changes
+              </span>
+            )}
+          </DialogTitle>
 
           <DialogDescription>
 
@@ -7450,7 +7641,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                 type="button"
 
-                variant="outline"
+                variant={isDirty ? "destructive" : "outline"}
 
                 onClick={handleCancel}
 
@@ -7460,7 +7651,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
               >
 
-                Cancel
+                {isDirty ? 'Discard Changes' : 'Cancel'}
 
               </Button>
 
@@ -7474,6 +7665,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                 onClick={() => console.log('Save button clicked')}
 
+                className={isDirty ? "bg-blue-600 hover:bg-blue-700" : ""}
+
               >
 
                 {isProcessingMilestones 
@@ -7484,7 +7677,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                     ? (isEditMode ? "Saving..." : "Creating...") 
 
-                    : (isEditMode ? "Save Changes" : "Create Project")
+                    : (isEditMode ? (isDirty ? "Save Changes" : "Save") : "Create Project")
 
                 }
 
@@ -7497,6 +7690,16 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         </Form>
 
       </DialogContent>
+
+      {/* Custom Unsaved Changes Modal */}
+      <UnsavedChangesModal
+        isOpen={showUnsavedChangesModal}
+        onClose={handleKeepEditing}
+        onSave={handleSaveAndClose}
+        onDiscard={handleDiscardAndClose}
+        isEditMode={isEditMode}
+        isSaving={createProjectMutation.isPending || isProcessingMilestones}
+      />
 
     </Dialog>
 

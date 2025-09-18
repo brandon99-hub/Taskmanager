@@ -90,7 +90,7 @@ export default function ExecutiveDashboard() {
 
 
 
-  // Fetch real data from all available endpoints with filter support
+  // Fetch real data from all available endpoints with filter support and better caching
   const { data: metricsData, isLoading: metricsLoading } = useQuery<any>({
     queryKey: ['/api/dashboard/metrics', selectedPeriod, selectedYear, selectedMonth],
     queryFn: async () => {
@@ -107,6 +107,8 @@ export default function ExecutiveDashboard() {
       return response.json();
     },
     enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+    refetchOnWindowFocus: false,
   });
 
   const { data: workloadData, isLoading: workloadLoading } = useQuery<any>({
@@ -119,6 +121,8 @@ export default function ExecutiveDashboard() {
       return response.json();
     },
     enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+    refetchOnWindowFocus: false,
   });
 
   const { data: invoiceData, isLoading: invoiceLoading } = useQuery<any>({

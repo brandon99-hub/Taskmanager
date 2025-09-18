@@ -1380,6 +1380,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Batch API endpoint to reduce rate limiting
+  app.post('/api/batch', isAuthenticated, async (req: any, res) => {
+    try {
+      const { queries } = req.body;
+      
+      if (!Array.isArray(queries) || queries.length === 0) {
+        return res.status(400).json({ error: 'Invalid batch request' });
+      }
+
+      // Limit batch size to prevent abuse
+      if (queries.length > 20) {
+        return res.status(400).json({ error: 'Batch size too large' });
+      }
+
+      const results = await Promise.allSettled(
+        queries.map(async (query: { url: string; key: string }) => {
+          try {
+            // Parse the URL to determine what data to fetch
+            const url = query.url;
+            
+            if (url.includes('/api/projects') && !url.includes('/api/projects/')) {
+              // Get all projects
+              const urlObj = new URL(url, 'http://localhost');
+              const segment = urlObj.searchParams.get('segment');
+              const status = urlObj.searchParams.get('status');
+              let projects = req.user.role === 'employee'
+                ? await storage.getProjectsForUser(req.user.id)
+                : await storage.getProjects();
+              
+              if (segment) projects = projects.filter((p: any) => p.segment === segment);
+              if (status) projects = projects.filter((p: any) => p.status === status);
+              
+              return { data: projects };
+            } else if (url.includes('/api/milestones')) {
+              // Get all milestones
+              const milestones = await storage.getMilestones();
+              return { data: milestones };
+            } else if (url.includes('/api/dashboard/metrics')) {
+              // Get dashboard metrics
+              const metrics = await storage.getDashboardMetrics();
+              return { data: metrics };
+            } else if (url.includes('/api/dashboard/workload')) {
+              // Get workload data - fallback to empty array if method doesn't exist
+              try {
+                const workload = await (storage as any).getWorkloadData();
+                return { data: workload || [] };
+              } catch {
+                return { data: [] };
+              }
+            } else if (url.includes('/api/dashboard/kanban-subtasks')) {
+              // Get kanban subtasks - fallback to empty object if method doesn't exist
+              try {
+                const subtasks = await (storage as any).getKanbanSubtasks();
+                return { data: subtasks || {} };
+              } catch {
+                return { data: {} };
+              }
+            } else if (url.includes('/api/tasks')) {
+              // Get all tasks/modules
+              const tasks = await storage.getTasks();
+              return { data: tasks };
+            } else {
+              return { error: 'Unsupported batch query' };
+            }
+          } catch (error) {
+            return { error: error instanceof Error ? error.message : 'Unknown error' };
+          }
+        })
+      );
+
+      const batchResults = results.map((result, index) => {
+        if (result.status === 'fulfilled') {
+          return result.value;
+        } else {
+          return { error: result.reason?.message || 'Request failed' };
+        }
+      });
+
+      res.json({ results: batchResults });
+    } catch (error) {
+      console.error('Batch request error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Comprehensive dashboard data endpoint (reduces multiple API calls)
+  app.get('/api/dashboard/complete', isAuthenticated, async (req: any, res) => {
+    try {
+      // Only allow admin and manager roles
+      if (!['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const [projects, milestones, metrics, workload, subtasks] = await Promise.allSettled([
+        storage.getProjects(),
+        storage.getMilestones(),
+        storage.getDashboardMetrics(),
+        (storage as any).getWorkloadData?.() || Promise.resolve([]),
+        (storage as any).getKanbanSubtasks?.() || Promise.resolve({})
+      ]);
+
+      const result = {
+        projects: projects.status === 'fulfilled' ? projects.value : [],
+        milestones: milestones.status === 'fulfilled' ? milestones.value : [],
+        metrics: metrics.status === 'fulfilled' ? metrics.value : {},
+        workload: workload.status === 'fulfilled' ? workload.value : [],
+        subtasks: subtasks.status === 'fulfilled' ? subtasks.value : {},
+        errors: [
+          projects.status === 'rejected' ? 'Failed to fetch projects' : null,
+          milestones.status === 'rejected' ? 'Failed to fetch milestones' : null,
+          metrics.status === 'rejected' ? 'Failed to fetch metrics' : null,
+          workload.status === 'rejected' ? 'Failed to fetch workload' : null,
+          subtasks.status === 'rejected' ? 'Failed to fetch subtasks' : null,
+        ].filter(Boolean)
+      };
+
+      res.json(result);
+    } catch (error) {
+      console.error('Dashboard complete data error:', error);
+      res.status(500).json({ error: 'Failed to fetch dashboard data' });
+    }
+  });
+
   // Get paginated projects
   app.get('/api/projects/paginated', isAuthenticated, async (req: any, res) => {
     try {

@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangle, Search, Filter, Grid3X3, Table, Clock } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { batchQuery } from "@/lib/queryBatcher";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { calculateWeightBasedProgress, calculateProjectProgress } from "@/lib/utils";
 
@@ -46,6 +47,7 @@ export default function Projects() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
+  // Use batched queries to reduce API calls
   const { data: projects = [], isLoading: projectsLoading, error } = useQuery<any[]>({
     queryKey: ['/api/projects'],
     enabled: !!isAuthenticated,
@@ -56,12 +58,7 @@ export default function Projects() {
     queryKey: ['/api/milestones'],
     queryFn: async () => {
       try {
-        const res = await fetch('/api/milestones', { 
-          credentials: 'include', 
-          cache: 'no-store' 
-        });
-        if (!res.ok) throw new Error('Failed to fetch milestones');
-        const data = await res.json();
+        const data = await batchQuery('/api/milestones');
         return Array.isArray(data) ? data : [];
       } catch (error) {
         console.error('Error fetching milestones:', error);
@@ -69,6 +66,8 @@ export default function Projects() {
       }
     },
     enabled: !!isAuthenticated,
+    staleTime: 10 * 60 * 1000, // 10 minutes cache
+    refetchOnWindowFocus: false,
   });
 
   // Fetch subtasks for all projects to calculate comprehensive progress
@@ -76,12 +75,7 @@ export default function Projects() {
     queryKey: ['/api/dashboard/kanban-subtasks'],
     queryFn: async () => {
       try {
-        const res = await fetch('/api/dashboard/kanban-subtasks', { 
-          credentials: 'include', 
-          cache: 'no-store' 
-        });
-        if (!res.ok) throw new Error('Failed to fetch subtasks');
-        const grouped = await res.json();
+        const grouped = await batchQuery('/api/dashboard/kanban-subtasks');
         
         // Ensure grouped is an object
         if (!grouped || typeof grouped !== 'object') {
@@ -103,6 +97,8 @@ export default function Projects() {
       }
     },
     enabled: !!isAuthenticated,
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+    refetchOnWindowFocus: false,
   });
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
