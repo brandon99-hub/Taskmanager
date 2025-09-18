@@ -2100,6 +2100,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete('/api/milestones/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      
+      await storage.deleteMilestone(req.params.id);
+      res.json({ message: 'Milestone deleted successfully' });
+    } catch (error) {
+      console.error("Error deleting milestone:", error);
+      res.status(500).json({ message: "Failed to delete milestone" });
+    }
+  });
+
   // Milestone billing status update (none | to_send | sent | paid)
   app.put('/api/milestones/:id/billing-status', isAuthenticated, async (req: any, res) => {
     try {

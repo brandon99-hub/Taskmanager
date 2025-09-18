@@ -985,9 +985,17 @@ export default function ProjectDetail() {
                 milestones={milestones}
                 projectSegment={project.segment || 'private'}
                 onEdit={handleEditMilestone}
-                onDelete={(milestoneId) => {
-                  // TODO: Implement milestone deletion
-                  console.log('Delete milestone:', milestoneId);
+                onDelete={async (milestoneId) => {
+                  if (confirm('Are you sure you want to delete this milestone?')) {
+                    try {
+                      await apiRequest('DELETE', `/api/milestones/${milestoneId}`);
+                      // Refresh the milestones list
+                      queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'milestones'] });
+                      toast({ title: 'Success', description: 'Milestone deleted' });
+                    } catch (error) {
+                      toast({ title: 'Error', description: 'Failed to delete milestone', variant: 'destructive' });
+                    }
+                  }
                 }}
               />
             )}

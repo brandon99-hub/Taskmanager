@@ -180,6 +180,12 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   const [phases, setPhases] = useState<any[]>([]);
 
+  // Track deleted subtasks to ensure they're removed from database
+  const [deletedSubtasks, setDeletedSubtasks] = useState<string[]>([]);
+  
+  // Track deleted milestones to ensure they're removed from database
+  const [deletedMilestones, setDeletedMilestones] = useState<string[]>([]);
+
   
   
   const [isProcessingMilestones, setIsProcessingMilestones] = useState(false);
@@ -2080,7 +2086,24 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         if (completeModules.length > 0 || allMilestones.length > 0 || hasNonPhase3Milestones) {
           try {
             console.log('Processing modules and milestones...');
+            
+            // Delete removed milestones and subtasks first
+            if (deletedMilestones.length > 0) {
+              console.log('Deleting removed milestones:', deletedMilestones);
+              await deleteMilestones(deletedMilestones);
+            }
+            
+            if (deletedSubtasks.length > 0) {
+              console.log('Deleting removed subtasks:', deletedSubtasks);
+              await deleteSubtasks(deletedSubtasks);
+            }
+            
             await processModulesAndMilestones(completeModules, project, isEditMode, allMilestones);
+            
+            // Clear deleted milestones and subtasks after successful save
+            setDeletedMilestones([]);
+            setDeletedSubtasks([]);
+            
             // Only show success and close modal after milestones are processed successfully
             setIsOpen(false);
             form.reset();
@@ -3552,6 +3575,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     const newPhases = [...phases];
     if ((newPhases[phaseIndex].phaseNumber !== 3) && Array.isArray((newPhases[phaseIndex] as any).milestones)) {
+      const milestone = (newPhases[phaseIndex] as any).milestones[moduleIndex];
+      
+      // Track deleted milestone if it has an ID
+      if (milestone && milestone.id) {
+        setDeletedMilestones(prev => [...prev, milestone.id as string]);
+      }
+      
       (newPhases[phaseIndex] as any).milestones = (newPhases[phaseIndex] as any).milestones.filter((_: any, i: number) => i !== moduleIndex);
     } else {
     newPhases[phaseIndex].modules = newPhases[phaseIndex].modules.filter((_: any, i: number) => i !== moduleIndex);
@@ -3663,6 +3693,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   const removeMilestoneFromPhase = (phaseIndex: number, milestoneIndex: number) => {
 
     const newPhases = [...phases];
+
+    const milestone = newPhases[phaseIndex].milestones[milestoneIndex];
+    
+    // Track deleted milestone if it has an ID
+    if (milestone && milestone.id) {
+      setDeletedMilestones(prev => [...prev, milestone.id as string]);
+    }
 
     newPhases[phaseIndex].milestones = newPhases[phaseIndex].milestones.filter((_: any, i: number) => i !== milestoneIndex);
 
@@ -3806,7 +3843,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
       assignedDevId: undefined,
 
-      assignedConsultantId: undefined
+      assignedConsultantId: undefined,
+
+      // Add a temporary ID to help with tracking
+      tempId: `temp-${Date.now()}-${Math.random()}`
 
     };
 
@@ -3831,6 +3871,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   const removeSubtaskFromModule = (phaseIndex: number, milestoneIndex: number, moduleIndex: number, subtaskIndex: number) => {
 
     const newPhases = [...phases];
+
+    const subtask = newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks[subtaskIndex];
+    
+    // Track deleted subtask if it has an ID
+    if (subtask && subtask.id) {
+      setDeletedSubtasks(prev => [...prev, subtask.id]);
+    }
 
     newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks = newPhases[phaseIndex].milestones[milestoneIndex].modules[moduleIndex].subtasks.filter((_: any, i: number) => i !== subtaskIndex);
 
@@ -4022,6 +4069,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   const removeMilestone = (index: number) => {
 
+    const milestone = milestones[index];
+    
+    // Track deleted milestone if it has an ID
+    if (milestone && milestone.id) {
+      setDeletedMilestones(prev => [...prev, milestone.id as string]);
+    }
+
     const newMilestones = milestones.filter((_, i) => i !== index);
 
     setMilestones(newMilestones);
@@ -4102,6 +4156,47 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
 
 
+  // Delete subtasks from database
+  const deleteSubtasks = async (subtaskIds: string[]) => {
+    for (const subtaskId of subtaskIds) {
+      try {
+        await apiRequest('DELETE', `/api/subtasks/${subtaskId}`);
+        console.log(`Deleted subtask ${subtaskId} from database`);
+      } catch (error) {
+        console.error(`Failed to delete subtask ${subtaskId}:`, error);
+      }
+    }
+  };
+
+  // Delete milestones from database
+  const deleteMilestones = async (milestoneIds: string[]) => {
+    for (const milestoneId of milestoneIds) {
+      try {
+        // First, get all subtasks associated with this milestone
+        const subtasksResponse = await apiRequest('GET', `/api/tasks/${milestoneId}/subtasks`);
+        if (subtasksResponse.ok) {
+          const subtasks = await subtasksResponse.json();
+          
+          // Delete all subtasks associated with this milestone
+          for (const subtask of subtasks) {
+            try {
+              await apiRequest('DELETE', `/api/subtasks/${subtask.id}`);
+              console.log(`Deleted subtask ${subtask.id} associated with milestone ${milestoneId}`);
+            } catch (subtaskError) {
+              console.error(`Failed to delete subtask ${subtask.id}:`, subtaskError);
+            }
+          }
+        }
+        
+        // Then delete the milestone itself
+        await apiRequest('DELETE', `/api/milestones/${milestoneId}`);
+        console.log(`Deleted milestone ${milestoneId} from database`);
+      } catch (error) {
+        console.error(`Failed to delete milestone ${milestoneId}:`, error);
+      }
+    }
+  };
+
   // Process subtasks for a module
 
   const processSubtasks = async (
@@ -4120,7 +4215,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         if (!subtask.name || subtask.name.trim() === '') {
 
-          console.error('Subtask name is required:', subtask);
+          console.error('Subtask name is required, skipping:', subtask);
 
           continue;
 
@@ -4163,6 +4258,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         // Debug logging for subtask payload
 
         console.log(`Processing subtask "${subtask.name}":`, {
+
+          hasId: !!subtask.id,
+
+          isNew: !subtask.id,
 
           assignedDevId: subtask.assignedDevId,
 
@@ -4534,7 +4633,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
       assignedDevId: undefined,
 
-      assignedConsultantId: undefined
+      assignedConsultantId: undefined,
+
+      // Add a temporary ID to help with tracking
+      tempId: `temp-${Date.now()}-${Math.random()}`
 
     };
 
@@ -4575,6 +4677,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     const phase = newPhases[phaseIndex];
 
     if (!phase || !phase.milestones || !phase.milestones[moduleIndex] || !phase.milestones[moduleIndex].subtasks) return;
+
+    const subtask = phase.milestones[moduleIndex].subtasks[subtaskIndex];
+    
+    // Track deleted subtask if it has an ID
+    if (subtask && subtask.id) {
+      setDeletedSubtasks(prev => [...prev, subtask.id]);
+    }
 
     phase.milestones[moduleIndex].subtasks = phase.milestones[moduleIndex].subtasks.filter((_: any, i: number) => i !== subtaskIndex);
 
