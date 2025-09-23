@@ -1227,12 +1227,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Current password is incorrect' });
       }
       
-      // Hash the new password before storing
-      const { hashPassword } = await import('./auth');
-      const hashedNewPassword = await hashPassword(newPassword);
-      
-      // Update password (properly hashed and clear temporary password)
-      await storage.updateUserPassword(req.user.id, hashedNewPassword, user.mustChangePassword || false);
+      // Update password (will be hashed in updateUserPassword)
+      await storage.updateUserPassword(req.user.id, newPassword, user.mustChangePassword || false);
       
       res.json({ message: 'Password changed successfully' });
     } catch (error) {

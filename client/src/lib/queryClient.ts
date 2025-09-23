@@ -1,4 +1,4 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { QueryClient, QueryFunction, useQuery } from "@tanstack/react-query";
 
 // CSRF token management
 let csrfToken: string | null = null;
@@ -115,28 +115,14 @@ export const queryClient = new QueryClient({
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: 5 * 60 * 1000, // 5 minutes instead of Infinity
-      retry: (failureCount, error) => {
+      retry: (failureCount: number, error: any) => {
         // Don't retry on 4xx errors
         if (error instanceof Error && error.message.includes('4')) {
           return false;
         }
         return failureCount < 3;
       },
-      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-      onError: (error) => {
-        console.error('Query error:', error);
-        
-        // Handle specific error types globally
-        if (error instanceof Error) {
-          if (error.message.includes('401')) {
-            // Redirect to login
-            window.location.href = '/login';
-          } else if (error.message.includes('403')) {
-            // Show access denied message
-            console.warn('Access denied for query');
-          }
-        }
-      }
+      retryDelay: (attemptIndex: number) => Math.min(1000 * 2 ** attemptIndex, 30000)
     },
     mutations: {
       retry: (failureCount, error) => {
@@ -159,17 +145,17 @@ export function useEnhancedQuery<T>(
   queryFn: () => Promise<T>,
   options?: any
 ) {
-  return queryClient.useQuery({
+  return useQuery({
     queryKey,
     queryFn,
-    retry: (failureCount, error) => {
+    retry: (failureCount: number, error: any) => {
       // Don't retry on 4xx errors
       if (error instanceof Error && error.message.includes('4')) {
         return false;
       }
       return failureCount < 3;
     },
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+    retryDelay: (attemptIndex: number) => Math.min(1000 * 2 ** attemptIndex, 30000),
     staleTime: 5 * 60 * 1000, // 5 minutes
     ...options
   });

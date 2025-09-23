@@ -2278,6 +2278,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
             setIsFormDirty(false);
             setHasComplexDataChanges(false);
             
+            // Invalidate gantt data to reflect milestone changes
+            queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
+            
             // Only show success and close modal after milestones are processed successfully
             setIsOpen(false);
             form.reset();
@@ -2303,6 +2306,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
           setInitialComplexData(null);
           setIsFormDirty(false);
           setHasComplexDataChanges(false);
+          
+          // Invalidate gantt data to reflect any project changes
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'gantt'] });
           
           setIsOpen(false);
           form.reset();

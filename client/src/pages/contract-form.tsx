@@ -184,26 +184,44 @@ export default function ContractForm() {
   };
 
   const handleArrayChange = (field: string, index: number, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: prev[field as keyof ContractFormData].map((item: any, i: number) => 
-        i === index ? value : item
-      )
-    }));
+    setFormData(prev => {
+      const fieldValue = prev[field as keyof ContractFormData];
+      if (Array.isArray(fieldValue)) {
+        return {
+          ...prev,
+          [field]: fieldValue.map((item: any, i: number) => 
+            i === index ? value : item
+          )
+        };
+      }
+      return prev;
+    });
   };
 
   const addArrayItem = (field: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: [...prev[field as keyof ContractFormData], '']
-    }));
+    setFormData(prev => {
+      const fieldValue = prev[field as keyof ContractFormData];
+      if (Array.isArray(fieldValue)) {
+        return {
+          ...prev,
+          [field]: [...fieldValue, '']
+        };
+      }
+      return prev;
+    });
   };
 
   const removeArrayItem = (field: string, index: number) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: prev[field as keyof ContractFormData].filter((_: any, i: number) => i !== index)
-    }));
+    setFormData(prev => {
+      const fieldValue = prev[field as keyof ContractFormData];
+      if (Array.isArray(fieldValue)) {
+        return {
+          ...prev,
+          [field]: fieldValue.filter((_: any, i: number) => i !== index)
+        };
+      }
+      return prev;
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -212,15 +230,14 @@ export default function ContractForm() {
     // Clean up empty strings from arrays
     const cleanedData = {
       ...formData,
-      deliverables: formData.deliverables.filter(item => item.trim() !== ''),
-      specialClauses: formData.specialClauses.filter(item => item.trim() !== ''),
+      specialClauses: formData.specialClauses.filter((item: string) => item.trim() !== ''),
       responsibilities: {
-        client: formData.responsibilities.client.filter(item => item.trim() !== ''),
-        contractor: formData.responsibilities.contractor.filter(item => item.trim() !== '')
+        client: formData.responsibilities.client.filter((item: string) => item.trim() !== ''),
+        contractor: formData.responsibilities.contractor.filter((item: string) => item.trim() !== '')
       },
       timeline: formData.timeline.map(phase => ({
         ...phase,
-        deliverables: phase.deliverables.filter(item => item.trim() !== '')
+        deliverables: phase.deliverables.filter((item: string) => item.trim() !== '')
       }))
     };
 

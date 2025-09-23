@@ -112,7 +112,8 @@ export async function batchQuery(url: string): Promise<any> {
 
 // Hook for batched queries
 export function useBatchedQuery<T>(queryKey: string[], url: string, options?: any) {
-  return queryClient.useQuery({
+  const { useQuery } = require('@tanstack/react-query');
+  return useQuery({
     queryKey,
     queryFn: () => batchQuery(url),
     staleTime: 5 * 60 * 1000, // 5 minutes

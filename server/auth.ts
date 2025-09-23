@@ -370,11 +370,8 @@ export async function setupAuth(app: Express) {
         return res.status(400).json({ message: "Invalid or expired reset token" });
       }
 
-      // Hash new password
-      const hashedPassword = await hashPassword(newPassword);
-      
-      // Update user password and clear reset token
-      await storage.updateUserPassword(user.id, hashedPassword);
+      // Update user password and clear reset token (password will be hashed in updateUserPassword)
+      await storage.updateUserPassword(user.id, newPassword);
       await storage.updateUserResetToken(user.id, null, null);
 
       // Invalidate all existing sessions for security
@@ -407,11 +404,8 @@ export async function setupAuth(app: Express) {
         return res.status(400).json({ message: "Current password is incorrect" });
       }
 
-      // Hash new password
-      const hashedPassword = await hashPassword(newPassword);
-      
-      // Update user password
-      await storage.updateUserPassword(userId, hashedPassword);
+      // Update user password (password will be hashed in updateUserPassword)
+      await storage.updateUserPassword(userId, newPassword);
 
       // Invalidate all existing sessions except current one
       await SessionManager.invalidateUserSessions(userId, req.sessionID);
