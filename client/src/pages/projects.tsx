@@ -206,11 +206,6 @@ export default function Projects() {
 
   // Calculate comprehensive project progress using both milestones and subtasks
   const getProjectWeightBasedProgress = (projectId: string) => {
-    // Debug logging to understand what we're getting
-    if (allSubtasks && !Array.isArray(allSubtasks)) {
-      console.warn('allSubtasks is not an array:', typeof allSubtasks, allSubtasks);
-    }
-    
     // Ensure we have arrays before calling filter
     const safeMilestones = Array.isArray(allMilestones) ? allMilestones : [];
     const safeSubtasks = Array.isArray(allSubtasks) ? allSubtasks : [];
@@ -225,6 +220,15 @@ export default function Projects() {
     
     return calculateProjectProgress(projectMilestones, projectSubtasks);
   };
+
+  // Memoized project progress calculations to prevent excessive re-computation
+  const projectProgressMap = useMemo(() => {
+    const progressMap: Record<string, number> = {};
+    projects.forEach(project => {
+      progressMap[project.id] = getProjectWeightBasedProgress(project.id);
+    });
+    return progressMap;
+  }, [projects, allMilestones, allSubtasks]);
 
   const handleDeactivateProject = async (e: React.MouseEvent, project: any) => {
     e.stopPropagation();
@@ -555,8 +559,8 @@ export default function Projects() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="flex items-center gap-2 cursor-help">
-                              <Progress value={getProjectWeightBasedProgress(project.id)} className="h-1.5 md:h-2 w-14 md:w-16" />
-                              <span className="text-[10px] md:text-sm text-gray-600">{getProjectWeightBasedProgress(project.id)}%</span>
+                              <Progress value={projectProgressMap[project.id] || 0} className="h-1.5 md:h-2 w-14 md:w-16" />
+                              <span className="text-[10px] md:text-sm text-gray-600">{projectProgressMap[project.id] || 0}%</span>
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>
@@ -749,14 +753,14 @@ export default function Projects() {
                           </Badge>
                         </div>
                         <span className="text-sm text-gray-500" data-testid={`text-project-progress-${project.id}`}>
-                          {getProjectWeightBasedProgress(project.id)}% Complete
+                          {projectProgressMap[project.id] || 0}% Complete
                         </span>
                       </div>
 
                       {/* Progress Bar */}
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Progress value={getProjectWeightBasedProgress(project.id)} className="h-2 cursor-help" data-testid={`progress-project-${project.id}`} />
+                          <Progress value={projectProgressMap[project.id] || 0} className="h-2 cursor-help" data-testid={`progress-project-${project.id}`} />
                         </TooltipTrigger>
                         <TooltipContent>
                           <p>Comprehensive progress combining milestones and subtasks (Critical=4, High=3, Medium=2, Low=1)</p>

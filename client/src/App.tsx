@@ -14,12 +14,15 @@ import Projects from "@/pages/projects";
 import ProjectDetail from "@/pages/project-detail";
 import Tasks from "@/pages/tasks";
 import Reports from "@/pages/reports";
+import ReportDetail from "@/pages/report-detail";
 import Contracts from "@/pages/contracts";
 import ContractDetail from "@/pages/contract-detail";
 import ContractForm from "@/pages/contract-form";
 import Team from "@/pages/team";
 import TeamDetail from "@/pages/team-detail";
 import ExecutiveDashboard from "@/pages/executive-dashboard";
+import MarketingLogin from "@/pages/marketing-login";
+import MarketingDashboard from "@/pages/marketing-dashboard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 function Router() {
@@ -35,6 +38,11 @@ function Router() {
 
   return (
     <Switch>
+      {/* Marketing Pipeline Routes - Independent System */}
+      <Route path="/marketing/login" component={MarketingLogin} />
+      <Route path="/marketing/dashboard" component={MarketingDashboard} />
+      <Route path="/marketing/admin" component={MarketingDashboard} />
+      
       {!isAuthenticated ? (
         <>
           <Route path="/" component={Login} />
@@ -52,6 +60,7 @@ function Router() {
           {isAuthenticated && isAdminRole() && (
             <>
               <Route path="/reports" component={Reports} />
+              <Route path="/reports/detail" component={ReportDetail} />
               <Route path="/contracts" component={Contracts} />
               <Route path="/contracts/new" component={ContractForm} />
               <Route path="/contracts/:id" component={ContractDetail} />

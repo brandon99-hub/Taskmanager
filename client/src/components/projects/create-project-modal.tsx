@@ -190,6 +190,12 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   // Hybrid change detection state
   const [isFormDirty, setIsFormDirty] = useState(false);
   const [hasComplexDataChanges, setHasComplexDataChanges] = useState(false);
+  const [isFormInitializing, setIsFormInitializing] = useState(false);
+  const [isFormReady, setIsFormReady] = useState(false);
+  const [initialFormValues, setInitialFormValues] = useState<CreateProjectData | null>(null);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [dataLoadingComplete, setDataLoadingComplete] = useState(false);
+  const [dataProcessingComplete, setDataProcessingComplete] = useState(false);
   const [initialComplexData, setInitialComplexData] = useState<{
     phases: any[];
     milestones: NewMilestoneRow[];
@@ -214,6 +220,31 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   const [collapsedModuleSubtasks, setCollapsedModuleSubtasks] = useState<Set<string>>(new Set());
 
   const isEditMode = !!project;
+
+  // State to track user subtask counts
+  const [userSubtaskCounts, setUserSubtaskCounts] = useState<Record<string, number>>({});
+
+  // Function to fetch user subtask counts
+  const fetchUserSubtaskCounts = useCallback(async (teamId: string) => {
+    if (!teamId || teamId === 'none') {
+      setUserSubtaskCounts({});
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/teams/${teamId}/workload`);
+      if (response.ok) {
+        const data = await response.json();
+        const counts: Record<string, number> = {};
+        data.members?.forEach((member: any) => {
+          counts[member.userId] = member.totalTasks || 0;
+        });
+        setUserSubtaskCounts(counts);
+      }
+    } catch (error) {
+      console.error('Failed to fetch user subtask counts:', error);
+    }
+  }, []);
 
   
   
@@ -437,13 +468,50 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
   });
 
   // Track form dirty state changes
+  // Track form dirty state - only mark as dirty if not in initialization phase and form is ready
   useEffect(() => {
+    // Don't mark as dirty during form initialization or if form isn't ready
+    if (isFormInitializing || !isFormReady) {
+      return; // Skip dirty detection during form initialization
+    }
+    
+    // Only mark as dirty if there are actual changes from initial values
+    if (initialFormValues) {
+      const currentValues = form.getValues();
+      const hasActualChanges = Object.keys(initialFormValues).some(key => {
+        const initialValue = initialFormValues[key as keyof CreateProjectData];
+        const currentValue = currentValues[key as keyof CreateProjectData];
+        
+        // Handle different data types
+        if (initialValue === null || initialValue === undefined) {
+          return currentValue !== null && currentValue !== undefined && currentValue !== '';
+        }
+        if (currentValue === null || currentValue === undefined) {
+          return initialValue !== null && initialValue !== undefined && initialValue !== '';
+        }
+        
+        return initialValue !== currentValue;
+      });
+      
+      // Debug: Only log when there are actual changes
+      if (hasActualChanges) {
+        console.log('Form has actual changes:', { 
+          hasActualChanges, 
+          formIsDirty: form.formState.isDirty
+        });
+      }
+      
+      setIsFormDirty(hasActualChanges);
+    } else {
+      // Fallback to form's built-in dirty detection if no initial values
     setIsFormDirty(form.formState.isDirty);
-  }, [form.formState.isDirty]);
+    }
+  }, [form.formState.isDirty, isFormInitializing, isFormReady, initialFormValues]);
 
   // Track complex data changes by comparing with initial state
   useEffect(() => {
-    if (!initialComplexData) return;
+    // Only track changes if we have initial data, form is ready, and data processing is complete
+    if (!initialComplexData || !isFormReady || !dataProcessingComplete) return;
     
     const currentComplexData = {
       phases,
@@ -455,10 +523,18 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     
     const hasChanges = JSON.stringify(currentComplexData) !== JSON.stringify(initialComplexData);
     setHasComplexDataChanges(hasChanges);
-  }, [phases, milestones, modules, deletedSubtasks, deletedMilestones, initialComplexData]);
+  }, [phases, milestones, modules, deletedSubtasks, deletedMilestones, initialComplexData, isFormReady, dataProcessingComplete]);
 
   // Get the current segment value from the form
   const currentSegment = form.watch('segment');
+  const currentTeamId = form.watch('teamId');
+
+  // Fetch user subtask counts when team changes
+  useEffect(() => {
+    if (currentTeamId) {
+      fetchUserSubtaskCounts(currentTeamId);
+    }
+  }, [currentTeamId, fetchUserSubtaskCounts]);
 
   const handleOpenChange = useCallback((open: boolean) => {
     // If trying to close the modal, check for unsaved changes first
@@ -490,7 +566,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     
     // Reset all data to initial state
     if (isEditMode && project) {
-      form.reset({
+      const formData = {
         client: project.client || "",
         contactPerson: project.contactPerson || "",
         contactPhone: project.contactPhone || "",
@@ -501,7 +577,18 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         teamId: project.teamId || "none",
         budget: project.budget ? String(project.budget) : "",
         status: project.status || "planning",
-      });
+      };
+      
+      // Reset form and form ready state
+      setIsFormReady(false);
+      form.reset(formData);
+      setInitialFormValues({ ...formData });
+      
+      // Re-enable form ready state after reset
+      setTimeout(() => {
+        setIsFormReady(true);
+        setIsFormInitializing(false);
+      }, 100);
 
       if (initialComplexData) {
         setPhases(JSON.parse(JSON.stringify(initialComplexData.phases)));
@@ -512,7 +599,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       }
     } else {
       const currentSegment = form.getValues('segment') || 'private';
-      form.reset({
+      const formData = {
         client: "",
         contactPerson: "",
         contactPhone: "",
@@ -522,8 +609,18 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         segment: currentSegment,
         teamId: "none",
         budget: "",
-        status: "planning",
-      });
+        status: "planning" as const,
+      };
+      
+      setIsFormReady(false);
+      form.reset(formData);
+      setInitialFormValues({ ...formData });
+      
+      setTimeout(() => {
+        setIsFormReady(true);
+        setIsFormInitializing(false);
+      }, 100);
+      
       setModules([]);
       setPhases([]);
       setMilestones([]);
@@ -535,6 +632,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     setInitialComplexData(null);
     setIsFormDirty(false);
     setHasComplexDataChanges(false);
+    setIsDataLoaded(false);
+    setDataLoadingComplete(false);
+    setDataProcessingComplete(false);
+    setIsFormInitializing(true);
 
     // Execute the pending close action
     if (pendingCloseAction) {
@@ -702,37 +803,56 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
       console.log('Setting form data:', formData);
 
+      // Set initial form values for comparison
+      setInitialFormValues({ ...formData });
+
+      // Start initialization process
+      setIsFormInitializing(true);
+      setIsFormReady(false);
+      
+      // Reset form with data
       form.reset(formData);
-
       
-      
-      // Check form validity after reset
-
+      // Wait for form to fully settle before enabling dirty detection
       setTimeout(() => {
+        setIsFormInitializing(false);
+        // Additional delay to ensure form state is stable
+        setTimeout(() => {
+          setIsFormReady(true);
+          console.log('Form ready for dirty detection');
+        }, 200);
+      }, 300);
 
+      // Check form validity after reset
+      setTimeout(() => {
         console.log('Form validity after reset:', {
-
           isValid: form.formState.isValid,
-
           errors: form.formState.errors,
-
-          values: form.getValues()
-
+          values: form.getValues(),
+          isDirty: form.formState.isDirty,
+          isFormReady: isFormReady,
+          isFormInitializing: isFormInitializing
         });
-
-      }, 100);
+      }, 500);
 
     } else {
 
       setIsOpen(false);
+      setIsFormReady(false);
+      setIsDataLoaded(false);
+      setDataLoadingComplete(false);
+      setDataProcessingComplete(false);
+      setInitialFormValues(null);
 
     }
 
   }, [project, form]);
 
-  // Initialize complex data tracking after data is loaded
+
+  // Initialize complex data tracking after data processing is complete
   useEffect(() => {
-    if (project && phases.length > 0 && !initialComplexData) {
+    if (project && dataProcessingComplete && !initialComplexData && !isDataLoaded) {
+      console.log('Setting initial complex data for change detection');
       // Set initial complex data state for change detection
       setInitialComplexData({
         phases: JSON.parse(JSON.stringify(phases)),
@@ -741,8 +861,9 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         deletedSubtasks: [...deletedSubtasks],
         deletedMilestones: [...deletedMilestones]
       });
+      setIsDataLoaded(true);
     }
-  }, [project, phases, milestones, modules, deletedSubtasks, deletedMilestones, initialComplexData]);
+  }, [project, phases, milestones, modules, deletedSubtasks, deletedMilestones, initialComplexData, isDataLoaded, dataProcessingComplete]);
 
   // Add navigation guard for unsaved changes
   useEffect(() => {
@@ -960,13 +1081,42 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   }, [modulesLoading, modulesError, existingModules, milestonesLoading, milestonesError, existingMilestones, project?.id]);
 
+  // Track when all data loading is complete
+  useEffect(() => {
+    if (isEditMode && project) {
+      // Check if all data queries are complete and we have the data
+      const allQueriesComplete = !modulesLoading && !milestonesLoading;
+      const hasData = existingModules.length > 0 || existingMilestones.length > 0;
+      
+      if (allQueriesComplete && !dataLoadingComplete) {
+        console.log('All data queries complete, setting dataLoadingComplete to true');
+        setDataLoadingComplete(true);
+      }
+    } else if (!isEditMode) {
+      setDataLoadingComplete(true);
+    }
+  }, [isEditMode, project, modulesLoading, milestonesLoading, existingModules.length, existingMilestones.length, dataLoadingComplete]);
 
+  // Track when data processing is complete
+  useEffect(() => {
+    if (isEditMode && dataLoadingComplete && !dataProcessingComplete) {
+      // Set a timeout to allow all data processing useEffects to complete
+      const timer = setTimeout(() => {
+        console.log('Data processing complete, setting dataProcessingComplete to true');
+        setDataProcessingComplete(true);
+      }, 100); // Small delay to ensure all useEffects have run
+      
+      return () => clearTimeout(timer);
+    } else if (!isEditMode && !dataProcessingComplete) {
+      setDataProcessingComplete(true);
+    }
+  }, [isEditMode, dataLoadingComplete, dataProcessingComplete]);
 
   // Load existing modules into modules state when editing
 
   useEffect(() => {
 
-    if (isEditMode && existingModules.length > 0) {
+    if (isEditMode && existingModules.length > 0 && dataLoadingComplete && !isDataLoaded) {
 
       console.log('Loading existing modules into state:', existingModules);
 
@@ -1010,7 +1160,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     }
 
-  }, [isEditMode, existingModules, project]);
+  }, [isEditMode, existingModules, project, isDataLoaded, dataLoadingComplete]);
 
 
 
@@ -1018,7 +1168,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   useEffect(() => {
 
-    if (isEditMode && existingMilestones.length > 0) {
+    if (isEditMode && existingMilestones.length > 0 && dataLoadingComplete && !isDataLoaded) {
 
       console.log('Loading existing milestones into state:', existingMilestones);
 
@@ -1058,7 +1208,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     }
 
-  }, [isEditMode, existingMilestones, project]);
+  }, [isEditMode, existingMilestones, project, isDataLoaded, dataLoadingComplete]);
 
 
 
@@ -1066,7 +1216,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   useEffect(() => {
 
-    if (isEditMode && existingModules.length > 0) {
+    if (isEditMode && existingModules.length > 0 && dataLoadingComplete && !isDataLoaded) {
 
       // Start with existing phases and merge modules into them
 
@@ -1412,7 +1562,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     }
 
-  }, [isEditMode, existingModules, existingMilestones, project]);
+  }, [isEditMode, existingModules, existingMilestones, project, isDataLoaded, dataLoadingComplete]);
 
 
 
@@ -6593,7 +6743,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                                                           : member.email || 'Unknown User'
 
-                                                                        } ({member.role || 'No Role'})
+                                                                        } ({member.role || 'No Role'}) - {userSubtaskCounts[member.id] || 0} tasks
 
                                                                         </SelectItem>
 
@@ -6651,7 +6801,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                                                           : member.email || 'Unknown User'
 
-                                                                        } ({member.role || 'No Role'})
+                                                                        } ({member.role || 'No Role'}) - {userSubtaskCounts[member.id] || 0} tasks
 
                                                                         </SelectItem>
 
@@ -7443,7 +7593,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                                           : member.email || 'Unknown User'
 
-                                                        } ({member.role || 'No Role'})
+                                                        } ({member.role || 'No Role'}) - {userSubtaskCounts[member.id] || 0} tasks
 
                                                         </SelectItem>
 
@@ -7507,7 +7657,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                                                           : member.email || 'Unknown User'
 
-                                                        } ({member.role || 'No Role'})
+                                                        } ({member.role || 'No Role'}) - {userSubtaskCounts[member.id] || 0} tasks
 
                                                         </SelectItem>
 

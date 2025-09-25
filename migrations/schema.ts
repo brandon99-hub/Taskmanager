@@ -537,3 +537,127 @@ export const subtaskDependencies = pgTable("subtask_dependencies", {
 			name: "subtask_dependencies_depends_on_subtask_id_subtasks_id_fk"
 		}).onDelete("cascade"),
 ]);
+
+// Marketing Pipeline System Tables
+export const marketingUserRole = pgEnum("marketing_user_role", ['admin', 'marketer'])
+export const salesStage = pgEnum("sales_stage", ['lead', 'qualified', 'proposal', 'negotiation', 'closed_won', 'closed_lost'])
+export const quarter = pgEnum("quarter", ['Q1', 'Q2', 'Q3', 'Q4'])
+
+export const marketingUsers = pgTable("marketing_users", {
+	id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+	email: varchar().notNull(),
+	password: varchar().notNull(),
+	firstName: varchar("first_name").notNull(),
+	lastName: varchar("last_name").notNull(),
+	phoneNumber: varchar("phone_number"),
+	role: marketingUserRole().default('marketer').notNull(),
+	isActive: boolean("is_active").default(true).notNull(),
+	lastLoginAt: timestamp("last_login_at", { mode: 'string' }),
+	resetToken: text("reset_token"),
+	resetTokenExpiry: timestamp("reset_token_expiry", { mode: 'string' }),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	unique("marketing_users_email_unique").on(table.email),
+]);
+
+export const marketingLeads = pgTable("marketing_leads", {
+	id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+	date: timestamp({ mode: 'string' }).notNull(),
+	client: varchar({ length: 200 }).notNull(),
+	contactDetails: text("contact_details").notNull(),
+	remarks: text(),
+	budget: numeric({ precision: 12, scale: 2 }),
+	salesStage: salesStage().default('lead').notNull(),
+	facilitationCost: numeric("facilitation_cost", { precision: 12, scale: 2 }),
+	marketerId: varchar("marketer_id").notNull(),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.marketerId],
+		foreignColumns: [marketingUsers.id],
+		name: "marketing_leads_marketer_id_marketing_users_id_fk"
+	}),
+]);
+
+export const marketingSalesWon = pgTable("marketing_sales_won", {
+	id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+	organisationName: varchar("organisation_name", { length: 200 }).notNull(),
+	sector: varchar({ length: 100 }).notNull(),
+	product: varchar({ length: 200 }).notNull(),
+	contractAmount: numeric("contract_amount", { precision: 12, scale: 2 }).notNull(),
+	expectedQuarter: quarter("expected_quarter").notNull(),
+	comments: text(),
+	marketerId: varchar("marketer_id").notNull(),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.marketerId],
+		foreignColumns: [marketingUsers.id],
+		name: "marketing_sales_won_marketer_id_marketing_users_id_fk"
+	}),
+]);
+
+export const marketingExpectedOrders = pgTable("marketing_expected_orders", {
+	id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+	organisationName: varchar("organisation_name", { length: 200 }).notNull(),
+	sector: varchar({ length: 100 }).notNull(),
+	product: varchar({ length: 200 }).notNull(),
+	revenue: numeric({ precision: 12, scale: 2 }).notNull(),
+	expectedQuarter: quarter("expected_quarter").notNull(),
+	comments: text(),
+	marketerId: varchar("marketer_id").notNull(),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.marketerId],
+		foreignColumns: [marketingUsers.id],
+		name: "marketing_expected_orders_marketer_id_marketing_users_id_fk"
+	}),
+]);
+
+export const marketingProspects = pgTable("marketing_prospects", {
+	id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+	organisationName: varchar("organisation_name", { length: 200 }).notNull(),
+	sector: varchar({ length: 100 }).notNull(),
+	product: varchar({ length: 200 }).notNull(),
+	revenue: numeric({ precision: 12, scale: 2 }).notNull(),
+	expectedQuarter: quarter("expected_quarter").notNull(),
+	comments: text(),
+	marketerId: varchar("marketer_id").notNull(),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.marketerId],
+		foreignColumns: [marketingUsers.id],
+		name: "marketing_prospects_marketer_id_marketing_users_id_fk"
+	}),
+]);
+
+export const marketingAnnualSummary = pgTable("marketing_annual_summary", {
+	id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+	year: integer().notNull(),
+	salesExecutive: varchar("sales_executive", { length: 200 }).notNull(),
+	won: numeric({ precision: 12, scale: 2 }).default('0').notNull(),
+	target: numeric({ precision: 12, scale: 2 }).notNull(),
+	targetAchieved: numeric("target_achieved", { precision: 5, scale: 2 }).default('0').notNull(),
+	expectedOrders: numeric("expected_orders", { precision: 12, scale: 2 }).default('0').notNull(),
+	statusQuo: numeric("status_quo", { precision: 12, scale: 2 }).default('0').notNull(),
+	deviationFromTarget: numeric("deviation_from_target", { precision: 12, scale: 2 }).default('0').notNull(),
+	sumSalesExpected: numeric("sum_sales_expected", { precision: 12, scale: 2 }).default('0').notNull(),
+	expectedTarget: numeric("expected_target", { precision: 12, scale: 2 }).default('0').notNull(),
+	marketerId: varchar("marketer_id").notNull(),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.marketerId],
+		foreignColumns: [marketingUsers.id],
+		name: "marketing_annual_summary_marketer_id_marketing_users_id_fk"
+	}),
+	index("unique_year_marketer").using("btree", table.year.asc().nullsLast().op("int4_ops"), table.marketerId.asc().nullsLast().op("text_ops")),
+]);

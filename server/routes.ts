@@ -19,6 +19,7 @@ import { calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress } fro
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { users } from "../shared/schema";
+import { registerMarketingRoutes } from "./routes/marketing";
 
 // Utility function for date validation and conversion
 function validateAndConvertDates(data: any, dateFields: string[]): { cleanedData: any; errors: string[] } {
@@ -93,6 +94,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   // Auth routes are now handled in setupAuth
+
+  // Marketing Pipeline Routes
+  registerMarketingRoutes(app);
 
   // Users listing (for selecting team members)
   app.get('/api/users', isAuthenticated, async (req: any, res) => {
@@ -769,28 +773,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: 'Invalid report type' });
       }
 
-      // Generate Excel buffer (use template for gantt if available)
-      const isGantt = reportType === 'gantt';
-      const templatePath = isGantt ? path.join(__dirname, 'templates', 'gantt-chart(2).xlsx') : undefined;
-      const excelBuffer = generateExcelBuffer({
-        filename,
-        data: exportData,
-        reportType,
-        templatePath,
-        templateSheetName: undefined
-      });
+      // Handle different formats
+      if (format === 'json') {
+        // Return JSON data for detailed view
+        console.log('Returning JSON data for report type:', reportType, 'Data length:', Array.isArray(exportData) ? exportData.length : 'Not an array');
+        
+        // Ensure we always return an array for the frontend
+        let jsonData;
+        if (Array.isArray(exportData)) {
+          jsonData = exportData;
+        } else if (typeof exportData === 'object' && exportData !== null) {
+          // Flatten object data into array
+          jsonData = [];
+          Object.values(exportData).forEach((section: any) => {
+            if (Array.isArray(section)) {
+              jsonData.push(...section);
+            }
+          });
+        } else {
+          jsonData = [];
+        }
+        
+        res.json(jsonData);
+      } else {
+        // Generate Excel buffer (use template for gantt if available)
+        const isGantt = reportType === 'gantt';
+        const templatePath = isGantt ? path.join(__dirname, 'templates', 'gantt-chart(2).xlsx') : undefined;
+        const excelBuffer = generateExcelBuffer({
+          filename,
+          data: exportData,
+          reportType,
+          templatePath,
+          templateSheetName: undefined
+        });
 
-      // Set response headers for file download
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', excelBuffer.length);
+        // Set response headers for file download
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Length', excelBuffer.length);
 
-      // Send the Excel file
-      res.send(excelBuffer);
+        // Send the Excel file
+        res.send(excelBuffer);
+      }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Export error:', error);
-      res.status(500).json({ message: 'Failed to generate export' });
+      console.error('Error details:', {
+        message: error?.message || 'Unknown error',
+        stack: error?.stack,
+        reportType: req.body?.reportType || 'unknown',
+        format: req.body?.format || 'unknown'
+      });
+      res.status(500).json({ 
+        message: 'Failed to generate export',
+        error: error?.message || 'Unknown error',
+        reportType: req.body?.reportType || 'unknown',
+        format: req.body?.format || 'unknown'
+      });
     }
   });
 
@@ -4059,129 +4098,139 @@ async function getCompleteExportData(storage: any, filters: any) {
 }
 
 async function getGanttExportData(storage: any, filters: any) {
-  // Filter projects by projectId if provided in filters
-  let projects;
-  if (filters.projectId) {
-    const project = await storage.getProject(filters.projectId);
-    projects = project ? [project] : [];
-  } else {
-    projects = await storage.getProjects();
-  }
-  
-  const ganttData: any[] = [];
-  
-  for (const project of projects) {
-    // Get project modules with subtasks
-    const modules = await storage.getModulesByProject(project.id);
-    
-    // Add project header row (this will be the main project)
-    ganttData.push({
-      'Type': 'PROJECT',
-      'Name': project.name,
-      'Start Date': project.startDate ? new Date(project.startDate) : 'N/A',
-      'End Date': project.endDate ? new Date(project.endDate) : 'N/A',
-      'Duration (Days)': project.startDate && project.endDate ? 
-        Math.ceil((new Date(project.endDate).getTime() - new Date(project.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
-      'Status': project.status,
-      'Progress (%)': project.progress || 0,
-      'Manager': project.manager?.firstName || project.manager?.email || 'N/A',
-      'Client': project.client || 'N/A',
-      'Budget (KSh)': parseFloat(project.budget || 0).toLocaleString()
-    });
-    
-    // Process modules (these are like "Finance Module" in your screenshot)
-    for (const module of modules) {
-      // Add module header row
-      ganttData.push({
-        'Type': 'MODULE',
-        'Name': module.name,
-        'Start Date': module.startDate ? new Date(module.startDate) : 'N/A',
-        'End Date': module.dueDate ? new Date(module.dueDate) : 'N/A',
-        'Duration (Days)': module.startDate && module.dueDate ? 
-          Math.ceil((new Date(module.dueDate).getTime() - new Date(module.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
-        'Status': module.status,
-        'Progress (%)': module.progressPercent || 0,
-        'Manager': module.assignedUser?.firstName || module.assignedUser?.email || 'Unassigned',
-        'Client': '',
-        'Budget (KSh)': module.feeAmount ? parseFloat(module.feeAmount).toLocaleString() : '0'
-      });
-      
-      // Add subtasks for this module (these are like "Chart of Accounts & General Ledger Integrations" in your screenshot)
-      if (module.subtasks && module.subtasks.length > 0) {
-        for (const subtask of module.subtasks) {
-          // Get developer and consultant information
-          let developerName = 'N/A';
-          let consultantName = 'N/A';
-          
-          if (subtask.assignedDevId) {
-            try {
-              const developer = await storage.getUser(subtask.assignedDevId);
-              if (developer) {
-                developerName = developer.firstName || developer.email || 'N/A';
-              }
-            } catch (error) {
-              console.error(`Error fetching developer for subtask ${subtask.id}:`, error);
-            }
-          }
-          
-          if (subtask.assignedConsultantId) {
-            try {
-              const consultant = await storage.getUser(subtask.assignedConsultantId);
-              if (consultant) {
-                consultantName = consultant.firstName || consultant.email || 'N/A';
-              }
-            } catch (error) {
-              console.error(`Error fetching consultant for subtask ${subtask.id}:`, error);
-            }
-          }
-          
-          ganttData.push({
-            'Type': 'SUBTASK',
-            'Name': subtask.name,
-            'Start Date': subtask.startDate ? new Date(subtask.startDate) : 'N/A',
-            'End Date': subtask.dueDate ? new Date(subtask.dueDate) : 'N/A',
-            'Duration (Days)': subtask.startDate && subtask.dueDate ? 
-              Math.ceil((new Date(subtask.dueDate).getTime() - new Date(subtask.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
-            'Status': subtask.status,
-            'Progress (%)': subtask.progressPercent || 0,
-            'Manager': subtask.assignedUser?.firstName || subtask.assignedUser?.email || 'Unassigned',
-            'Developer': developerName,
-            'Consultant': consultantName,
-            'Client': '',
-            'Budget (KSh)': subtask.feeAmount ? parseFloat(subtask.feeAmount).toLocaleString() : '0'
-          });
-        }
-      }
-      
-      // Add spacing row between modules
-      ganttData.push({
-        'Type': '',
-        'Name': '',
-        'Start Date': '',
-        'End Date': '',
-        'Duration (Days)': '',
-        'Status': '',
-        'Progress (%)': '',
-        'Manager': '',
-        'Client': '',
-        'Budget (KSh)': ''
-      });
+  try {
+    // Filter projects by projectId if provided in filters
+    let projects;
+    if (filters.projectId) {
+      const project = await storage.getProject(filters.projectId);
+      projects = project ? [project] : [];
+    } else {
+      projects = await storage.getProjects();
     }
     
-    // Add spacing row between projects
-    ganttData.push({
-      'Type': '',
-      'Name': '',
-      'Start Date': '',
-      'End Date': '',
-      'Duration (Days)': '',
-      'Status': '',
-      'Progress (%)': '',
-      'Manager': '',
-      'Client': '',
-      'Budget (KSh)': ''
-    });
+    const ganttData: any[] = [];
+    
+    for (const project of projects) {
+      try {
+        // Get project modules with subtasks
+        const modules = await storage.getModulesByProject(project.id);
+    
+        // Add project header row (this will be the main project)
+        ganttData.push({
+          'Type': 'PROJECT',
+          'Name': project.name,
+          'Start Date': project.startDate ? new Date(project.startDate) : 'N/A',
+          'End Date': project.endDate ? new Date(project.endDate) : 'N/A',
+          'Duration (Days)': project.startDate && project.endDate ? 
+            Math.ceil((new Date(project.endDate).getTime() - new Date(project.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+          'Status': project.status,
+          'Progress (%)': project.progress || 0,
+          'Manager': project.manager?.firstName || project.manager?.email || 'N/A',
+          'Client': project.client || 'N/A',
+          'Budget (KSh)': parseFloat(project.budget || 0).toLocaleString()
+        });
+        
+        // Process modules (these are like "Finance Module" in your screenshot)
+        for (const module of modules) {
+          // Add module header row
+          ganttData.push({
+            'Type': 'MODULE',
+            'Name': module.name,
+            'Start Date': module.startDate ? new Date(module.startDate) : 'N/A',
+            'End Date': module.dueDate ? new Date(module.dueDate) : 'N/A',
+            'Duration (Days)': module.startDate && module.dueDate ? 
+              Math.ceil((new Date(module.dueDate).getTime() - new Date(module.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+            'Status': module.status,
+            'Progress (%)': module.progressPercent || 0,
+            'Manager': module.assignedUser?.firstName || module.assignedUser?.email || 'Unassigned',
+            'Client': '',
+            'Budget (KSh)': module.feeAmount ? parseFloat(module.feeAmount).toLocaleString() : '0'
+          });
+          
+          // Add subtasks for this module (these are like "Chart of Accounts & General Ledger Integrations" in your screenshot)
+          if (module.subtasks && module.subtasks.length > 0) {
+            for (const subtask of module.subtasks) {
+              // Get developer and consultant information
+              let developerName = 'N/A';
+              let consultantName = 'N/A';
+              
+              if (subtask.assignedDevId) {
+                try {
+                  const developer = await storage.getUser(subtask.assignedDevId);
+                  if (developer) {
+                    developerName = developer.firstName || developer.email || 'N/A';
+                  }
+                } catch (error) {
+                  console.error(`Error fetching developer for subtask ${subtask.id}:`, error);
+                }
+              }
+              
+              if (subtask.assignedConsultantId) {
+                try {
+                  const consultant = await storage.getUser(subtask.assignedConsultantId);
+                  if (consultant) {
+                    consultantName = consultant.firstName || consultant.email || 'N/A';
+                  }
+                } catch (error) {
+                  console.error(`Error fetching consultant for subtask ${subtask.id}:`, error);
+                }
+              }
+              
+              ganttData.push({
+                'Type': 'SUBTASK',
+                'Name': subtask.name,
+                'Start Date': subtask.startDate ? new Date(subtask.startDate) : 'N/A',
+                'End Date': subtask.dueDate ? new Date(subtask.dueDate) : 'N/A',
+                'Duration (Days)': subtask.startDate && subtask.dueDate ? 
+                  Math.ceil((new Date(subtask.dueDate).getTime() - new Date(subtask.startDate).getTime()) / (1000 * 60 * 60 * 24)) : 'N/A',
+                'Status': subtask.status,
+                'Progress (%)': subtask.progressPercent || 0,
+                'Manager': subtask.assignedUser?.firstName || subtask.assignedUser?.email || 'Unassigned',
+                'Developer': developerName,
+                'Consultant': consultantName,
+                'Client': '',
+                'Budget (KSh)': subtask.feeAmount ? parseFloat(subtask.feeAmount).toLocaleString() : '0'
+              });
+            }
+          }
+          
+          // Add spacing row between modules
+          ganttData.push({
+            'Type': '',
+            'Name': '',
+            'Start Date': '',
+            'End Date': '',
+            'Duration (Days)': '',
+            'Status': '',
+            'Progress (%)': '',
+            'Manager': '',
+            'Client': '',
+            'Budget (KSh)': ''
+          });
+        }
+        
+        // Add spacing row between projects
+        ganttData.push({
+          'Type': '',
+          'Name': '',
+          'Start Date': '',
+          'End Date': '',
+          'Duration (Days)': '',
+          'Status': '',
+          'Progress (%)': '',
+          'Manager': '',
+          'Client': '',
+          'Budget (KSh)': ''
+        });
+      } catch (error) {
+        console.error(`Error processing project ${project.id}:`, error);
+        // Continue with next project
+      }
+    }
+    
+    return ganttData;
+  } catch (error) {
+    console.error('Error in getGanttExportData:', error);
+    return [];
   }
-  
-  return ganttData;
 }

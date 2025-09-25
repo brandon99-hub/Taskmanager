@@ -906,3 +906,150 @@ export const invoiceCollectionsRelations = relations(invoiceCollections, ({ one 
     relationName: "collectedBy",
   }),
 }));
+
+// Marketing Pipeline System Tables
+export const marketingUserRoleEnum = pgEnum("marketing_user_role", ['admin', 'marketer']);
+export const salesStageEnum = pgEnum("sales_stage", ['lead', 'qualified', 'proposal', 'negotiation', 'closed_won', 'closed_lost']);
+export const quarterEnum = pgEnum("quarter", ['Q1', 'Q2', 'Q3', 'Q4']);
+
+export const marketingUsers = pgTable("marketing_users", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  email: varchar().notNull(),
+  password: varchar().notNull(),
+  firstName: varchar("first_name").notNull(),
+  lastName: varchar("last_name").notNull(),
+  phoneNumber: varchar("phone_number"),
+  role: marketingUserRoleEnum().default('marketer').notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  lastLoginAt: timestamp("last_login_at", { mode: 'string' }),
+  resetToken: text("reset_token"),
+  resetTokenExpiry: timestamp("reset_token_expiry", { mode: 'string' }),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+  index("marketing_users_email_unique").on(table.email),
+]);
+
+export const marketingLeads = pgTable("marketing_leads", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  date: timestamp({ mode: 'string' }).notNull(),
+  client: varchar({ length: 200 }).notNull(),
+  contactDetails: text("contact_details").notNull(),
+  remarks: text(),
+  budget: decimal({ precision: 12, scale: 2 }),
+  salesStage: salesStageEnum().default('lead').notNull(),
+  facilitationCost: decimal("facilitation_cost", { precision: 12, scale: 2 }),
+  marketerId: varchar("marketer_id").notNull(),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+});
+
+export const marketingSalesWon = pgTable("marketing_sales_won", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  organisationName: varchar("organisation_name", { length: 200 }).notNull(),
+  sector: varchar({ length: 100 }).notNull(),
+  product: varchar({ length: 200 }).notNull(),
+  contractAmount: decimal("contract_amount", { precision: 12, scale: 2 }).notNull(),
+  expectedQuarter: quarterEnum("expected_quarter").notNull(),
+  comments: text(),
+  marketerId: varchar("marketer_id").notNull(),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+});
+
+export const marketingExpectedOrders = pgTable("marketing_expected_orders", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  organisationName: varchar("organisation_name", { length: 200 }).notNull(),
+  sector: varchar({ length: 100 }).notNull(),
+  product: varchar({ length: 200 }).notNull(),
+  revenue: decimal({ precision: 12, scale: 2 }).notNull(),
+  expectedQuarter: quarterEnum("expected_quarter").notNull(),
+  comments: text(),
+  marketerId: varchar("marketer_id").notNull(),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+});
+
+export const marketingProspects = pgTable("marketing_prospects", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  organisationName: varchar("organisation_name", { length: 200 }).notNull(),
+  sector: varchar({ length: 100 }).notNull(),
+  product: varchar({ length: 200 }).notNull(),
+  revenue: decimal({ precision: 12, scale: 2 }).notNull(),
+  expectedQuarter: quarterEnum("expected_quarter").notNull(),
+  comments: text(),
+  marketerId: varchar("marketer_id").notNull(),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+});
+
+export const marketingAnnualSummary = pgTable("marketing_annual_summary", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  year: integer().notNull(),
+  salesExecutive: varchar("sales_executive", { length: 200 }).notNull(),
+  won: decimal({ precision: 12, scale: 2 }).default('0').notNull(),
+  target: decimal({ precision: 12, scale: 2 }).notNull(),
+  targetAchieved: decimal("target_achieved", { precision: 5, scale: 2 }).default('0').notNull(),
+  expectedOrders: decimal("expected_orders", { precision: 12, scale: 2 }).default('0').notNull(),
+  statusQuo: decimal("status_quo", { precision: 12, scale: 2 }).default('0').notNull(),
+  deviationFromTarget: decimal("deviation_from_target", { precision: 12, scale: 2 }).default('0').notNull(),
+  sumSalesExpected: decimal("sum_sales_expected", { precision: 12, scale: 2 }).default('0').notNull(),
+  expectedTarget: decimal("expected_target", { precision: 12, scale: 2 }).default('0').notNull(),
+  marketerId: varchar("marketer_id").notNull(),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+  index("unique_year_marketer").on(table.year, table.marketerId),
+]);
+
+// Marketing Relations
+export const marketingLeadsRelations = relations(marketingLeads, ({ one }) => ({
+  marketer: one(marketingUsers, {
+    fields: [marketingLeads.marketerId],
+    references: [marketingUsers.id],
+  }),
+}));
+
+export const marketingSalesWonRelations = relations(marketingSalesWon, ({ one }) => ({
+  marketer: one(marketingUsers, {
+    fields: [marketingSalesWon.marketerId],
+    references: [marketingUsers.id],
+  }),
+}));
+
+export const marketingExpectedOrdersRelations = relations(marketingExpectedOrders, ({ one }) => ({
+  marketer: one(marketingUsers, {
+    fields: [marketingExpectedOrders.marketerId],
+    references: [marketingUsers.id],
+  }),
+}));
+
+export const marketingProspectsRelations = relations(marketingProspects, ({ one }) => ({
+  marketer: one(marketingUsers, {
+    fields: [marketingProspects.marketerId],
+    references: [marketingUsers.id],
+  }),
+}));
+
+export const marketingAnnualSummaryRelations = relations(marketingAnnualSummary, ({ one }) => ({
+  marketer: one(marketingUsers, {
+    fields: [marketingAnnualSummary.marketerId],
+    references: [marketingUsers.id],
+  }),
+}));
+
+export const marketingUsersRelations = relations(marketingUsers, ({ many }) => ({
+  leads: many(marketingLeads),
+  salesWon: many(marketingSalesWon),
+  expectedOrders: many(marketingExpectedOrders),
+  prospects: many(marketingProspects),
+  annualSummary: many(marketingAnnualSummary),
+}));
+
+// Marketing Insert Schemas
+export const insertMarketingUserSchema = createInsertSchema(marketingUsers);
+export const insertMarketingLeadSchema = createInsertSchema(marketingLeads);
+export const insertMarketingSalesWonSchema = createInsertSchema(marketingSalesWon);
+export const insertMarketingExpectedOrdersSchema = createInsertSchema(marketingExpectedOrders);
+export const insertMarketingProspectsSchema = createInsertSchema(marketingProspects);
+export const insertMarketingAnnualSummarySchema = createInsertSchema(marketingAnnualSummary);
