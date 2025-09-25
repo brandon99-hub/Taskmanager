@@ -475,23 +475,47 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       return; // Skip dirty detection during form initialization
     }
     
-    // Only mark as dirty if there are actual changes from initial values
-    if (initialFormValues) {
-      const currentValues = form.getValues();
-      const hasActualChanges = Object.keys(initialFormValues).some(key => {
-        const initialValue = initialFormValues[key as keyof CreateProjectData];
-        const currentValue = currentValues[key as keyof CreateProjectData];
-        
-        // Handle different data types
-        if (initialValue === null || initialValue === undefined) {
-          return currentValue !== null && currentValue !== undefined && currentValue !== '';
-        }
-        if (currentValue === null || currentValue === undefined) {
-          return initialValue !== null && initialValue !== undefined && initialValue !== '';
-        }
-        
-        return initialValue !== currentValue;
-      });
+     // Only mark as dirty if there are actual changes from initial values
+     if (initialFormValues) {
+       const currentValues = form.getValues();
+       const hasActualChanges = Object.keys(initialFormValues).some(key => {
+         const initialValue = initialFormValues[key as keyof CreateProjectData];
+         const currentValue = currentValues[key as keyof CreateProjectData];
+         
+         // Handle different data types
+         if (initialValue === null || initialValue === undefined) {
+           return currentValue !== null && currentValue !== undefined && currentValue !== '';
+         }
+         if (currentValue === null || currentValue === undefined) {
+           return initialValue !== null && initialValue !== undefined && initialValue !== '';
+         }
+         
+         // Special handling for budget field - normalize comma formatting
+         if (key === 'budget') {
+           const normalizedInitial = String(initialValue).replace(/,/g, '');
+           const normalizedCurrent = String(currentValue).replace(/,/g, '');
+           return normalizedInitial !== normalizedCurrent;
+         }
+         
+         return initialValue !== currentValue;
+       });
+       
+       console.log('Form comparison:', {
+         initialFormValues,
+         currentFormValues: {
+           client: currentValues.client,
+           contactPerson: currentValues.contactPerson,
+           contactPhone: currentValues.contactPhone,
+           contactEmail: currentValues.contactEmail,
+           startDate: currentValues.startDate,
+           endDate: currentValues.endDate,
+           segment: currentValues.segment,
+           teamId: currentValues.teamId,
+           budget: currentValues.budget,
+           status: currentValues.status
+         },
+         hasActualChanges
+       });
       
       // Debug: Only log when there are actual changes
       if (hasActualChanges) {

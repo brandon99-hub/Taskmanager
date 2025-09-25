@@ -988,6 +988,7 @@ export default function ProjectDetail() {
         {editingProject && (
           <CreateProjectModal 
             project={editingProject} 
+            key={`edit-${editingProject.id}-${editingProject.updatedAt || Date.now()}`}
             onClose={() => setEditingProject(null)}
           />
         )}
