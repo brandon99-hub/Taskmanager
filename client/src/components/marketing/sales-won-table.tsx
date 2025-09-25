@@ -29,6 +29,9 @@ interface SalesWon {
   contractAmount: number;
   expectedQuarter: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   comments?: string;
+  marketerId: string;
+  marketerName?: string;
+  marketerEmail?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -50,17 +53,36 @@ const quarterColors = {
   Q4: "bg-red-100 text-red-800",
 };
 
-export function MarketingSalesWonTable() {
+interface MarketingSalesWonTableProps {
+  showMarketerInfo?: boolean;
+  selectedMarketer?: string;
+  onMarketerChange?: (marketerId: string) => void;
+}
+
+export function MarketingSalesWonTable({ 
+  showMarketerInfo = false, 
+  selectedMarketer = "",
+  onMarketerChange 
+}: MarketingSalesWonTableProps) {
   const [salesWon, setSalesWon] = useState<SalesWon[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [user, setUser] = useState<any>(null);
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
     total: 0,
     pages: 0,
   });
+
+  useEffect(() => {
+    // Get user info from localStorage
+    const userData = localStorage.getItem("marketingUser");
+    if (userData) {
+      setUser(JSON.parse(userData));
+    }
+  }, []);
 
   const loadSalesWon = async () => {
     setLoading(true);
@@ -70,6 +92,7 @@ export function MarketingSalesWonTable() {
         page: page.toString(),
         limit: "10",
         ...(search && { search }),
+        ...(user?.role === 'admin' && selectedMarketer && { marketerId: selectedMarketer }),
       });
 
       const response = await fetch(`/api/marketing/sales-won?${params}`, {
@@ -115,9 +138,9 @@ export function MarketingSalesWonTable() {
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat("en-KE", {
       style: "currency",
-      currency: "USD",
+      currency: "KES",
     }).format(amount);
   };
 
@@ -159,6 +182,9 @@ export function MarketingSalesWonTable() {
           <Table>
             <TableHeader>
               <TableRow>
+                {user?.role === 'admin' && showMarketerInfo && (
+                  <TableHead>Marketer</TableHead>
+                )}
                 <TableHead>Organisation</TableHead>
                 <TableHead>Sector</TableHead>
                 <TableHead>Product</TableHead>
@@ -171,13 +197,21 @@ export function MarketingSalesWonTable() {
             <TableBody>
               {salesWon.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8">
+                  <TableCell colSpan={user?.role === 'admin' && showMarketerInfo ? 8 : 7} className="text-center py-8">
                     No sales won records found
                   </TableCell>
                 </TableRow>
               ) : (
                 salesWon.map((sale) => (
                   <TableRow key={sale.id}>
+                    {user?.role === 'admin' && showMarketerInfo && (
+                      <TableCell className="font-medium">
+                        <div>
+                          <div className="font-semibold">{sale.marketerName || 'Unknown'}</div>
+                          <div className="text-sm text-gray-500">{sale.marketerEmail || ''}</div>
+                        </div>
+                      </TableCell>
+                    )}
                     <TableCell className="font-medium">{sale.organisationName}</TableCell>
                     <TableCell>{sale.sector}</TableCell>
                     <TableCell>{sale.product}</TableCell>

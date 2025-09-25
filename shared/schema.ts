@@ -921,6 +921,7 @@ export const marketingUsers = pgTable("marketing_users", {
   phoneNumber: varchar("phone_number"),
   role: marketingUserRoleEnum().default('marketer').notNull(),
   isActive: boolean("is_active").default(true).notNull(),
+  mustChangePassword: boolean("must_change_password").default(false).notNull(),
   lastLoginAt: timestamp("last_login_at", { mode: 'string' }),
   resetToken: text("reset_token"),
   resetTokenExpiry: timestamp("reset_token_expiry", { mode: 'string' }),

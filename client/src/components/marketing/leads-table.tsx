@@ -31,6 +31,9 @@ interface Lead {
   budget?: number;
   salesStage: 'lead' | 'qualified' | 'proposal' | 'negotiation' | 'closed_won' | 'closed_lost';
   facilitationCost?: number;
+  marketerId: string;
+  marketerName?: string;
+  marketerEmail?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,7 +57,17 @@ const salesStageColors = {
   closed_lost: "bg-red-100 text-red-800",
 };
 
-export function MarketingLeadsTable() {
+interface MarketingLeadsTableProps {
+  showMarketerInfo?: boolean;
+  selectedMarketer?: string;
+  onMarketerChange?: (marketerId: string) => void;
+}
+
+export function MarketingLeadsTable({ 
+  showMarketerInfo = false, 
+  selectedMarketer = "",
+  onMarketerChange 
+}: MarketingLeadsTableProps) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -65,6 +78,16 @@ export function MarketingLeadsTable() {
     total: 0,
     pages: 0,
   });
+  const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    // Get user info from localStorage
+    const userData = localStorage.getItem("marketingUser");
+    if (userData) {
+      setUser(JSON.parse(userData));
+    }
+  }, []);
 
   const loadLeads = async () => {
     setLoading(true);
@@ -74,6 +97,7 @@ export function MarketingLeadsTable() {
         page: page.toString(),
         limit: "10",
         ...(search && { search }),
+        ...(selectedMarketer && { marketerId: selectedMarketer }),
       });
 
       const response = await fetch(`/api/marketing/leads?${params}`, {
@@ -120,9 +144,9 @@ export function MarketingLeadsTable() {
 
   const formatCurrency = (amount?: number) => {
     if (!amount) return "N/A";
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat("en-KE", {
       style: "currency",
-      currency: "USD",
+      currency: "KES",
     }).format(amount);
   };
 
@@ -166,6 +190,9 @@ export function MarketingLeadsTable() {
           <Table>
             <TableHeader>
               <TableRow className="bg-gray-50/50">
+                {user?.role === 'admin' && showMarketerInfo && (
+                  <TableHead className="font-semibold text-gray-700">Marketer</TableHead>
+                )}
                 <TableHead className="font-semibold text-gray-700">Date</TableHead>
                 <TableHead className="font-semibold text-gray-700">Client</TableHead>
                 <TableHead className="font-semibold text-gray-700">Contact Details</TableHead>
@@ -178,7 +205,7 @@ export function MarketingLeadsTable() {
             <TableBody>
               {leads.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-12">
+                  <TableCell colSpan={user?.role === 'admin' && showMarketerInfo ? 8 : 7} className="text-center py-12">
                     <div className="flex flex-col items-center space-y-2">
                       <div className="h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center">
                         <Users className="h-6 w-6 text-gray-400" />
@@ -191,6 +218,14 @@ export function MarketingLeadsTable() {
               ) : (
                 leads.map((lead) => (
                   <TableRow key={lead.id} className="hover:bg-gray-50/50">
+                    {user?.role === 'admin' && showMarketerInfo && (
+                      <TableCell className="font-medium text-gray-900">
+                        <div>
+                          <p className="text-sm font-semibold">{lead.marketerName || 'Unknown'}</p>
+                          <p className="text-xs text-gray-500">{lead.marketerEmail || ''}</p>
+                        </div>
+                      </TableCell>
+                    )}
                     <TableCell className="font-medium text-gray-900">{formatDate(lead.date)}</TableCell>
                     <TableCell className="font-semibold text-gray-900">{lead.client}</TableCell>
                     <TableCell className="max-w-xs truncate text-gray-600">

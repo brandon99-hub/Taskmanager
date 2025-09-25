@@ -64,7 +64,9 @@ export function setupGlobalErrorHandling() {
       
       // Check for server errors
       if (response.status >= 500) {
-        const errorText = await response.text();
+        // Clone the response to avoid consuming the body
+        const clonedResponse = response.clone();
+        const errorText = await clonedResponse.text();
         if (errorText.includes('ETIMEDOUT') || 
             errorText.includes('ECONNREFUSED') ||
             errorText.includes('Internal Server Error')) {

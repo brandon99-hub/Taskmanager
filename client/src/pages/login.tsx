@@ -70,25 +70,17 @@ export default function Login() {
 
       <div className="w-full max-w-md relative z-10">
         {/* Header */}
-        <div className="flex items-center justify-center mb-8">
-          <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg blur-lg opacity-75"></div>
-            <div className="relative bg-gradient-to-r from-blue-600 to-indigo-600 p-3 rounded-lg">
-              <BarChart3 className="h-8 w-8 text-white" />
-            </div>
-          </div>
-          <div className="ml-4">
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-              TaskFlow
-            </h1>
-            <p className="text-sm text-gray-500 mt-1">Project Management Platform</p>
-          </div>
+        <div className="text-center mb-8">
         </div>
 
         <Card className="border-0 shadow-2xl bg-white/80 backdrop-blur-sm">
           <CardHeader className="text-center pb-6">
-            <div className="mx-auto w-12 h-12 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full flex items-center justify-center mb-4">
-              <Lock className="h-6 w-6 text-white" />
+            <div className="mx-auto mb-4">
+              <img 
+                src="/Appkings.png" 
+                alt="AppKings Logo" 
+                className="h-16 w-auto mx-auto"
+              />
             </div>
             <CardTitle className="text-2xl font-bold text-gray-900">Welcome Back</CardTitle>
             <CardDescription className="text-gray-600 text-base">
@@ -196,30 +188,6 @@ export default function Login() {
                   Create one now
                 </Button>
               </p>
-            </div>
-
-            {/* Features Preview */}
-            <div className="mt-8 pt-6 border-t border-gray-100">
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="flex flex-col items-center">
-                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mb-2">
-                    <BarChart3 className="h-4 w-4 text-blue-600" />
-                  </div>
-                  <span className="text-xs text-gray-500">Analytics</span>
-                </div>
-                <div className="flex flex-col items-center">
-                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mb-2">
-                    <Sparkles className="h-4 w-4 text-green-600" />
-                  </div>
-                  <span className="text-xs text-gray-500">Automation</span>
-                </div>
-                <div className="flex flex-col items-center">
-                  <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center mb-2">
-                    <Lock className="h-4 w-4 text-purple-600" />
-                  </div>
-                  <span className="text-xs text-gray-500">Security</span>
-                </div>
-              </div>
             </div>
           </CardContent>
         </Card>

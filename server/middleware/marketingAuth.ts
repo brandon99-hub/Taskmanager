@@ -15,6 +15,7 @@ declare global {
         firstName: string;
         lastName: string;
         role: 'admin' | 'marketer';
+        password: string;
       };
     }
   }
@@ -56,6 +57,7 @@ export const marketingAuth = async (req: Request, res: Response, next: NextFunct
       firstName: user[0].firstName,
       lastName: user[0].lastName,
       role: user[0].role,
+      password: user[0].password,
     };
 
     next();

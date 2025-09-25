@@ -23,6 +23,7 @@ import { Plus, Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useToast } from "@/hooks/use-toast";
 
 const prospectsSchema = z.object({
   organisationName: z.string().min(1, "Organisation name is required"),
@@ -42,6 +43,7 @@ interface MarketingProspectsFormProps {
 export function MarketingProspectsForm({ onSuccess }: MarketingProspectsFormProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
 
   const {
     register,
@@ -68,6 +70,10 @@ export function MarketingProspectsForm({ onSuccess }: MarketingProspectsFormProp
       });
 
       if (response.ok) {
+        toast({
+          title: "Success",
+          description: "Prospect created successfully!",
+        });
         reset();
         setOpen(false);
         onSuccess();
@@ -140,7 +146,7 @@ export function MarketingProspectsForm({ onSuccess }: MarketingProspectsFormProp
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="revenue">Revenue (USD)</Label>
+              <Label htmlFor="revenue">Revenue (KSH)</Label>
               <Input
                 id="revenue"
                 type="number"

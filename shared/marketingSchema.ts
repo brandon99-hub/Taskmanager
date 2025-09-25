@@ -102,6 +102,7 @@ export const marketingQuerySchema = z.object({
   quarter: quarterSchema.optional(),
   sector: z.string().optional(),
   marketerId: z.string().optional(),
+  month: z.string().transform(Number).pipe(z.number().int().min(1).max(12)).optional(),
 });
 
 // Export Schemas

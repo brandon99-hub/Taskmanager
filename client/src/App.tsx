@@ -23,6 +23,7 @@ import TeamDetail from "@/pages/team-detail";
 import ExecutiveDashboard from "@/pages/executive-dashboard";
 import MarketingLogin from "@/pages/marketing-login";
 import MarketingDashboard from "@/pages/marketing-dashboard";
+import MarketingResetPassword from "@/pages/marketing-reset-password";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 function Router() {
@@ -40,6 +41,7 @@ function Router() {
     <Switch>
       {/* Marketing Pipeline Routes - Independent System */}
       <Route path="/marketing/login" component={MarketingLogin} />
+      <Route path="/marketing/reset-password" component={MarketingResetPassword} />
       <Route path="/marketing/dashboard" component={MarketingDashboard} />
       <Route path="/marketing/admin" component={MarketingDashboard} />
       

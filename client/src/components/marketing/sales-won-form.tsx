@@ -19,10 +19,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Loader2 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { 
+  Plus, 
+  Loader2, 
+  Building2, 
+  DollarSign, 
+  Calendar, 
+  FileText, 
+  Target,
+  TrendingUp
+} from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useToast } from "@/hooks/use-toast";
 
 const salesWonSchema = z.object({
   organisationName: z.string().min(1, "Organisation name is required"),
@@ -37,11 +48,15 @@ type SalesWonFormData = z.infer<typeof salesWonSchema>;
 
 interface MarketingSalesWonFormProps {
   onSuccess: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
+  hideTrigger?: boolean;
 }
 
-export function MarketingSalesWonForm({ onSuccess }: MarketingSalesWonFormProps) {
+export function MarketingSalesWonForm({ onSuccess, isOpen, onClose, hideTrigger = false }: MarketingSalesWonFormProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
 
   const {
     register,
@@ -68,6 +83,10 @@ export function MarketingSalesWonForm({ onSuccess }: MarketingSalesWonFormProps)
       });
 
       if (response.ok) {
+        toast({
+          title: "Success",
+          description: "Sales won record created successfully!",
+        });
         reset();
         setOpen(false);
         onSuccess();
@@ -83,19 +102,39 @@ export function MarketingSalesWonForm({ onSuccess }: MarketingSalesWonFormProps)
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button>
-          <Plus className="h-4 w-4 mr-2" />
-          Add Sales Won
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle>Add New Sales Won</DialogTitle>
-          <DialogDescription>
-            Enter the details for the successful sale
-          </DialogDescription>
+    <Dialog 
+      open={isOpen !== undefined ? isOpen : open}
+      onOpenChange={(value) => {
+        if (isOpen !== undefined) {
+          if (!value) {
+            onClose?.();
+          }
+        } else {
+          setOpen(value);
+        }
+      }}
+    >
+      {!hideTrigger && isOpen === undefined && (
+        <DialogTrigger asChild>
+          <Button className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 shadow-lg">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Sales Won
+          </Button>
+        </DialogTrigger>
+      )}
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+        <DialogHeader className="space-y-3 pb-4 border-b">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <TrendingUp className="h-6 w-6 text-green-600" />
+            </div>
+            <div>
+              <DialogTitle className="text-2xl font-bold text-gray-900">Add Sales Won</DialogTitle>
+              <DialogDescription className="text-gray-600 mt-1">
+                Record a successful sale and track revenue
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
@@ -140,7 +179,7 @@ export function MarketingSalesWonForm({ onSuccess }: MarketingSalesWonFormProps)
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="contractAmount">Contract Amount (USD)</Label>
+              <Label htmlFor="contractAmount">Contract Amount (KSH)</Label>
               <Input
                 id="contractAmount"
                 type="number"
