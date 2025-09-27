@@ -62,6 +62,13 @@ interface GanttData {
         email: string;
       };
     }>;
+    // New properties for Phase 3 parent-child structure
+    isParent?: boolean;
+    isChild?: boolean;
+    parentMilestoneId?: string;
+    isMilestone?: boolean;
+    billingStatus?: string;
+    originalBillingStatus?: string;
   }>;
 }
 
@@ -73,9 +80,26 @@ interface GanttChartProps {
 
 // Enhanced status mapping that considers both task status and billing status
 const getEffectiveStatus = (task: any) => {
+  // Debug logging for understanding the data flow
+  if (window.location.search?.includes('debug')) {
+    console.log('getEffectiveStatus called with task:', {
+      id: task.id,
+      name: task.name,
+      isMilestone: task.isMilestone,
+      billingStatus: task.billingStatus,
+      originalBillingStatus: task.originalBillingStatus,
+      status: task.status,
+    });
+  }
+  
   // For milestones, prioritize billing status over task status
-  if (task.isMilestone && task.billingStatus) {
-    switch (task.billingStatus) {
+  if (task.isMilestone && (task.billingStatus || task.originalBillingStatus)) {
+    // Check billing status, with fallback to originalBillingStatus for backwards compatibility
+    const billingStatus = task.billingStatus || task.originalBillingStatus;
+    if (window.location.search?.includes('debug')) {
+      console.log('Processing milestone billing status:', billingStatus);
+    }
+    switch (billingStatus) {
       case 'paid':
         return 'completed';
       case 'sent':
@@ -176,7 +200,8 @@ const generateTooltipContent = (task: GanttData['tasks'][0]) => {
   const startDate = formatDateForTooltip(task.startDate);
   const endDate = formatDateForTooltip(task.dueDate);
   const assignedPersonnel = getAssignedPersonnelInfo(task);
-  const statusText = task.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+  // Use getEffectiveStatus instead of task.status directly for consistency
+  const statusText = getEffectiveStatus(task).replace('_', ' ').replace(/\b\w/g, (char: string) => char.toUpperCase());
   
   return `${task.name}
 Status: ${statusText}
@@ -225,6 +250,9 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
   const [overlayData, setOverlayData] = useState<GanttData | null>(null);
   const [projectSearch, setProjectSearch] = useState('');
 
+  // Determine which data source to use - overlayData in fullscreen mode when loaded
+  const currentData = isFullscreen && overlayData ? overlayData : data;
+
   const toggleMilestoneExpansion = (milestoneId: string) => {
     setExpandedMilestones(prev => {
       const newSet = new Set(prev);
@@ -258,45 +286,14 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
   const loadGanttDataForProject = async (projectId: string) => {
     setOverlayLoading(true);
     try {
-      const [projRes, phasesRes] = await Promise.all([
-        fetch(`/api/projects/${projectId}`, { credentials: 'include', cache: 'no-store' }),
-        fetch(`/api/projects/${projectId}/phases`, { credentials: 'include', cache: 'no-store' })
-      ]);
-      if (!projRes.ok) throw new Error('Failed to load project');
-      const proj = await projRes.json();
-      const phases = phasesRes.ok ? await phasesRes.json() : [];
-      // Map modules -> tasks for Gantt
-      const tasks = (proj.modules || []).map((m: any) => ({
-        id: m.id,
-        name: m.name,
-        startDate: m.startDate || null,
-        dueDate: m.dueDate || null,
-        status: m.status || 'not_started',
-        progress: m.progressPercent || 0,
-        priority: m.priority || 'medium',
-        phaseNumber: m.phaseNumber || undefined,
-        subtasks: [] as any[]
-      }));
-      const mappedPhases = (phases || []).map((p: any) => ({
-        id: p.id,
-        phaseNumber: p.phaseNumber,
-        name: p.phaseName,
-        startDate: p.startDate || null,
-        endDate: p.endDate || null,
-        status: p.status || 'not_started',
-        progress: p.progress || 0
-      }));
-      const mapped: GanttData = {
-        project: {
-          id: proj.id,
-          name: proj.name || proj.client || 'Untitled Project',
-          startDate: proj.startDate,
-          endDate: proj.endDate,
-        },
-        phases: mappedPhases,
-        tasks,
-      };
-      setOverlayData(mapped);
+      // Use the proper Gantt endpoint that handles all project data correctly
+      const res = await fetch(`/api/projects/${projectId}/gantt`, { 
+        credentials: 'include', 
+        cache: 'no-store' 
+      });
+      if (!res.ok) throw new Error('Failed to load project Gantt data');
+      const ganttData = await res.json();
+      setOverlayData(ganttData);
     } catch (e: any) {
       toast({ title: 'Load error', description: e?.message || 'Failed to load project', variant: 'destructive' });
     } finally {
@@ -383,7 +380,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
   // Get phase name for a task
   const getPhaseName = (phaseNumber: number | undefined) => {
     if (!phaseNumber) return 'Unassigned';
-    const phase = data.phases.find(p => p.phaseNumber === phaseNumber);
+    const phase = currentData.phases.find(p => p.phaseNumber === phaseNumber);
     return phase ? phase.name : `Phase ${phaseNumber}`;
   };
 
@@ -405,10 +402,10 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
 
   // Calculate timeline dimensions
   const timelineData = useMemo(() => {
-    if (!data.project.startDate || !data.project.endDate) return null;
+    if (!currentData.project.startDate || !currentData.project.endDate) return null;
 
-    const projectStart = new Date(data.project.startDate);
-    const projectEnd = new Date(data.project.endDate);
+    const projectStart = new Date(currentData.project.startDate);
+    const projectEnd = new Date(currentData.project.endDate);
     
     if (isNaN(projectStart.getTime()) || isNaN(projectEnd.getTime())) {
       return null;
@@ -416,7 +413,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
 
     // Find the earliest start date among all tasks to align timeline properly
     const allStartDates: Date[] = [];
-    data.tasks.forEach(task => {
+    currentData.tasks.forEach(task => {
       if (task.startDate) {
         const date = new Date(task.startDate);
         if (!isNaN(date.getTime())) {
@@ -447,7 +444,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
       containerWidth: totalDays * dayWidth + 400, // 400px for milestone labels
       weekWidth: 7 * dayWidth, // Width of each week column
     };
-  }, [data.project.startDate, data.project.endDate, data.tasks, zoom]) as {
+  }, [currentData.project.startDate, currentData.project.endDate, currentData.tasks, zoom]) as {
     projectStart: Date;
     projectEnd: Date;
     timelineStart: Date;
@@ -459,7 +456,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
 
   // Filter tasks based on search and status
   const filteredTasks = useMemo(() => {
-    let tasks = data.tasks;
+    let tasks = currentData.tasks;
     
     if (statusFilter !== 'all') {
       tasks = tasks.filter(task => task.status === statusFilter);
@@ -472,7 +469,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
     }
     
     return tasks;
-  }, [data.tasks, statusFilter, searchTerm]);
+  }, [currentData.tasks, statusFilter, searchTerm]);
 
   // Get position for a date on the timeline
   const getDatePosition = (date: string | null) => {
@@ -790,6 +787,10 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                   const x = getMilestoneStartPosition(task);
                   const width = getTaskWidth(task.startDate, task.dueDate);
                   
+                  // Check if this task has child modules (Phase 3 structure)
+                  const hasChildModules = task.isParent && filteredTasks.some(t => t.parentMilestoneId === task.id);
+                  const childModules = hasChildModules ? filteredTasks.filter(t => t.parentMilestoneId === task.id) : [];
+                  
                   return (
                     <div key={task.id}>
                       {/* Main Milestone Row */}
@@ -800,11 +801,11 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                             <button
                               onClick={() => toggleMilestoneExpansion(task.id)}
                               className={`transition-colors ${
-                                task.subtasks && task.subtasks.length > 0 
+                                (task.subtasks && task.subtasks.length > 0) || hasChildModules
                                   ? 'text-gray-500 hover:text-gray-700' 
                                   : 'text-gray-300 cursor-not-allowed'
                               }`}
-                              disabled={!task.subtasks || task.subtasks.length === 0}
+                              disabled={(!task.subtasks || task.subtasks.length === 0) && !hasChildModules}
                             >
                               {expandedMilestones.has(task.id) ? '▼' : '▶'}
                             </button>
@@ -821,6 +822,16 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                               >
                                 {getPhaseName(task.phaseNumber)}
                               </Badge>
+                              {task.isParent && (
+                                <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800">
+                                  Parent
+                                </Badge>
+                              )}
+                              {task.isChild && (
+                                <Badge variant="outline" className="text-xs bg-gray-100 text-gray-600">
+                                  Module
+                                </Badge>
+                              )}
                             </div>
                           </div>
                           <Badge 
@@ -873,6 +884,68 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                           </div>
                         </div>
                       </div>
+                      
+                      {/* Child Modules (Phase 3) - Show modules under milestones */}
+                      {expandedMilestones.has(task.id) && hasChildModules && (
+                        <div className="bg-blue-50 border-b border-gray-100">
+                          {childModules.map((childModule: any, index: number) => {
+                            const childX = getMilestoneStartPosition(childModule);
+                            const childWidth = getTaskWidth(childModule.startDate, childModule.dueDate);
+                            
+                            return (
+                              <div key={childModule.id} className="flex items-center h-16 border-b border-gray-100 last:border-b-0 bg-blue-50/50">
+                                {/* Child Module Label */}
+                                <div className="w-96 bg-blue-50/50 border-r border-gray-200 p-3 flex items-center space-x-3">
+                                  <div className="flex items-center space-x-2 ml-8">
+                                    <div className="w-3 h-3 rounded-full bg-blue-400"></div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-medium text-sm text-gray-700 truncate">
+                                        {childModule.name}
+                                      </div>
+                                      <div className="flex items-center space-x-2 mt-1">
+                                        <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800">
+                                          Module
+                                        </Badge>
+                                        <Badge variant="outline" className="text-xs">
+                                          {childModule.status}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                
+                                {/* Child Module Timeline Bar */}
+                                <div className="flex-1 relative">
+                                  <div className="relative h-full">
+                                    <div
+                                      className="absolute top-2 h-10 bg-blue-400 rounded cursor-pointer transition-all hover:opacity-80 shadow-sm border border-blue-300"
+                                      style={{
+                                        left: `${childX}px`,
+                                        width: `${Math.max(20, childWidth)}px`,
+                                        minWidth: '20px',
+                                        zIndex: 5,
+                                      }}
+                                      onClick={() => onTaskClick?.(childModule.id)}
+                                      title={`${childModule.name} - ${childModule.status}`}
+                                    />
+                                    
+                                    {/* Progress Overlay for child modules */}
+                                    {childModule.progress > 0 && (
+                                      <div
+                                        className="absolute top-2 h-10 bg-gradient-to-r from-blue-500 to-blue-600 rounded-l transition-all shadow-sm"
+                                        style={{
+                                          left: `${childX}px`,
+                                          width: `${(childWidth * childModule.progress) / 100}px`,
+                                        }}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       
                       {/* Subtasks - Much better spaced and less crowded */}
                       {expandedMilestones.has(task.id) && task.subtasks && task.subtasks.length > 0 && (
@@ -953,59 +1026,94 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
         ) : (
           /* List View */
           <div className="space-y-4">
-            {filteredTasks.map((task) => (
-              <div key={task.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-3 h-3 rounded-full ${getStatusColor(getEffectiveStatus(task))}`} />
-                    <div>
-                      <h4 className="font-medium text-gray-900">{task.name}</h4>
-                      <p className="text-sm text-gray-600">
-                        Phase {task.phaseNumber || 'N/A'} • {task.status}
-                      </p>
+            {filteredTasks.map((task) => {
+              // Check if this task has child modules (Phase 3 structure)
+              const hasChildModules = task.isParent && filteredTasks.some(t => t.parentMilestoneId === task.id);
+              const childModules = hasChildModules ? filteredTasks.filter(t => t.parentMilestoneId === task.id) : [];
+              
+              return (
+                <div key={task.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-3 h-3 rounded-full ${getStatusColor(getEffectiveStatus(task))}`} />
+                      <div>
+                        <h4 className="font-medium text-gray-900">{task.name}</h4>
+                        <p className="text-sm text-gray-600">
+                          Phase {task.phaseNumber || 'N/A'} • {task.status}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center space-x-4">
+                      <Badge variant="outline" className={getPhaseColor(task.phaseNumber)}>
+                        {getPhaseName(task.phaseNumber)}
+                      </Badge>
+                      
+                      {task.isParent && (
+                        <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800">
+                          Parent
+                        </Badge>
+                      )}
+                      {task.isChild && (
+                        <Badge variant="outline" className="text-xs bg-gray-100 text-gray-600">
+                          Module
+                        </Badge>
+                      )}
+                      
+                      <Badge variant="outline" className={getPriorityColor(task.priority)}>
+                        {task.priority || 'Medium'}
+                      </Badge>
+                      
+                      <div className="text-sm text-gray-600">
+                        <div>Start: {task.startDate ? new Date(task.startDate).toLocaleDateString() : 'Not set'}</div>
+                        <div>Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'Not set'}</div>
+                      </div>
+                      
+                      <div className="text-right">
+                        <div className="text-sm font-medium">{task.progress || 0}%</div>
+                        <Progress value={task.progress || 0} className="w-20 h-2" />
+                      </div>
                     </div>
                   </div>
-                  
-                  <div className="flex items-center space-x-4">
-                    <Badge variant="outline" className={getPhaseColor(task.phaseNumber)}>
-                      {getPhaseName(task.phaseNumber)}
-                    </Badge>
-                    
-                    <Badge variant="outline" className={getPriorityColor(task.priority)}>
-                      {task.priority || 'Medium'}
-                    </Badge>
-                    
-                    <div className="text-sm text-gray-600">
-                      <div>Start: {task.startDate ? new Date(task.startDate).toLocaleDateString() : 'Not set'}</div>
-                      <div>Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'Not set'}</div>
-                    </div>
-                    
-                    <div className="text-right">
-                      <div className="text-sm font-medium">{task.progress || 0}%</div>
-                      <Progress value={task.progress || 0} className="w-20 h-2" />
-                    </div>
-                  </div>
-                </div>
 
-                {/* Subtasks Section for List View */}
-                {expandedMilestones.has(task.id) && task.subtasks && task.subtasks.length > 0 && (
-                  <div className="mt-3 p-3 bg-gray-50 rounded border-l-4 border-blue-500">
-                    <div className="text-sm font-medium text-gray-700 mb-2">Subtasks:</div>
-                    <div className="space-y-2">
-                      {task.subtasks.map((subtask: NonNullable<typeof task.subtasks>[0]) => (
-                        <div key={subtask.id} className="flex items-center space-x-3 text-sm">
-                          <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                          <span className="text-gray-700">{subtask.name}</span>
-                          <Badge variant="outline" className="text-xs">
-                            {subtask.status}
-                          </Badge>
-                        </div>
-                      ))}
+                  {/* Child Modules Section for List View (Phase 3) */}
+                  {expandedMilestones.has(task.id) && hasChildModules && (
+                    <div className="mt-3 p-3 bg-blue-50 rounded border-l-4 border-blue-500">
+                      <div className="text-sm font-medium text-gray-700 mb-2">Modules:</div>
+                      <div className="space-y-2">
+                        {childModules.map((childModule: any) => (
+                          <div key={childModule.id} className="flex items-center space-x-3 text-sm">
+                            <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                            <span className="text-gray-700">{childModule.name}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {childModule.status}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            ))}
+                  )}
+
+                  {/* Subtasks Section for List View */}
+                  {expandedMilestones.has(task.id) && task.subtasks && task.subtasks.length > 0 && (
+                    <div className="mt-3 p-3 bg-gray-50 rounded border-l-4 border-gray-400">
+                      <div className="text-sm font-medium text-gray-700 mb-2">Subtasks:</div>
+                      <div className="space-y-2">
+                        {task.subtasks.map((subtask: NonNullable<typeof task.subtasks>[0]) => (
+                          <div key={subtask.id} className="flex items-center space-x-3 text-sm">
+                            <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                            <span className="text-gray-700">{subtask.name}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {subtask.status}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             
             {filteredTasks.length === 0 && (
               <div className="text-center py-8 text-gray-500">
@@ -1024,7 +1132,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
         {/* Main area renders exact same chart UI */}
         <div className="flex-1 overflow-auto p-4">
           <Card className="w-full max-w-none">
-            <CardHeader>
+            <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2">
@@ -1106,7 +1214,15 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
             </CardHeader>
 
             <CardContent>
-              {selectedView === 'timeline' ? (
+              {overlayLoading ? (
+                /* Loading State */
+                <div className="flex items-center justify-center h-64">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <p className="text-sm text-gray-600">Loading project data...</p>
+                  </div>
+                </div>
+              ) : selectedView === 'timeline' ? (
                 /* Timeline View */
                 <div className="overflow-x-auto">
                   <div 
@@ -1117,7 +1233,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                     <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 z-10 shadow-sm">
                       <div className="flex">
                         {/* Labels Column - WIDER to cover milestone names completely */}
-                        <div className="w-96 bg-gradient-to-b from-blue-50 to-white border-r border-gray-200 p-3">
+                        <div className="w-96 bg-gradient-to-b from-blue-50 to-white border-r border-gray-200 p-3 shadow-sm">
                           <div className="text-sm font-semibold text-blue-700">Milestones</div>
                         </div>
                         
@@ -1396,8 +1512,8 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
         </div>
 
         {/* Bottom project tabs */}
-        <div className="border-t bg-white p-2 sticky bottom-0">
-          <div className="flex items-center gap-3">
+        <div className="border-t bg-white p-3 sticky bottom-0 shadow-lg">
+          <div className="flex items-center gap-4">
             <div className="relative">
               <Input placeholder="Search projects" value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} className="pl-3 pr-3 h-9 w-64" />
             </div>
@@ -1408,7 +1524,11 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                   .map((p) => (
                     <button
                       key={p.id}
-                      className={`px-3 py-1.5 rounded border text-sm ${p.id === activeProjectId ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                      className={`px-4 py-2 rounded-lg border text-sm transition-colors duration-200 ${
+                        p.id === activeProjectId 
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-md' 
+                          : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+                      }`}
                       onClick={async () => {
                         if (p.id === activeProjectId) return;
                         setActiveProjectId(p.id);
@@ -1417,7 +1537,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                     >
                       {p.name}
                     </button>
-                ))}
+                  ))}
               </div>
             </div>
           </div>

@@ -474,12 +474,13 @@ export class DatabaseStorage implements IStorage {
     projectsOnSupport: number;
     onSupportProjects: number;
   }> {
+    const now = new Date();
     const allProjects = await db.select({ count: count() }).from(projects);
     const activeProjects = await db.select({ count: count() }).from(projects).where(eq(projects.status, "active"));
     const completedModules = await db.select({ count: count() }).from(modules).where(eq(modules.status, "completed"));
     const totalModules = await db.select({ count: count() }).from(modules);
     const overdueModules = await db.select({ count: count() }).from(modules).where(and(
-      sql`${modules.dueDate} < CURRENT_DATE`,
+      sql`${modules.dueDate} < ${now}`,
       sql`${modules.status} NOT IN ('completed', 'cancelled')`
     ));
     const totalBudget = await db.select({ total: sql`SUM(${projects.budget})` }).from(projects);
@@ -488,11 +489,11 @@ export class DatabaseStorage implements IStorage {
     const milestonesCount = await db.select({ count: count() }).from(milestones);
     const completedMilestonesCount = await db.select({ count: count() }).from(milestones).where(eq(milestones.billingStatus, 'paid'));
     const overdueMilestonesCount = await db.select({ count: count() }).from(milestones).where(and(
-      sql`${milestones.endDate} < CURRENT_DATE`,
+      sql`${milestones.endDate} < ${now}`,
       sql`${milestones.billingStatus} != 'paid'`
     ));
     const overdueSubtasksCount = await db.select({ count: count() }).from(subtasks).where(and(
-      sql`${subtasks.dueDate} < CURRENT_DATE`,
+      sql`${subtasks.dueDate} < ${now}`,
       sql`${subtasks.status} NOT IN ('completed', 'cancelled')`
     ));
     const projectsOnSupport = await db.select({ count: count() }).from(projects).where(eq(projects.status, "on_support"));
@@ -1254,7 +1255,7 @@ export class DatabaseStorage implements IStorage {
       })));
   }
 
-  async getOverdueTasks(): Promise<(Module & { project: Project; assignedUser: User | null })[]> {
+  async getOverdueTasks(): Promise<(Module & { project: Project; assignedUser: User | null; projectId: string })[]> {
     const now = new Date();
     return await db
       .select()
@@ -1268,14 +1269,20 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .orderBy(asc(modules.dueDate))
-      .then(rows => rows.map(row => ({
-        ...row.modules,
-        project: row.projects!,
-        assignedUser: row.users
-      })));
+      .then(rows => rows.map(row => {
+        const task = { ...row.modules };
+        const project = row.projects!;
+        const assignedUser = row.users;
+        return {
+          ...task,
+          projectId: project.id, // Ensure projectId is a string
+          project,
+          assignedUser
+        };
+      }));
   }
 
-  async getOverdueTasksForUser(userId: string): Promise<(Module & { project: Project; assignedUser: User | null })[]> {
+  async getOverdueTasksForUser(userId: string): Promise<(Module & { project: Project; assignedUser: User | null; projectId: string })[]> {
     const now = new Date();
     return await db
       .select()
@@ -1290,11 +1297,17 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .orderBy(asc(modules.dueDate))
-      .then(rows => rows.map(row => ({
-        ...row.modules,
-        project: row.projects!,
-        assignedUser: row.users
-      })));
+      .then(rows => rows.map(row => {
+        const task = { ...row.modules };
+        const project = row.projects!;
+        const assignedUser = row.users;
+        return {
+          ...task,
+          projectId: project.id, // Ensure projectId is a string
+          project,
+          assignedUser
+        };
+      }));
   }
 
   async getUpcomingTasks(days: number): Promise<(Module & { project: Project; assignedUser: User | null })[]> {
@@ -3926,10 +3939,12 @@ export class DatabaseStorage implements IStorage {
       let newBillingStatus = milestone.billingStatus;
 
       // Update milestone billing status based on subtask status
-      if (allCompleted && milestone.billingStatus === 'none') {
+      // Only transition from 'none' (Not Sent) to 'to_send' - don't change higher states
+      if (anyInProgress || allCompleted) {
+        // Only if milestone is currently in 'none' (frontend shows as "Not Sent")
+        if (milestone.billingStatus === 'none') {
         newBillingStatus = 'to_send';
-      } else if (anyInProgress && milestone.billingStatus === 'none') {
-        newBillingStatus = 'to_send';
+        }
       }
 
       // Update milestone billing status if it needs to change
@@ -4161,11 +4176,16 @@ TaskFlow System
       let allCompleted = false;
       let anyInProgress = false;
 
-      // Check milestone billing status for all phases
+      // Check milestone billing status for this specific phase
       const phaseMilestones = await db
         .select({ billingStatus: milestones.billingStatus })
         .from(milestones)
-        .where(eq(milestones.projectId, projectId));
+        .where(
+          and(
+            eq(milestones.projectId, projectId),
+            eq(milestones.phaseNumber, phaseNumber)
+          )
+        );
 
       if (phaseMilestones.length > 0) {
         // Check milestone billing status distribution
@@ -4274,11 +4294,16 @@ TaskFlow System
       let allCompleted = false;
       let anyInProgress = false;
 
-      // Check milestone billing status for all phases
+      // Check milestone billing status for this specific phase
       const phaseMilestones = await db
         .select({ billingStatus: milestones.billingStatus })
         .from(milestones)
-        .where(eq(milestones.projectId, phase.projectId));
+        .where(
+          and(
+            eq(milestones.projectId, phase.projectId),
+            eq(milestones.phaseNumber, phase.phaseNumber)
+          )
+        );
 
       if (phaseMilestones.length > 0) {
         // Phase is completed when all milestones are 'sent' or 'paid'

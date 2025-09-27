@@ -96,9 +96,10 @@ interface ModuleTableProps {
   };
   onEdit: (module: Module) => void;
   initiallyExpandedModule?: string | null;
+  projectId?: string; // Add projectId to pass down from parent
 }
 
-export default function ModuleTable({ modules, projectSegment, projectTeam, onEdit, initiallyExpandedModule }: ModuleTableProps) {
+export default function ModuleTable({ modules, projectSegment, projectTeam, onEdit, initiallyExpandedModule, projectId }: ModuleTableProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -227,6 +228,10 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      // Invalidate Gantt chart cache to update progress bars immediately
+      if (projectId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+      }
       toast({ title: 'Success', description: 'Module status updated' });
     },
     onError: (error: any) => {
@@ -248,6 +253,10 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       queryClient.invalidateQueries({ queryKey: ['/api/modules'] });
+      // Invalidate Gantt chart cache to update progress bars immediately
+      if (projectId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+      }
       toast({ title: 'Success', description: 'Subtask status updated' });
     },
     onError: (error: any) => {
@@ -272,6 +281,10 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      // Invalidate Gantt chart cache to update progress bars immediately
+      if (projectId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+      }
       setSelectedModules([]);
       toast({ title: 'Success', description: `${selectedModules.length} modules updated` });
     },
@@ -506,6 +519,18 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
     const isNotPaid = module.billingStatus !== 'paid';
     
     return isOverdue && isNotPaid;
+  };
+
+  // Check if a subtask is overdue
+  const isSubtaskOverdue = (subtask: any) => {
+    if (!subtask.dueDate) return false;
+    
+    const today = new Date();
+    const dueDate = new Date(subtask.dueDate);
+    const isOverdue = dueDate < today;
+    const isNotCompleted = subtask.status !== 'completed';
+    
+    return isOverdue && isNotCompleted;
   };
 
   if (modules.length === 0) {
@@ -1100,7 +1125,9 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                             </thead>
                                             <tbody>
                                               {nestedModule.subtasks.map((subtask) => (
-                                                <tr key={subtask.id} className="border-b border-blue-100 hover:bg-blue-50">
+                                                <tr key={subtask.id} className={`border-b border-blue-100 hover:bg-blue-50 ${
+                                                  isSubtaskOverdue(subtask) ? 'bg-red-50 border-red-200' : ''
+                                                }`}>
                                                   <td className="p-3">
                                                     <Checkbox
                                                       checked={selectedModules.includes(nestedModule.id)}
@@ -1110,7 +1137,15 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                                   </td>
                                                   <td className="p-3">
                                                     <div>
-                                                      <div className="font-medium text-gray-900">{subtask.name}</div>
+                                                      <div className="font-medium text-gray-900 flex items-center gap-2">
+                                                        {subtask.name}
+                                                        {isSubtaskOverdue(subtask) && (
+                                                          <Badge variant="destructive" className="text-xs">
+                                                            <AlertTriangle className="h-3 w-3 mr-1" />
+                                                            Overdue
+                                                          </Badge>
+                                                        )}
+                                                      </div>
                                                       {subtask.description && (
                                                         <div className="text-sm text-gray-500 truncate max-w-xs">
                                                           {subtask.description}
@@ -1126,7 +1161,11 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                                   <td className="p-3 text-sm text-gray-600">
                                                     {formatDate(subtask.startDate)}
                                                   </td>
-                                                  <td className="p-3 text-sm text-gray-600">
+                                                  <td className={`p-3 text-sm ${
+                                                    isSubtaskOverdue(subtask) 
+                                                      ? 'text-red-600 font-semibold' 
+                                                      : 'text-gray-600'
+                                                  }`}>
                                                     {formatDate(subtask.dueDate)}
                                                   </td>
                                                   <td className="p-3 text-sm text-gray-600">
@@ -1259,7 +1298,9 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                             </thead>
                             <tbody>
                               {module.subtasks.map((subtask) => (
-                                <tr key={subtask.id} className="border-b border-blue-100 hover:bg-blue-50">
+                                <tr key={subtask.id} className={`border-b border-blue-100 hover:bg-blue-50 ${
+                                  isSubtaskOverdue(subtask) ? 'bg-red-50 border-red-200' : ''
+                                }`}>
                                   <td className="p-3">
                                     <Checkbox
                                       checked={selectedModules.includes(subtask.id)}
@@ -1268,8 +1309,14 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                     />
                                   </td>
                                   <td className="p-3">
-                                    <div className="font-medium text-gray-900">
+                                    <div className="font-medium text-gray-900 flex items-center gap-2">
                                       {subtask.name}
+                                      {isSubtaskOverdue(subtask) && (
+                                        <Badge variant="destructive" className="text-xs">
+                                          <AlertTriangle className="h-3 w-3 mr-1" />
+                                          Overdue
+                                        </Badge>
+                                      )}
                                     </div>
                                     {subtask.description && (
                                       <div className="text-sm text-gray-500 truncate max-w-xs">
@@ -1293,7 +1340,11 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                   <td className="p-3 text-sm text-gray-600">
                                     {subtask.startDate ? formatDate(subtask.startDate) : '-'}
                                   </td>
-                                  <td className="p-3 text-sm text-gray-600">
+                                  <td className={`p-3 text-sm ${
+                                    isSubtaskOverdue(subtask) 
+                                      ? 'text-red-600 font-semibold' 
+                                      : 'text-gray-600'
+                                  }`}>
                                     {subtask.dueDate ? formatDate(subtask.dueDate) : '-'}
                                   </td>
                                   <td className="p-3 text-sm text-gray-600">
@@ -1501,7 +1552,9 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                             </thead>
                             <tbody>
                               {module.subtasks.map((subtask) => (
-                                <tr key={subtask.id} className="border-b border-blue-100 hover:bg-blue-50">
+                                <tr key={subtask.id} className={`border-b border-blue-100 hover:bg-blue-50 ${
+                                  isSubtaskOverdue(subtask) ? 'bg-red-50 border-red-200' : ''
+                                }`}>
                                   <td className="p-3">
                                     <Checkbox
                                       checked={selectedModules.includes(module.id)}
@@ -1511,7 +1564,15 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                   </td>
                                   <td className="p-3">
                                     <div>
-                                      <div className="font-medium text-gray-900">{subtask.name}</div>
+                                      <div className="font-medium text-gray-900 flex items-center gap-2">
+                                        {subtask.name}
+                                        {isSubtaskOverdue(subtask) && (
+                                          <Badge variant="destructive" className="text-xs">
+                                            <AlertTriangle className="h-3 w-3 mr-1" />
+                                            Overdue
+                                          </Badge>
+                                        )}
+                                      </div>
                                       {subtask.description && (
                                         <div className="text-sm text-gray-500 truncate max-w-xs">
                                           {subtask.description}
@@ -1527,7 +1588,11 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
                                   <td className="p-3 text-sm text-gray-600">
                                     {formatDate(subtask.startDate)}
                                   </td>
-                                  <td className="p-3 text-sm text-gray-600">
+                                  <td className={`p-3 text-sm ${
+                                    isSubtaskOverdue(subtask) 
+                                      ? 'text-red-600 font-semibold' 
+                                      : 'text-gray-600'
+                                  }`}>
                                     {formatDate(subtask.dueDate)}
                                   </td>
 

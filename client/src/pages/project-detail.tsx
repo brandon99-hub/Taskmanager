@@ -29,7 +29,7 @@ import {
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { batchQuery } from "@/lib/queryBatcher";
-import { formatCurrency, calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress } from "@/lib/utils";
+import { formatCurrency, calculateWeightBasedProgress, calculateSubtaskWeightBasedProgress, calculateProjectProgress } from "@/lib/utils";
 import { useScreenSize } from "@/hooks/use-mobile";
 
 export default function ProjectDetail() {
@@ -98,6 +98,7 @@ export default function ProjectDetail() {
     createdAt: string;
     updatedAt: string;
     modules?: Module[];
+    subtasks?: any[]; // Direct subtasks under milestone
   }
 
   const auth = useAuth() as any;
@@ -111,6 +112,23 @@ export default function ProjectDetail() {
   const [editingProject, setEditingProject] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('modules');
   const [expandedMilestone, setExpandedMilestone] = useState<string | null>(null);
+  
+  // Enhanced cache invalidation function for immediate table refresh
+  const invalidateProjectCaches = async (projectId: string) => {
+    try {
+      // Invalidate all project-related queries to ensure immediate refresh
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['/api/projects'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] }),
+      ]);
+    } catch (error) {
+      console.error('Error invalidating project caches:', error);
+    }
+  };
   
   // Get search parameters to check if a specific milestone was clicked
   const search = useSearch();
@@ -186,24 +204,32 @@ export default function ProjectDetail() {
     queryFn: async () => {
       if (!projectId) return [];
       
-      // First, ensure phases exist for this project
+      // Use POST to create or get existing phases (POST endpoint handles both cases now)
+      let serverPhases: any[] = [];
       try {
-        const createResponse = await fetch(`/api/projects/${projectId}/phases`, {
+        const phasesResponse = await fetch(`/api/projects/${projectId}/phases`, {
           method: 'POST',
           credentials: 'include'
         });
-        if (!createResponse.ok && createResponse.status !== 409) {
-          // 409 means phases already exist, which is fine
+        
+        if (phasesResponse.ok) {
+          serverPhases = await phasesResponse.json();
+        } else {
+          // Only fallback to GET if POST failed for some other reason
+          serverPhases = await batchQuery(`/api/projects/${projectId}/phases`);
         }
       } catch (error) {
-        // Error creating phases, continue with fetch
+        console.log('Could not fetch or create phases');
+        // Final fallback - try GET
+        try {
+          serverPhases = await batchQuery(`/api/projects/${projectId}/phases`);
+        } catch (getError) {
+          console.log('Both POST and GET failed for phases');
+        }
       }
       
-      // Fetch the actual phases from server using batcher
-      const serverPhases = await batchQuery(`/api/projects/${projectId}/phases`);
-      
       // Transform server phase data to match client interface
-      return serverPhases.map((phase: any) => ({
+      return (serverPhases || []).map((phase: any) => ({
         id: phase.id,
         phaseNumber: phase.phaseNumber,
         phaseName: phase.phaseName,
@@ -213,7 +239,8 @@ export default function ProjectDetail() {
         status: phase.status,
         progress: phase.progress || 0,
         deliverables: phase.deliverables || [],
-        reports: phase.reports || []
+        reports: phase.reports || [],
+        modules: phase.modules || [] // Add the required modules property
       }));
     },
     enabled: !!isAuthenticated && !!projectId,
@@ -246,11 +273,24 @@ export default function ProjectDetail() {
     queryFn: async () => {
       if (!projectId) return null;
       
-      return batchQuery(`/api/projects/${projectId}/gantt`);
+      // Force fresh data with cache-busting timestamp
+      const timestamp = new Date().getTime();
+      const response = await fetch(`/api/projects/${projectId}/gantt?t=${timestamp}`, { 
+        credentials: 'include',
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch Gantt data');
+      const data = await response.json();
+      console.log('[DEBUG] Gantt data received from direct endpoint:', data);
+      return data;
     },
     enabled: !!isAuthenticated && !!projectId,
-    staleTime: 5 * 60 * 1000, // 5 minutes cache
-    refetchOnWindowFocus: false,
+    staleTime: 0, // Force fresh data to get updated phases - no cache
+    refetchOnWindowFocus: true,
   });
 
   // Fetch segment leader based on project segment
@@ -310,6 +350,10 @@ export default function ProjectDetail() {
     
     try {
       await apiRequest('PUT', `/api/projects/${project.id}/terminate`);
+      // Enhanced cache invalidation for immediate table refresh
+      if (project.id) {
+        await invalidateProjectCaches(project.id);
+      }
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       toast({
         title: "Success",
@@ -341,11 +385,8 @@ export default function ProjectDetail() {
     if (!projectId) return;
     try {
       await apiRequest('PUT', `/api/phases/${phaseId}`, updates);
-      // Invalidate phase queries to refresh the data
-      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
-      // Also invalidate modules query to ensure phase status updates are reflected
-      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] });
+      // Enhanced cache invalidation for immediate table refresh
+      await invalidateProjectCaches(projectId);
       toast({
         title: "Success",
         description: "Phase updated successfully",
@@ -364,11 +405,8 @@ export default function ProjectDetail() {
     if (!projectId) return;
     try {
       await apiRequest('PUT', `/api/phases/${phaseId}/complete`, { completionReport });
-      // Invalidate phase queries to refresh the data
-      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
-      // Also invalidate modules query to ensure phase status updates are reflected
-      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] });
+      // Enhanced cache invalidation for immediate table refresh
+      await invalidateProjectCaches(projectId);
       toast({
         title: "Success",
         description: "Phase completed successfully",
@@ -392,7 +430,8 @@ export default function ProjectDetail() {
       } else {
         await apiRequest('POST', `/api/projects/${projectId}/charter`, charterData);
       }
-      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'charter'] });
+      // Enhanced cache invalidation for immediate table refresh
+      await invalidateProjectCaches(projectId);
       toast({
         title: "Success",
         description: "Project charter saved successfully",
@@ -420,8 +459,10 @@ export default function ProjectDetail() {
         expectedCollectionDate: milestone.expectedCollectionDate
       });
       
-      // Refresh the milestones data
-      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'milestones'] });
+      // Enhanced cache invalidation for immediate table refresh
+      if (projectId) {
+        await invalidateProjectCaches(projectId);
+      }
       
       toast({
         title: "Success",
@@ -696,16 +737,28 @@ export default function ProjectDetail() {
                   <div className="flex items-center justify-between text-sm">
                     <span>Weight-based Progress:</span>
                     <span className="font-medium text-blue-600">{(() => {
-                      if (!ganttData?.tasks || ganttData.tasks.length === 0) return 0;
-                      const totalProgress = ganttData.tasks.reduce((sum: number, task: any) => sum + (task.progress || 0), 0);
-                      return Math.round(totalProgress / ganttData.tasks.length);
+                      // Use comprehensive progress calculation including subtasks from both sources:
+                      // 1. Direct subtasks under milestone (milestone.subtasks)
+                      // 2. Subtasks under modules (only for Phase 3 modules)
+                      const allMilestones = milestones || [];
+                      const directSubtasks = allMilestones.flatMap(m => m.subtasks || []);
+                      const moduleSubtasks = allMilestones.flatMap(m => 
+                        (m.modules || []).flatMap(module => module.subtasks || [])
+                      );
+                      const allSubtasks = [...directSubtasks, ...moduleSubtasks];
+                      return calculateProjectProgress(allMilestones, allSubtasks);
                     })()}%</span>
                   </div>
                   <Progress 
                     value={(() => {
-                      if (!ganttData?.tasks || ganttData.tasks.length === 0) return 0;
-                      const totalProgress = ganttData.tasks.reduce((sum: number, task: any) => sum + (task.progress || 0), 0);
-                      return Math.round(totalProgress / ganttData.tasks.length);
+                      // Use comprehensive progress calculation including subtasks from both sources
+                      const allMilestones = milestones || [];
+                      const directSubtasks = allMilestones.flatMap(m => m.subtasks || []);
+                      const moduleSubtasks = allMilestones.flatMap(m => 
+                        (m.modules || []).flatMap(module => module.subtasks || [])
+                      );
+                      const allSubtasks = [...directSubtasks, ...moduleSubtasks];
+                      return calculateProjectProgress(allMilestones, allSubtasks);
                     })()} 
                     className="h-2" 
                   />
@@ -731,16 +784,24 @@ export default function ProjectDetail() {
                 </div>
                 <Progress 
                   value={(() => {
-                    if (!ganttData?.tasks || ganttData.tasks.length === 0) return 0;
-                    const totalProgress = ganttData.tasks.reduce((sum: number, task: any) => sum + (task.progress || 0), 0);
-                    return Math.round(totalProgress / ganttData.tasks.length);
+                    const allMilestones = milestones || [];
+                    const directSubtasks = allMilestones.flatMap(m => m.subtasks || []);
+                    const moduleSubtasks = allMilestones.flatMap(m => 
+                      (m.modules || []).flatMap(module => module.subtasks || [])
+                    );
+                    const allSubtasks = [...directSubtasks, ...moduleSubtasks];
+                    return calculateProjectProgress(allMilestones, allSubtasks);
                   })()} 
                   className="h-2" 
                 />
                 <p className="text-xs text-gray-500">Weight-based progress: {(() => {
-                  if (!ganttData?.tasks || ganttData.tasks.length === 0) return 0;
-                  const totalProgress = ganttData.tasks.reduce((sum: number, task: any) => sum + (task.progress || 0), 0);
-                  return Math.round(totalProgress / ganttData.tasks.length);
+                  const allMilestones = milestones || [];
+                  const directSubtasks = allMilestones.flatMap(m => m.subtasks || []);
+                  const moduleSubtasks = allMilestones.flatMap(m => 
+                    (m.modules || []).flatMap(module => module.subtasks || [])
+                  );
+                  const allSubtasks = [...directSubtasks, ...moduleSubtasks];
+                  return calculateProjectProgress(allMilestones, allSubtasks);
                 })()}%</p>
               </div>
 
@@ -939,6 +1000,7 @@ export default function ProjectDetail() {
                 projectTeam={project.team}
                 onEdit={handleEditMilestone}
                 initiallyExpandedModule={expandedMilestone}
+                projectId={projectId}
               />
             )}
           </div>
@@ -971,8 +1033,8 @@ export default function ProjectDetail() {
                   if (confirm('Are you sure you want to delete this milestone?')) {
                     try {
                       await apiRequest('DELETE', `/api/milestones/${milestoneId}`);
-                      // Refresh the milestones list
-                      queryClient.invalidateQueries({ queryKey: ['/api/projects', project.id, 'milestones'] });
+                      // Enhanced cache invalidation for immediate table refresh
+                      await invalidateProjectCaches(project.id);
                       toast({ title: 'Success', description: 'Milestone deleted' });
                     } catch (error) {
                       toast({ title: 'Error', description: 'Failed to delete milestone', variant: 'destructive' });

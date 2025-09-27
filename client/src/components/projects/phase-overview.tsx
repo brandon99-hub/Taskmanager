@@ -90,6 +90,10 @@ export default function PhaseOverview({
   const getPhaseProgress = (phaseNumber: number) => {
     if (!modules) return 0;
     const phaseModules = modules.filter(m => m.phaseNumber === phaseNumber);
+    
+    // Additional validation: if no modules exist with specific phase number, return 0 percent
+    if (phaseModules.length === 0) return 0;
+    
     return calculateWeightBasedProgress(phaseModules);
   };
 

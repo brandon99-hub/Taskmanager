@@ -3,11 +3,11 @@ import slowDown from 'express-slow-down';
 import type { Express, Request, Response, NextFunction } from 'express';
 
 export function setupRateLimiting(app: Express) {
-  // Role-based rate limiting configuration (increased limits)
+  // Role-based rate limiting configuration (enhanced for concurrent users)
   const roleLimits = {
-    admin: { windowMs: 900000, max: 2000 },     // 2000 requests per 15 minutes
-    manager: { windowMs: 900000, max: 1000 },   // 1000 requests per 15 minutes
-    employee: { windowMs: 900000, max: 500 },   // 500 requests per 15 minutes
+    admin: { windowMs: 900000, max: 5000 },     // 5000 requests per 15 minutes (was 2000)
+    manager: { windowMs: 900000, max: 2500 },  // 2500 requests per 15 minutes (was 1000)
+    employee: { windowMs: 900000, max: 1500 },  // 1500 requests per 15 minutes (was 500)
     guest: { windowMs: 900000, max: 100 }       // 100 requests per 15 minutes
   };
 
@@ -117,15 +117,17 @@ export function setupRateLimiting(app: Express) {
     }
   });
   
-  // Endpoint-specific rate limiting
+  // Endpoint-specific rate limiting (enhanced for concurrent access)
   const endpointLimits = {
-    '/api/auth/login': { windowMs: 900000, max: 5 },
+    '/api/auth/login': { windowMs: 900000, max: 10 },         // Increased for admin multitasking
     '/api/auth/register': { windowMs: 3600000, max: 3 },
     '/api/auth/reset-password': { windowMs: 3600000, max: 3 },
-    '/api/projects': { windowMs: 900000, max: 50 },
-    '/api/dashboard/metrics': { windowMs: 60000, max: 30 },
+    '/api/projects': { windowMs: 900000, max: 100 },         // Increased from 50
+    '/api/dashboard/metrics': { windowMs: 60000, max: 60 },   // Increased to handle refreshing
     '/api/reports/export': { windowMs: 3600000, max: 10 },
-    '/api/users': { windowMs: 3600000, max: 20 }
+    '/api/users': { windowMs: 3600000, max: 50 },            // Increased from 20
+    '/api/milestones': { windowMs: 900000, max: 150 },        // New - high limits for milestone tables
+    '/api/modules': { windowMs: 900000, max: 150 }           // New - high limits for module tables
   };
 
   // Create endpoint-specific limiters
@@ -136,8 +138,8 @@ export function setupRateLimiting(app: Express) {
         const user = (req as any).user;
         const role = user?.role || 'guest';
         
-        // Adjust limits based on role
-        const multiplier = role === 'admin' ? 2 : role === 'manager' ? 1.5 : 1;
+        // Enhanced multipliers for better concurrent user support
+        const multiplier = role === 'admin' ? 3 : role === 'manager' ? 2 : 1.5;
         return Math.floor(limits.max * multiplier);
       },
       keyGenerator: (req: Request) => {
@@ -195,13 +197,13 @@ export function setupRateLimiting(app: Express) {
   app.use('/api/users', sensitiveOperationsLimiter);
   app.use('/api/auth/reset-password', sensitiveOperationsLimiter);
   
-  // Special rate limiting for batch endpoint (higher limits)
+  // Special rate limiting for batch endpoint (significantly higher limits for concurrent users)
   const batchLimiter = rateLimit({
     windowMs: 60000, // 1 minute
     max: (req: Request) => {
       const user = (req as any).user;
       const role = user?.role || 'guest';
-      return role === 'admin' ? 50 : role === 'manager' ? 30 : role === 'employee' ? 20 : 5;
+      return role === 'admin' ? 500 : role === 'manager' ? 250 : role === 'employee' ? 150 : 10;
     },
     keyGenerator: (req: Request) => {
       const user = (req as any).user;
@@ -214,6 +216,8 @@ export function setupRateLimiting(app: Express) {
       message: 'Batch request limit exceeded, please try again later.',
       retryAfter: '1 minute'
     },
+    // Skip successful requests (to reduce congestion)
+    skipSuccessfulRequests: true,
     standardHeaders: true,
     legacyHeaders: false,
   });

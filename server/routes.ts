@@ -242,6 +242,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           projectDbId: projects.id,
           projectName: projects.name,
           projectClient: projects.client,
+          projectContactEmail: projects.contactEmail,
           projectSegment: projects.segment,
           projectStatus: projects.status,
           // User details
@@ -260,8 +261,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           )
         );
 
-      // Get overdue subtasks
-      const overdueSubtasks = await db
+      // Get overdue subtasks linked to modules
+      const overdueModuleSubtasks = await db
         .select({
           id: subtasks.id,
           name: subtasks.name,
@@ -273,17 +274,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           actualHours: subtasks.actualHours,
           createdAt: subtasks.createdAt,
           updatedAt: subtasks.updatedAt,
-          // Module details
           moduleId: modules.id,
           moduleName: modules.name,
           moduleDescription: modules.description,
-          // Project details
           projectId: projects.id,
           projectName: projects.name,
           projectClient: projects.client,
+          projectContactEmail: projects.contactEmail,
           projectSegment: projects.segment,
           projectStatus: projects.status,
-          // User details
           userId: users.id,
           userFirstName: users.firstName,
           userLastName: users.lastName,
@@ -296,10 +295,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(
           and(
             sql`${subtasks.dueDate} < ${now}`,
-            sql`${subtasks.status} NOT IN ('completed', 'cancelled')`
+            sql`${subtasks.status} NOT IN ('completed', 'cancelled')`,
+            sql`${subtasks.moduleId} IS NOT NULL`
           )
-        )
-        .orderBy(subtasks.dueDate);
+        );
+
+      // Get overdue subtasks linked to milestones
+      const overdueMilestoneSubtasks = await db
+        .select({
+          id: subtasks.id,
+          name: subtasks.name,
+          description: subtasks.description,
+          status: subtasks.status,
+          priority: subtasks.priority,
+          dueDate: subtasks.dueDate,
+          estimatedHours: subtasks.estimatedHours,
+          actualHours: subtasks.actualHours,
+          createdAt: subtasks.createdAt,
+          updatedAt: subtasks.updatedAt,
+          moduleId: milestones.id, // Link to milestone instead
+          moduleName: milestones.name,
+          moduleDescription: milestones.description,
+          projectId: projects.id,
+          projectName: projects.name,
+          projectClient: projects.client,
+          projectContactEmail: projects.contactEmail,
+          projectSegment: projects.segment,
+          projectStatus: projects.status,
+          userId: users.id,
+          userFirstName: users.firstName,
+          userLastName: users.lastName,
+          userEmail: users.email,
+        })
+        .from(subtasks)
+        .leftJoin(milestones, eq(subtasks.milestoneId, milestones.id))
+        .leftJoin(projects, eq(milestones.projectId, projects.id))
+        .leftJoin(users, eq(subtasks.assignedUserId, users.id))
+        .where(
+          and(
+            sql`${subtasks.dueDate} < ${now}`,
+            sql`${subtasks.status} NOT IN ('completed', 'cancelled')`,
+            sql`${subtasks.milestoneId} IS NOT NULL`
+          )
+        );
+
+      // Combine all overdue subtasks and sort by due date
+      const allOverdueSubtasks = [...overdueModuleSubtasks, ...overdueMilestoneSubtasks]
+        .filter(item => item.dueDate)
+        .sort((a, b) => {
+          const dateA = new Date(a.dueDate || 0);
+          const dateB = new Date(b.dueDate || 0);
+          return dateA.getTime() - dateB.getTime();
+        });
 
       // Transform milestones
       const transformedMilestones = overdueMilestones.map(milestone => ({
@@ -320,6 +367,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: milestone.projectDbId,
           name: milestone.projectName,
           client: milestone.projectClient,
+          contactEmail: milestone.projectContactEmail,
           segment: milestone.projectSegment,
           status: milestone.projectStatus,
         },
@@ -332,7 +380,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
 
       // Transform subtasks
-      const transformedSubtasks = overdueSubtasks.map(subtask => ({
+      const transformedSubtasks = allOverdueSubtasks.map(subtask => ({
         id: subtask.id,
         name: subtask.name,
         description: subtask.description,
@@ -354,6 +402,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: subtask.projectId,
           name: subtask.projectName,
           client: subtask.projectClient,
+          contactEmail: subtask.projectContactEmail,
           segment: subtask.projectSegment,
           status: subtask.projectStatus,
         },
@@ -578,6 +627,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           projectDbId: projects.id,
           projectName: projects.name,
           projectClient: projects.client,
+          projectContactEmail: projects.contactEmail,
           projectSegment: projects.segment,
           projectStatus: projects.status,
           // User details
@@ -611,6 +661,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: milestone.projectDbId,
           name: milestone.projectName,
           client: milestone.projectClient,
+          contactEmail: milestone.projectContactEmail,
           segment: milestone.projectSegment,
           status: milestone.projectStatus,
         },
@@ -1425,7 +1476,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Limit batch size to prevent abuse
-      if (queries.length > 20) {
+      if (queries.length > 70) {
         return res.status(400).json({ error: 'Batch size too large' });
       }
 
@@ -1448,6 +1499,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (status) projects = projects.filter((p: any) => p.status === status);
               
               return { data: projects };
+            } else if (url.match(/\/api\/projects\/[\w-]+$/)) {
+              // Get single project by ID
+              const match = url.match(/\/api\/projects\/([^\/]+)$/);
+              if (match && match[1]) {
+                const projectId = match[1];
+                try {
+                  const project = await storage.getProject(projectId);
+                  return { data: project || null };
+                } catch (error) {
+                  return { error: error instanceof Error ? error.message : 'Failed to load project' };
+                }
+              } else {
+                return { error: 'Invalid project ID' };
+              }
             } else if (url.includes('/api/milestones')) {
               // Get all milestones
               const milestones = await storage.getMilestones();
@@ -1476,6 +1541,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
               // Get all tasks/modules
               const tasks = await storage.getTasks();
               return { data: tasks };
+            } else if (url.includes('/api/projects') && url.includes('/gantt')) {
+              // Get Gantt chart data for a project
+              const match = url.match(/\/api\/projects\/([^\/]+)\/gantt/);
+              if (match && match[1]) {
+                const projectId = match[1];
+                try {
+                const project = await storage.getProject(projectId);
+                const modules = await storage.getModulesByProject(projectId);
+                const milestones = await storage.getMilestonesByProject(projectId);
+                
+                // Format data for GanttChart component
+                let phases: any[] = [];
+                try {
+                  phases = await storage.getProjectPhases(projectId);
+                } catch (error) {
+                  console.log('Phases not found for Gantt chart');
+                }
+                
+                const ganttData = {
+                  project: {
+                    id: project?.id || projectId,
+                    name: project?.name || 'Unknown Project',
+                    startDate: project?.startDate || new Date().toISOString(),
+                    endDate: project?.endDate || new Date().toISOString()
+                  },
+                  phases: phases.map((phase: any) => ({
+                    id: phase.id,
+                    phaseNumber: phase.phaseNumber,
+                    name: phase.phaseName || phase.name,
+                    startDate: phase.startDate,
+                    endDate: phase.endDate,
+                    status: phase.status || 'not_started',
+                    progress: phase.progress || 0
+                  })),
+                  tasks: modules?.map((module: any) => ({
+                    id: module.id,
+                    name: module.name,
+                    startDate: module.startDate,
+                    dueDate: module.dueDate,
+                    status: module.status || 'not_started',
+                    progress: module.progressPercent || 0,
+                    priority: module.priority || 'medium',
+                    phaseNumber: module.phaseNumber,
+                    assignedUser: module.assignedUser ? {
+                      firstName: module.assignedUser.firstName,
+                      lastName: module.assignedUser.lastName,
+                      email: module.assignedUser.email
+                    } : undefined,
+                    subtasks: module.subtasks?.map((subtask: any) => ({
+                      id: subtask.id,
+                      name: subtask.name,
+                      startDate: subtask.startDate,
+                      dueDate: subtask.dueDate,
+                      status: subtask.status,
+                      assignedUser: subtask.assignedUser ? {
+                        firstName: subtask.assignedUser.firstName,
+                        lastName: subtask.assignedUser.lastName,
+                        email: subtask.assignedUser.email
+                      } : undefined
+                    })) || []
+                  })) || []
+                };
+                return { data: ganttData };
+              } catch (error) {
+                return { error: error instanceof Error ? error.message : 'Failed to load Gantt data' };
+              }
+            } else {
+              return { error: 'Invalid project ID in gantt query' };
+            }
+          } else if (url.includes('/api/projects') && url.includes('/modules')) {
+              // Get modules for a project  
+              const match = url.match(/\/api\/projects\/([^\/]+)\/modules/);
+              if (match && match[1]) {
+                const projectId = match[1];
+                try {
+                  const modules = await storage.getModulesByProject(projectId);
+                  return { data: modules || [] };
+                } catch (error) {
+                  return { error: error instanceof Error ? error.message : 'Failed to load modules' };
+                }
+              } else {
+                return { error: 'Invalid project ID in modules query' };
+              }
+          } else if (url.includes('/api/projects') && url.includes('/milestones')) {
+              // Get milestones for a project
+              const match = url.match(/\/api\/projects\/([^\/]+)\/milestones/);
+              if (match && match[1]) {
+                const projectId = match[1];
+                try {
+                  const milestones = await storage.getMilestonesByProject(projectId);
+                  return { data: milestones || [] };
+                } catch (error) {
+                  return { error: error instanceof Error ? error.message : 'Failed to load milestones' };
+                }
+              } else {
+                return { error: 'Invalid project ID in milestones query' };
+              }
             } else {
               return { error: 'Unsupported batch query' };
             }
@@ -1764,21 +1926,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/projects/:id/phases', isAuthenticated, async (req: any, res) => {
     try {
-      // Allow all authenticated users to create phases (they're just metadata)
-      const phases = await storage.createProjectPhases(req.params.id);
-      
-      // Check if phases were already existing (not newly created)
+      // Check if phases already exist
       const existingPhases = await storage.getProjectPhases(req.params.id);
-      if (existingPhases.length > 0 && phases.length === existingPhases.length) {
-        // Phases already existed, return 409 to indicate they already exist
-        res.status(409).json(phases);
+      if (existingPhases.length > 0) {
+        // Phases already exist, return them with 200 OK
+        res.status(200).json(existingPhases);
       } else {
-        // New phases were created
+        // Create new phases
+        const phases = await storage.createProjectPhases(req.params.id);
         res.status(201).json(phases);
       }
     } catch (error) {
-      console.error("Error creating project phases:", error);
-      res.status(500).json({ message: "Failed to create project phases" });
+      console.error("Error handling project phases:", error);
+      res.status(500).json({ message: "Failed to handle project phases" });
     }
   });
 
@@ -2381,27 +2541,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const phases = await storage.getProjectPhases(req.params.id);
       let tasks: any[] = await storage.getTasksByProject(req.params.id) as any[];
 
-      // Also include non-Phase-3 milestones as task-like entries
+      // Use getModulesByProject to get all milestones including Phase 3 with proper phase logic
       try {
-        const projectMilestones = await storage.getMilestonesByProject(req.params.id);
-        const milestoneTasks = (projectMilestones || [])
-          .filter((m: any) => m && (m as any).phaseNumber !== 3)
-          .map((m: any) => ({
-            id: m.id,
-            name: m.name,
-            startDate: m.startDate,
-            dueDate: m.endDate,
-            status: m.status || 'not_started',
-            progressPercent: 0,
-            assignedUser: null,
-            priority: m.priority || 'medium',
-            phaseNumber: m.phaseNumber,
-            phaseName: m.phaseName,
-            subtasks: (m as any).subtasks || [],
-            isMilestone: true,
-            billingStatus: m.billingStatus || 'none',
-          }));
-        tasks = [...tasks, ...milestoneTasks];
+        const projectModules = await storage.getModulesByProject(req.params.id);
+        
+        // Flatten the milestone data for Gantt chart
+        const flattenedTasks: any[] = [];
+        
+        projectModules.forEach((milestone: any) => {
+          if (milestone.isMilestone) {
+            // For Phase 3 milestones, include the milestone itself and its modules
+            if (milestone.phaseNumber === 3 && milestone.modules && milestone.modules.length > 0) {
+              // Add the milestone as a parent task
+              const milestoneTask = {
+                id: milestone.id,
+                name: milestone.name,
+                startDate: milestone.startDate,
+                dueDate: milestone.dueDate,
+                status: 'not_started', // Milestone status
+                progressPercent: 0,
+                assignedUser: null,
+                priority: milestone.priority || 'medium',
+                phaseNumber: milestone.phaseNumber,
+                phaseName: milestone.phaseName,
+                subtasks: [],
+                isMilestone: true,
+                billingStatus: milestone.billingStatus || 'none',
+                originalBillingStatus: milestone.billingStatus || 'none',
+                isParent: true, // Mark as parent for Phase 3
+              };
+              flattenedTasks.push(milestoneTask);
+              
+              // Add modules under this milestone as child tasks
+              milestone.modules.forEach((module: any) => {
+                const moduleTask = {
+                  id: module.id,
+                  name: module.name,
+                  startDate: module.startDate,
+                  dueDate: module.dueDate,
+                  status: module.status || 'not_started',
+                  progressPercent: module.progressPercent || 0,
+                  assignedUser: module.assignedUser,
+                  priority: module.priority || 'medium',
+                  phaseNumber: milestone.phaseNumber, // Inherit from parent milestone
+                  phaseName: milestone.phaseName,
+                  subtasks: module.subtasks || [],
+                  isMilestone: false,
+                  billingStatus: null,
+                  originalBillingStatus: null,
+                  parentMilestoneId: milestone.id, // Link to parent milestone
+                  isChild: true, // Mark as child for Phase 3
+                };
+                flattenedTasks.push(moduleTask);
+              });
+            } else {
+              // For non-Phase 3 milestones, add them as regular tasks
+              const milestoneTask = {
+                id: milestone.id,
+                name: milestone.name,
+                startDate: milestone.startDate,
+                dueDate: milestone.dueDate,
+                status: 'not_started',
+                progressPercent: 0,
+                assignedUser: null,
+                priority: milestone.priority || 'medium',
+                phaseNumber: milestone.phaseNumber,
+                phaseName: milestone.phaseName,
+                subtasks: milestone.subtasks || [],
+                isMilestone: true,
+                billingStatus: milestone.billingStatus || 'none',
+                originalBillingStatus: milestone.billingStatus || 'none',
+              };
+              flattenedTasks.push(milestoneTask);
+            }
+          }
+        });
+        
+        tasks = [...tasks, ...flattenedTasks];
       } catch (e) {
         console.warn('Gantt: failed to include milestones as tasks:', (e as any)?.message || e);
       }
@@ -2422,6 +2638,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return task;
         });
       }
+
+      // Sort tasks by phase number (1-6), then by start date within each phase
+      tasks.sort((a, b) => {
+        // First sort by phase number
+        const phaseA = a.phaseNumber || 999; // Put items without phase at the end
+        const phaseB = b.phaseNumber || 999;
+        
+        if (phaseA !== phaseB) {
+          return phaseA - phaseB;
+        }
+        
+        // Within the same phase, sort by start date
+        const dateA = a.startDate ? new Date(a.startDate).getTime() : 0;
+        const dateB = b.startDate ? new Date(b.startDate).getTime() : 0;
+        
+        if (dateA !== dateB) {
+          return dateA - dateB;
+        }
+        
+        // If dates are the same, sort by name for consistency
+        return a.name.localeCompare(b.name);
+      });
 
       // Calculate progress for each task based on subtasks and billing status
       const tasksWithCalculatedProgress = tasks.map(task => {
@@ -3025,8 +3263,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Enforce workflow: in_progress → fc_review → qa → client_review → completed
         const allowedTransitions: Record<string, string[]> = {
           'not_started': ['in_progress'],
-          'in_progress': ['fc_review', 'on_hold', 'cancelled'],
-          'fc_review': ['in_progress', 'qa', 'on_hold', 'cancelled'], // FC can send back or move to QA
+          'in_progress': ['fc_review', 'completed', 'on_hold', 'cancelled'],
+          'fc_review': ['in_progress', 'qa', 'completed', 'on_hold', 'cancelled'], // FC can send back, move to QA, or mark complete
           'qa': ['client_review', 'in_progress', 'on_hold', 'cancelled'], // Can go back to dev or to client
           'client_review': ['completed', 'in_progress', 'on_hold', 'cancelled'], // Can be completed or sent back
           'completed': ['client_review'], // Can be reopened for review

@@ -53,19 +53,36 @@ export default function Projects() {
     enabled: !!isAuthenticated,
   });
 
-  // Fetch milestones for all projects to calculate weight-based progress
-  const { data: allMilestones = [], isLoading: milestonesLoading } = useQuery<any[]>({
-    queryKey: ['/api/milestones'],
+  // Fetch milestone data for each project using batch loading for better performance
+  const { data: projectMilestoneData = [], isLoading: milestonesLoading } = useQuery<Record<string, any[]>>({
+    queryKey: ['/api/projects/milestones-data'],
     queryFn: async () => {
+      const projectMilestones: Record<string, any[]> = {};
+      if (!projects.length) return projectMilestones;
+      
       try {
-        const data = await batchQuery('/api/milestones');
-        return Array.isArray(data) ? data : [];
+        // Use batch loading for better performance
+        const batchPromises = projects.map(project => 
+          batchQuery(`/api/projects/${project.id}/milestones`)
+        );
+        
+        const results = await Promise.allSettled(batchPromises);
+        
+        results.forEach((result, index) => {
+          const project = projects[index];
+          if (result.status === 'fulfilled') {
+            projectMilestones[project.id] = Array.isArray(result.value) ? result.value : [];
+          } else {
+            console.error(`Error fetching milestones for project ${project.id}:`, result.reason);
+            projectMilestones[project.id] = [];
+          }
+        });
       } catch (error) {
-        console.error('Error fetching milestones:', error);
-        return [];
+        console.error('Error fetching project milestones:', error);
       }
+      return projectMilestones;
     },
-    enabled: !!isAuthenticated,
+    enabled: !!isAuthenticated && projects.length > 0,
     staleTime: 10 * 60 * 1000, // 10 minutes cache
     refetchOnWindowFocus: false,
   });
@@ -179,46 +196,65 @@ export default function Projects() {
     }
   };
 
-  const { data: overdueTasks = [] } = useQuery<any[]>({
-    queryKey: ['/api/dashboard/overdue-tasks'],
+  const { data: overdueCombinedData = [] } = useQuery<any[]>({
+    queryKey: ['/api/dashboard/overdue-combined'],
     queryFn: async () => {
       try {
-        const res = await fetch('/api/dashboard/overdue-tasks', { 
+        const res = await fetch('/api/dashboard/overdue-combined', { 
           credentials: 'include', 
           cache: 'no-store' 
         });
-        if (!res.ok) throw new Error('Failed to fetch overdue tasks');
+        if (!res.ok) throw new Error('Failed to fetch combined overdue data');
         const data = await res.json();
         return Array.isArray(data) ? data : [];
       } catch (error) {
-        console.error('Error fetching overdue tasks:', error);
+        console.error('Error fetching combined overdue data:', error);
         return [];
       }
     },
     enabled: !!isAuthenticated,
   });
 
-  // Get overdue tasks count for each project
+  // Get overdue data for a project
+  const getProjectOverdueData = (projectId: string) => {
+    const safeOverdueData = Array.isArray(overdueCombinedData) ? overdueCombinedData : [];
+    const projectOverdue = safeOverdueData.find((item: any) => 
+      item.project?.id === projectId || item.projectId === projectId
+    );
+    
+    if (!projectOverdue) return { milestones: 0, subtasks: 0, total: 0 };
+    
+    const milestoneCount = Array.isArray(projectOverdue.milestones) ? projectOverdue.milestones.length : 0;
+    const subtaskCount = Array.isArray(projectOverdue.subtasks) ? projectOverdue.subtasks.length : 0;
+    
+    return {
+      milestones: milestoneCount,
+      subtasks: subtaskCount,
+      total: milestoneCount + subtaskCount
+    };
+  };
+
+  // Get overdue tasks count for each project (keep for backward compatibility)
   const getProjectOverdueCount = (projectId: string) => {
-    const safeOverdueTasks = Array.isArray(overdueTasks) ? overdueTasks : [];
-    return safeOverdueTasks.filter((task: any) => task.projectId === projectId).length;
+    const { total } = getProjectOverdueData(projectId);
+    return total;
   };
 
   // Calculate comprehensive project progress using both milestones and subtasks
   const getProjectWeightBasedProgress = (projectId: string) => {
-    // Ensure we have arrays before calling filter
-    const safeMilestones = Array.isArray(allMilestones) ? allMilestones : [];
-    const safeSubtasks = Array.isArray(allSubtasks) ? allSubtasks : [];
-    
-    const projectMilestones = safeMilestones.filter(milestone => 
-      milestone.projectId === projectId || milestone.project?.id === projectId
+    // Use project-specific milestone data now
+    const projectMilestoneDataRecord = projectMilestoneData as Record<string, any[]>;
+    const projectMilestones = Array.isArray(projectMilestoneDataRecord[projectId]) ? 
+      projectMilestoneDataRecord[projectId] : [];
+
+    // Get subtasks from the milestone data like project detail does
+    const directSubtasks = projectMilestones.flatMap((m: any) => m.subtasks || []);
+    const moduleSubtasks = projectMilestones.flatMap((m: any) => 
+      (m.modules || []).flatMap((module: any) => module.subtasks || [])
     );
+    const allSubtasks = [...directSubtasks, ...moduleSubtasks];
     
-    const projectSubtasks = safeSubtasks.filter(subtask => 
-      subtask.projectId === projectId || subtask.project?.id === projectId
-    );
-    
-    return calculateProjectProgress(projectMilestones, projectSubtasks);
+    return calculateProjectProgress(projectMilestones, allSubtasks);
   };
 
   // Memoized project progress calculations to prevent excessive re-computation
@@ -228,7 +264,7 @@ export default function Projects() {
       progressMap[project.id] = getProjectWeightBasedProgress(project.id);
     });
     return progressMap;
-  }, [projects, allMilestones, allSubtasks]);
+  }, [projects, projectMilestoneData]);
 
   const handleDeactivateProject = async (e: React.MouseEvent, project: any) => {
     e.stopPropagation();
@@ -476,7 +512,9 @@ export default function Projects() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {currentProjects.map((project: any) => {
-                  const overdueCount = getProjectOverdueCount(project.id);
+                  const overdueData = getProjectOverdueData(project.id);
+                  const overdueCount = overdueData.total;
+                  const { milestones: overdueMilestones, subtasks: overdueSubtasks } = overdueData;
                   const milestoneCount = project.milestoneCount || 0;
                   const completedMilestoneCount = project.completedMilestoneCount || 0;
                   const completionRate = milestoneCount > 0 ? Math.round((completedMilestoneCount / milestoneCount) * 100) : 0;
@@ -578,7 +616,23 @@ export default function Projects() {
                               </Badge>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>{overdueCount} overdue task{overdueCount > 1 ? 's' : ''}</p>
+                              <div className="space-y-1">
+                                {overdueMilestones > 0 && (
+                                  <p className="text-sm font-medium">
+                                    📋 {overdueMilestones} overdue milestone{overdueMilestones > 1 ? 's' : ''}
+                                  </p>
+                                )}
+                                {overdueSubtasks > 0 && (
+                                  <p className="text-sm font-medium">
+                                    📝 {overdueSubtasks} overdue subtask{overdueSubtasks > 1 ? 's' : ''}
+                                  </p>
+                                )}
+                                {overdueMilestones > 0 && overdueSubtasks > 0 && (
+                                  <p className="text-xs text-gray-500 border-t pt-1">
+                                    Total: {overdueCount} overdue items
+                                  </p>
+                                )}
+                              </div>
                             </TooltipContent>
                           </Tooltip>
                         ) : (
@@ -660,7 +714,9 @@ export default function Projects() {
             onTouchEnd={handleSwipe}
           >
             {currentProjects.map((project: any) => {
-              const overdueCount = getProjectOverdueCount(project.id);
+              const overdueData = getProjectOverdueData(project.id);
+              const overdueCount = overdueData.total;
+              const { milestones: overdueMilestones, subtasks: overdueSubtasks } = overdueData;
               const milestoneCount = project.milestoneCount ?? 0;
               const completedMilestoneCount = project.completedMilestoneCount ?? 0;
               const completionRate = milestoneCount > 0 ? Math.round((completedMilestoneCount / milestoneCount) * 100) : project.progress;
@@ -687,7 +743,23 @@ export default function Projects() {
                                 </Badge>
                               </TooltipTrigger>
                               <TooltipContent>
-                                <p>{overdueCount} overdue task{overdueCount > 1 ? 's' : ''}</p>
+                                <div className="space-y-1">
+                                  {overdueMilestones > 0 && (
+                                    <p className="text-sm font-medium">
+                                      📋 {overdueMilestones} overdue milestone{overdueMilestones > 1 ? 's' : ''}
+                                    </p>
+                                  )}
+                                  {overdueSubtasks > 0 && (
+                                    <p className="text-sm font-medium">
+                                      📝 {overdueSubtasks} overdue subtask{overdueSubtasks > 1 ? 's' : ''}
+                                    </p>
+                                  )}
+                                  {overdueMilestones > 0 && overdueSubtasks > 0 && (
+                                    <p className="text-xs text-gray-500 border-t pt-1">
+                                      Total: {overdueCount} overdue items
+                                    </p>
+                                  )}
+                                </div>
                               </TooltipContent>
                             </Tooltip>
                           )}

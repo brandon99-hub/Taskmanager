@@ -500,30 +500,6 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
          return initialValue !== currentValue;
        });
        
-       console.log('Form comparison:', {
-         initialFormValues,
-         currentFormValues: {
-           client: currentValues.client,
-           contactPerson: currentValues.contactPerson,
-           contactPhone: currentValues.contactPhone,
-           contactEmail: currentValues.contactEmail,
-           startDate: currentValues.startDate,
-           endDate: currentValues.endDate,
-           segment: currentValues.segment,
-           teamId: currentValues.teamId,
-           budget: currentValues.budget,
-           status: currentValues.status
-         },
-         hasActualChanges
-       });
-      
-      // Debug: Only log when there are actual changes
-      if (hasActualChanges) {
-        console.log('Form has actual changes:', { 
-          hasActualChanges, 
-          formIsDirty: form.formState.isDirty
-        });
-      }
       
       setIsFormDirty(hasActualChanges);
     } else {
