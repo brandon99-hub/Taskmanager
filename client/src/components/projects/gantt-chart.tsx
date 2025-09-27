@@ -1137,7 +1137,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                 <div>
                   <CardTitle className="flex items-center gap-2">
                     <Target className="h-5 w-5 text-blue-600" />
-                    Project Timeline - Gantt Chart
+                    {currentData?.project?.name || 'Project'} Timeline - Gantt Chart
                   </CardTitle>
                   <p className="text-sm text-gray-600 mt-1">
                     Visualize project timeline and milestones
