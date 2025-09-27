@@ -606,7 +606,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { db } = await import('./db');
       const { milestones, projects, users } = await import('../shared/schema');
-      const { eq, and } = await import('drizzle-orm');
+      const { eq, and, inArray, sql } = await import('drizzle-orm');
 
       // Get completed milestones (billingStatus = 'paid') with project and user details
       const completedMilestones = await db
@@ -643,6 +643,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('Found', completedMilestones.length, 'completed milestones in database');
       
+      // Get total milestone count and total project value for each project
+      const projectIds = completedMilestones.map(m => m.projectId).filter((id, index, arr) => arr.indexOf(id) === index);
+      
+      const projectTotalCounts: Record<string, number> = {};
+      const projectTotalValues: Record<string, number> = {};
+      
+      if (projectIds.length > 0) {
+        const projectTotals = await db
+          .select({
+            projectId: milestones.projectId,
+            totalCount: sql<number>`count(*)`,
+            totalValue: sql<number>`COALESCE(SUM(${milestones.feeAmount}), 0)`
+          })
+          .from(milestones)
+          .where(inArray(milestones.projectId, projectIds))
+          .groupBy(milestones.projectId);
+        
+        projectTotals.forEach(item => {
+          projectTotalCounts[item.projectId] = Number(item.totalCount);
+          projectTotalValues[item.projectId] = Number(item.totalValue);
+        });
+      }
+      
+      // Get total milestones across all projects in the system
+      const systemTotalMilestones = await db
+        .select({
+          totalCount: sql<number>`count(*)`
+        })
+        .from(milestones);
+      
+      const systemTotal = Number(systemTotalMilestones[0]?.totalCount || 0);
+      
       // Transform the flat result into the expected nested structure
       const transformedMilestones = completedMilestones.map(milestone => ({
         id: milestone.id,
@@ -664,6 +696,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           contactEmail: milestone.projectContactEmail,
           segment: milestone.projectSegment,
           status: milestone.projectStatus,
+          totalMilestones: projectTotalCounts[milestone.projectId] || 0,
+          totalProjectValue: projectTotalValues[milestone.projectId] || 0,
         },
         createdBy: {
           id: milestone.userId,
@@ -673,7 +707,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }));
 
-      res.json(transformedMilestones);
+      res.json({
+        milestones: transformedMilestones,
+        systemTotalMilestones: systemTotal
+      });
     } catch (error) {
       console.error("Error fetching completed milestones:", error);
       res.status(500).json({ message: "Failed to fetch completed milestones" });
