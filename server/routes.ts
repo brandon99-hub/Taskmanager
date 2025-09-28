@@ -20,6 +20,7 @@ import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { users } from "../shared/schema";
 import { registerMarketingRoutes } from "./routes/marketing";
+import { logProjectAction, logModuleAction, logUserManagementAction, logTeamAction, logMilestoneAction, logInvoiceAction } from "./middleware/comprehensiveAudit";
 
 // Utility function for date validation and conversion
 function validateAndConvertDates(data: any, dateFields: string[]): { cleanedData: any; errors: string[] } {
@@ -97,6 +98,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Marketing Pipeline Routes
   registerMarketingRoutes(app);
+
+  // Comprehensive Audit Middleware - Apply to all routes
+  const { comprehensiveAuditMiddleware } = await import('./middleware/comprehensiveAudit');
+  app.use(comprehensiveAuditMiddleware());
 
   // Users listing (for selecting team members)
   app.get('/api/users', isAuthenticated, async (req: any, res) => {
@@ -1030,7 +1035,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Assign admin role to user
-  app.post('/api/admin/roles', isAuthenticated, async (req: any, res) => {
+  app.post('/api/admin/roles', isAuthenticated, logUserManagementAction('create'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -1072,7 +1077,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Remove admin role from user
-  app.delete('/api/admin/roles/:userId/:roleType', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/admin/roles/:userId/:roleType', isAuthenticated, logUserManagementAction('delete'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -1121,7 +1126,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create user with admin credentials (idempotent upsert)
-  app.post('/api/admin/users', isAuthenticated, async (req: any, res) => {
+  app.post('/api/admin/users', isAuthenticated, logUserManagementAction('create'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -1228,7 +1233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Notification endpoints
   // Send subtask assignment notification
-  app.post('/api/notifications/subtask-assignment', isAuthenticated, async (req: any, res) => {
+  app.post('/api/notifications/subtask-assignment', isAuthenticated, logProjectAction('create'), async (req: any, res) => {
     try {
       const { subtaskId, assigneeId } = req.body;
       
@@ -1269,7 +1274,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Check finance deadlines and send warnings
-  app.post('/api/notifications/finance-deadlines', isAuthenticated, async (req: any, res) => {
+  app.post('/api/notifications/finance-deadlines', isAuthenticated, logProjectAction('create'), async (req: any, res) => {
     try {
       if (!['admin', 'manager', 'finance_head'].includes(req.user.role) && !req.user.isFinanceHead) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -1357,6 +1362,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update password (will be hashed in updateUserPassword)
       await storage.updateUserPassword(req.user.id, newPassword, user.mustChangePassword || false);
       
+      // Log password change as system event
+      const { auditService } = await import('./services/comprehensiveAuditService');
+      await auditService.logSystemEvent({
+        eventType: 'password_change',
+        eventCategory: 'security',
+        description: `User ${user.email} changed their password`,
+        severity: 'info',
+        metadata: {
+          userId: user.id,
+          userEmail: user.email,
+          userRole: user.role,
+          ipAddress: req.ip || req.connection.remoteAddress,
+          userAgent: req.get('User-Agent'),
+          wasTemporaryPassword: isValidTemporaryPassword
+        }
+      });
+      
       res.json({ message: 'Password changed successfully' });
     } catch (error) {
       console.error("Error changing password:", error);
@@ -1384,7 +1406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/teams', isAuthenticated, async (req: any, res) => {
+  app.post('/api/teams', isAuthenticated, logTeamAction('create'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -1435,7 +1457,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/teams/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/teams/:id', isAuthenticated, logTeamAction('update'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -1790,7 +1812,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/projects', isAuthenticated, async (req: any, res) => {
+  app.post('/api/projects', isAuthenticated, logProjectAction('create'), async (req: any, res) => {
     try {
       const hasStart = req.body.startDate !== undefined && req.body.startDate !== null && String(req.body.startDate).trim() !== '';
       const hasEnd = req.body.endDate !== undefined && req.body.endDate !== null && String(req.body.endDate).trim() !== '';
@@ -1849,7 +1871,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/projects/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/projects/:id', isAuthenticated, logProjectAction('update'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -1938,12 +1960,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Project termination endpoint
-  app.put('/api/projects/:id/terminate', isAuthenticated, async (req: any, res) => {
+  app.put('/api/projects/:id/terminate', isAuthenticated, logProjectAction('terminate'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
       }
       const project = await storage.terminateProject(req.params.id);
+      
+      // Log project termination as system event
+      const { auditService } = await import('./services/comprehensiveAuditService');
+      await auditService.logSystemEvent({
+        eventType: 'project_terminated',
+        eventCategory: 'project_management',
+        description: `Project ${project.name} has been terminated`,
+        severity: 'warn',
+        metadata: {
+          projectId: project.id,
+          projectName: project.name,
+          terminatedBy: req.user.id,
+          terminatedByEmail: req.user.email,
+          ipAddress: req.ip || req.connection.remoteAddress
+        }
+      });
+      
       res.json({ message: "Project terminated successfully", project });
     } catch (error) {
       console.error("Error terminating project:", error);
@@ -2063,7 +2102,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/contracts', isAuthenticated, async (req: any, res) => {
+  app.post('/api/contracts', isAuthenticated, logProjectAction('create'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -2076,7 +2115,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/contracts/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/contracts/:id', isAuthenticated, logProjectAction('update'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -2126,7 +2165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/projects/:id/milestones', isAuthenticated, async (req: any, res) => {
+  app.post('/api/projects/:id/milestones', isAuthenticated, logMilestoneAction('create'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -2325,7 +2364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/modules', isAuthenticated, async (req: any, res) => {
+  app.post('/api/modules', isAuthenticated, logModuleAction('create'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -2354,7 +2393,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/modules/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/modules/:id', isAuthenticated, logModuleAction('update'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -2391,7 +2430,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Individual milestone routes
-  app.put('/api/milestones/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/milestones/:id', isAuthenticated, logMilestoneAction('update'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -2455,7 +2494,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/milestones/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/milestones/:id', isAuthenticated, logMilestoneAction('delete'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -2470,7 +2509,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Milestone billing status update (none | to_send | sent | paid)
-  app.put('/api/milestones/:id/billing-status', isAuthenticated, async (req: any, res) => {
+  app.put('/api/milestones/:id/billing-status', isAuthenticated, logInvoiceAction('update'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -2825,7 +2864,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
 
-  app.post('/api/tasks', isAuthenticated, async (req: any, res) => {
+  app.post('/api/tasks', isAuthenticated, logProjectAction('create'), async (req: any, res) => {
     try {
       const cleaned = {
         ...req.body,
@@ -2894,7 +2933,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/tasks/:id', isAuthenticated, async (req, res) => {
+  app.put('/api/tasks/:id', isAuthenticated, logProjectAction('update'), async (req, res) => {
     try {
       // Build payload manually to avoid Zod type conversion issues
       const payload: any = {};
@@ -3122,7 +3161,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/subtasks', isAuthenticated, async (req: any, res) => {
+  app.post('/api/subtasks', isAuthenticated, logProjectAction('create'), async (req: any, res) => {
     try {
       const cleaned = {
         ...req.body,
@@ -3236,7 +3275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/subtasks/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/subtasks/:id', isAuthenticated, logProjectAction('update'), async (req: any, res) => {
     try {
       const payload: any = {};
       
@@ -3430,7 +3469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/subtasks/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/subtasks/:id', isAuthenticated, logProjectAction('delete'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -3454,7 +3493,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/notifications/:id/read', isAuthenticated, async (req, res) => {
+  app.put('/api/notifications/:id/read', isAuthenticated, logProjectAction('update'), async (req, res) => {
     try {
       await storage.markNotificationRead(req.params.id);
       res.status(204).send();
@@ -3464,7 +3503,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/notifications/read-all', isAuthenticated, async (req: any, res) => {
+  app.put('/api/notifications/read-all', isAuthenticated, logProjectAction('update'), async (req: any, res) => {
     try {
       await storage.markAllNotificationsRead(req.user.id);
       res.status(204).send();
@@ -3560,7 +3599,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/user/notification-preferences', isAuthenticated, async (req: any, res) => {
+  app.put('/api/user/notification-preferences', isAuthenticated, logUserManagementAction('update'), async (req: any, res) => {
     try {
       await storage.updateUserNotificationPreferences(req.user.id, req.body);
       res.json({ message: "Notification preferences updated successfully" });
@@ -4231,6 +4270,153 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error resending manager credentials:', error);
       res.status(500).json({ message: 'Failed to resend credentials' });
+    }
+  });
+
+  // ==================== COMPREHENSIVE AUDIT LOGS API ====================
+  
+  // Get all logs with filtering and pagination
+  app.get('/api/admin/logs', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden - Admin access required' });
+      }
+      
+      const {
+        logType = 'all',
+        startDate,
+        endDate,
+        userId,
+        severity,
+        actionType,
+        resourceType,
+        search,
+        page = 1,
+        limit = 50
+      } = req.query;
+      
+      const { auditService } = await import('./services/comprehensiveAuditService');
+      const logs = await auditService.getLogs({
+        logType,
+        startDate,
+        endDate,
+        userId,
+        severity,
+        actionType,
+        resourceType,
+        search,
+        page: parseInt(page),
+        limit: parseInt(limit)
+      });
+      
+      res.json(logs);
+    } catch (error) {
+      console.error('Error fetching logs:', error);
+      res.status(500).json({ message: 'Failed to fetch logs' });
+    }
+  });
+
+  // Get log statistics
+  app.get('/api/admin/logs/statistics', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden - Admin access required' });
+      }
+      
+      const { startDate, endDate, userId } = req.query;
+      
+      const { auditService } = await import('./services/comprehensiveAuditService');
+      const stats = await auditService.getLogStatistics({
+        startDate,
+        endDate,
+        userId
+      });
+      
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching log statistics:', error);
+      res.status(500).json({ message: 'Failed to fetch log statistics' });
+    }
+  });
+
+  // Export logs
+  app.get('/api/admin/logs/export', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden - Admin access required' });
+      }
+      
+      const { auditService } = await import('./services/comprehensiveAuditService');
+      const { generateExcelBuffer } = await import('./utils/excelExport');
+      
+      const logs = await auditService.exportLogs(req.query);
+      
+      // Convert logs to Excel format
+      const excelData = logs.map((log: any) => ({
+        'Timestamp': new Date(log.createdAt).toLocaleString(),
+        'Log Type': log.logType || 'activity',
+        'Action Type': log.actionType || log.method || log.eventType || 'N/A',
+        'Resource Type': log.resourceType || log.endpoint || 'N/A',
+        'Resource Name': log.resourceName || 'N/A',
+        'User ID': log.userId || 'N/A',
+        'IP Address': log.ipAddress || 'N/A',
+        'Status Code': log.statusCode || 'N/A',
+        'Success': log.success !== undefined ? log.success : (log.statusCode < 400),
+        'Error Message': log.errorMessage || 'N/A',
+        'Description': log.description || 'N/A',
+        'Severity': log.severity || 'info',
+        'Response Time (ms)': log.responseTimeMs || 'N/A',
+        'Session ID': log.sessionId || 'N/A'
+      }));
+      
+      const buffer = generateExcelBuffer({
+        data: excelData,
+        reportType: 'logs',
+        filename: 'system-logs'
+      });
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=system-logs-${new Date().toISOString().split('T')[0]}.xlsx`);
+      res.send(buffer);
+    } catch (error) {
+      console.error('Error exporting logs:', error);
+      res.status(500).json({ message: 'Failed to export logs' });
+    }
+  });
+
+  // Get real-time log stream (WebSocket endpoint)
+  app.get('/api/admin/logs/stream', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!(await hasAdminPrivileges(req.user))) {
+        return res.status(403).json({ message: 'Forbidden - Admin access required' });
+      }
+      
+      // Set up Server-Sent Events for real-time log streaming
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Cache-Control'
+      });
+      
+      // Send initial connection message
+      res.write(`data: ${JSON.stringify({ type: 'connected', message: 'Log stream connected' })}\n\n`);
+      
+      // Keep connection alive
+      const keepAlive = setInterval(() => {
+        res.write(`data: ${JSON.stringify({ type: 'ping', timestamp: new Date().toISOString() })}\n\n`);
+      }, 30000);
+      
+      // Clean up on connection close
+      req.on('close', () => {
+        clearInterval(keepAlive);
+        res.end();
+      });
+      
+    } catch (error) {
+      console.error('Error setting up log stream:', error);
+      res.status(500).json({ message: 'Failed to setup log stream' });
     }
   });
 

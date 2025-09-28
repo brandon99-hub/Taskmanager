@@ -88,6 +88,12 @@ function createSingleReport(workbook: XLSX.WorkBook, data: any, reportType: stri
       title = 'AppKings Solutions Limited - Gantt Chart Report';
       break;
       
+    case 'logs':
+      sheetData = data || [];
+      sheetName = 'System Logs';
+      title = 'AppKings Solutions Limited - System Audit Logs';
+      break;
+      
     default:
       sheetData = data || [];
   }

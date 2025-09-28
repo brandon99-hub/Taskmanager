@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { db } from "../db";
+import { logProjectAction } from "../middleware/comprehensiveAudit";
 import {
   marketingUsers,
   marketingLeads,
@@ -456,7 +457,7 @@ export function registerMarketingRoutes(app: Express) {
     }
   });
 
-  app.post("/api/marketing/leads", marketingAuth, marketingUserAuth, async (req, res) => {
+  app.post("/api/marketing/leads", marketingAuth, marketingUserAuth, logProjectAction('create'), async (req, res) => {
     try {
       const leadData = marketingLeadCreateSchema.parse(req.body);
 
@@ -483,7 +484,7 @@ export function registerMarketingRoutes(app: Express) {
     }
   });
 
-  app.put("/api/marketing/leads/:id", marketingAuth, marketingUserAuth, async (req, res) => {
+  app.put("/api/marketing/leads/:id", marketingAuth, marketingUserAuth, logProjectAction('update'), async (req, res) => {
     try {
       const { id } = req.params;
       const updateData = marketingLeadUpdateSchema.parse(req.body);
@@ -528,7 +529,7 @@ export function registerMarketingRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/marketing/leads/:id", marketingAuth, marketingUserAuth, async (req, res) => {
+  app.delete("/api/marketing/leads/:id", marketingAuth, marketingUserAuth, logProjectAction('delete'), async (req, res) => {
     try {
       const { id } = req.params;
 
@@ -633,7 +634,7 @@ export function registerMarketingRoutes(app: Express) {
     }
   });
 
-  app.post("/api/marketing/sales-won", marketingAuth, marketingUserAuth, async (req, res) => {
+  app.post("/api/marketing/sales-won", marketingAuth, marketingUserAuth, logProjectAction('create'), async (req, res) => {
     try {
       const salesWonData = marketingSalesWonCreateSchema.parse(req.body);
 
@@ -659,7 +660,7 @@ export function registerMarketingRoutes(app: Express) {
     }
   });
 
-  app.put("/api/marketing/sales-won/:id", marketingAuth, marketingUserAuth, async (req, res) => {
+  app.put("/api/marketing/sales-won/:id", marketingAuth, marketingUserAuth, logProjectAction('update'), async (req, res) => {
     try {
       const { id } = req.params;
       const updateData = marketingSalesWonUpdateSchema.parse(req.body);
@@ -703,7 +704,7 @@ export function registerMarketingRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/marketing/sales-won/:id", marketingAuth, marketingUserAuth, async (req, res) => {
+  app.delete("/api/marketing/sales-won/:id", marketingAuth, marketingUserAuth, logProjectAction('delete'), async (req, res) => {
     try {
       const { id } = req.params;
 

@@ -275,6 +275,39 @@ export async function setupAuth(app: Express) {
         req.logIn(user, (loginErr) => {
           if (loginErr) return next(loginErr);
 
+          // Log successful login as system event
+          import('./services/comprehensiveAuditService').then(({ auditService }) => {
+            auditService.logSystemEvent({
+              eventType: 'user_login',
+              eventCategory: 'authentication',
+              description: `User ${user.email} successfully logged in`,
+              severity: 'info',
+              metadata: {
+                userId: user.id,
+                userEmail: user.email,
+                userRole: user.role,
+                ipAddress: req.ip || req.connection.remoteAddress,
+                userAgent: req.get('User-Agent')
+              }
+            });
+          }).catch(console.error);
+
+          // Also log as user activity
+          import('./services/comprehensiveAuditService').then(({ auditService }) => {
+            auditService.logUserAction({
+              actionType: 'login',
+              resourceType: 'authentication',
+              resourceId: user.id,
+              resourceName: user.email,
+              success: true
+            }, {
+              userId: user.id,
+              ipAddress: req.ip || req.connection.remoteAddress,
+              userAgent: req.get('User-Agent'),
+              sessionId: (req as any).sessionID
+            });
+          }).catch(console.error);
+
           (req as any).session.save((saveErr: any) => {
             if (saveErr) return next(saveErr);
 
@@ -295,10 +328,48 @@ export async function setupAuth(app: Express) {
   });
   // Logout endpoint
   app.post('/api/auth/logout', (req, res) => {
+    const user = (req as any).user;
+    
     req.logout((err) => {
       if (err) {
         return res.status(500).json({ message: "Failed to logout" });
       }
+      
+      // Log logout as system event
+      if (user) {
+        import('./services/comprehensiveAuditService').then(({ auditService }) => {
+          auditService.logSystemEvent({
+            eventType: 'user_logout',
+            eventCategory: 'authentication',
+            description: `User ${user.email} logged out`,
+            severity: 'info',
+            metadata: {
+              userId: user.id,
+              userEmail: user.email,
+              userRole: user.role,
+              ipAddress: req.ip || req.connection.remoteAddress,
+              userAgent: req.get('User-Agent')
+            }
+          });
+        }).catch(console.error);
+
+        // Also log as user activity
+        import('./services/comprehensiveAuditService').then(({ auditService }) => {
+          auditService.logUserAction({
+            actionType: 'logout',
+            resourceType: 'authentication',
+            resourceId: user.id,
+            resourceName: user.email,
+            success: true
+          }, {
+            userId: user.id,
+            ipAddress: req.ip || req.connection.remoteAddress,
+            userAgent: req.get('User-Agent'),
+            sessionId: (req as any).sessionID
+          });
+        }).catch(console.error);
+      }
+      
       res.json({ message: "Logged out successfully" });
     });
   });

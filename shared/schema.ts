@@ -847,6 +847,71 @@ export const monthlyTargets = pgTable("monthly_targets", {
   uniqueConstraint: index("unique_year_month_segment").on(table.year, table.month, table.segment),
 }));
 
+// Comprehensive audit logging tables
+export const systemActivityLogs = pgTable("system_activity_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  actionType: varchar("action_type", { length: 50 }).notNull(), // 'create', 'update', 'delete', 'view', 'export', 'login', 'logout', etc.
+  resourceType: varchar("resource_type", { length: 50 }).notNull(), // 'project', 'module', 'user', 'team', 'milestone', 'invoice', etc.
+  resourceId: varchar("resource_id"), // ID of the affected resource
+  resourceName: varchar("resource_name", { length: 255 }), // Human-readable name
+  oldValues: jsonb("old_values"), // Previous values for updates
+  newValues: jsonb("new_values"), // New values for updates
+  ipAddress: varchar("ip_address", { length: 45 }), // IPv4 or IPv6
+  userAgent: text("user_agent"),
+  sessionId: varchar("session_id", { length: 255 }),
+  requestId: varchar("request_id", { length: 255 }),
+  success: boolean("success").default(true),
+  errorMessage: text("error_message"),
+  additionalContext: jsonb("additional_context"), // Additional context data
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_activity_logs_user_id").on(table.userId),
+  index("idx_activity_logs_resource_type").on(table.resourceType),
+  index("idx_activity_logs_action_type").on(table.actionType),
+  index("idx_activity_logs_created_at").on(table.createdAt),
+  index("idx_activity_logs_resource_id").on(table.resourceId),
+  index("idx_activity_logs_success").on(table.success),
+]);
+
+export const apiRequestLogs = pgTable("api_request_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  method: varchar("method", { length: 10 }).notNull(), // GET, POST, PUT, DELETE
+  endpoint: varchar("endpoint", { length: 500 }).notNull(),
+  statusCode: integer("status_code").notNull(),
+  responseTimeMs: integer("response_time_ms"),
+  requestSizeBytes: integer("request_size_bytes"),
+  responseSizeBytes: integer("response_size_bytes"),
+  ipAddress: varchar("ip_address", { length: 45 }),
+  userAgent: text("user_agent"),
+  queryParams: jsonb("query_params"),
+  requestBodySize: integer("request_body_size"),
+  sessionId: varchar("session_id", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_api_logs_user_id").on(table.userId),
+  index("idx_api_logs_method").on(table.method),
+  index("idx_api_logs_endpoint").on(table.endpoint),
+  index("idx_api_logs_status_code").on(table.statusCode),
+  index("idx_api_logs_created_at").on(table.createdAt),
+]);
+
+export const systemEventsLogs = pgTable("system_events_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventType: varchar("event_type", { length: 100 }).notNull(), // 'automation', 'notification', 'backup', 'maintenance', etc.
+  eventCategory: varchar("event_category", { length: 50 }).notNull(), // 'system', 'business', 'security', 'performance'
+  description: text("description").notNull(),
+  severity: varchar("severity", { length: 20 }).default("info"), // 'debug', 'info', 'warn', 'error', 'critical'
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_system_events_type").on(table.eventType),
+  index("idx_system_events_category").on(table.eventCategory),
+  index("idx_system_events_severity").on(table.severity),
+  index("idx_system_events_created_at").on(table.createdAt),
+]);
+
 // Invoice collections table for tracking payments
 export const invoiceCollections = pgTable("invoice_collections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1054,3 +1119,13 @@ export const insertMarketingSalesWonSchema = createInsertSchema(marketingSalesWo
 export const insertMarketingExpectedOrdersSchema = createInsertSchema(marketingExpectedOrders);
 export const insertMarketingProspectsSchema = createInsertSchema(marketingProspects);
 export const insertMarketingAnnualSummarySchema = createInsertSchema(marketingAnnualSummary);
+
+// Audit Logging Types
+export type SystemActivityLog = typeof systemActivityLogs.$inferSelect;
+export type InsertSystemActivityLog = typeof systemActivityLogs.$inferInsert;
+
+export type ApiRequestLog = typeof apiRequestLogs.$inferSelect;
+export type InsertApiRequestLog = typeof apiRequestLogs.$inferInsert;
+
+export type SystemEventLog = typeof systemEventsLogs.$inferSelect;
+export type InsertSystemEventLog = typeof systemEventsLogs.$inferInsert;

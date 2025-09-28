@@ -24,6 +24,7 @@ import ExecutiveDashboard from "@/pages/executive-dashboard";
 import MarketingLogin from "@/pages/marketing-login";
 import MarketingDashboard from "@/pages/marketing-dashboard";
 import MarketingResetPassword from "@/pages/marketing-reset-password";
+import Logs from "@/pages/logs";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 function Router() {
@@ -68,6 +69,7 @@ function Router() {
               <Route path="/contracts/:id" component={ContractDetail} />
               <Route path="/contracts/:id/edit" component={ContractForm} />
               <Route path="/executive-dashboard" component={ExecutiveDashboard} />
+              <Route path="/logs" component={Logs} />
             </>
           )}
           <Route path="/teams" component={Team} />

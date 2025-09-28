@@ -43,6 +43,13 @@
       "when": 1758640038217,
       "tag": "0005_cynical_jane_foster",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1759087501765,
+      "tag": "0006_illegal_moon_knight",
+      "breakpoints": true
     }
   ]
 }

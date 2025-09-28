@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useScreenSize } from "@/hooks/use-mobile";
-import { BarChart3, Bell, Home, FolderOpen, CheckSquare, FileText, Users, LogOut, Menu, User, X, Check, CheckCheck, Clock, AlertTriangle, Info, FileSignature } from "lucide-react";
+import { BarChart3, Bell, Home, FolderOpen, CheckSquare, FileText, Users, LogOut, Menu, User, X, Check, CheckCheck, Clock, AlertTriangle, Info, FileSignature, Shield } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -420,6 +420,13 @@ export default function Navigation() {
                         <DropdownMenuItem data-testid="menu-executive-dashboard">
                           <BarChart3 className="mr-2 h-4 w-4" />
                           <span>Executive Dashboard</span>
+                        </DropdownMenuItem>
+                      </Link>
+                      <Link href="/logs">
+                        <DropdownMenuItem data-testid="menu-logs">
+                          <Shield className="mr-2 h-4 w-4" />
+                          <span>System Logs</span>
+                          <Badge variant="secondary" className="ml-2 text-xs">Audit</Badge>
                         </DropdownMenuItem>
                       </Link>
                       <DropdownMenuSeparator />
