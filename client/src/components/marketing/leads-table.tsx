@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -20,7 +20,9 @@ import {
   Loader2,
   Users
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from "date-fns";
+import { LeadsFilters } from "./leads-filters";
 
 interface Lead {
   id: string;
@@ -78,6 +80,13 @@ export function MarketingLeadsTable({
     total: 0,
     pages: 0,
   });
+  const [filters, setFilters] = useState<{
+    search?: string;
+    year?: string;
+    quarter?: string;
+    bdId?: string;
+    marketerId?: string;
+  }>({});
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
   const [user, setUser] = useState<any>(null);
 
@@ -89,6 +98,24 @@ export function MarketingLeadsTable({
     }
   }, []);
 
+  const handleFiltersChange = useCallback((newFilters: {
+    search?: string;
+    year?: string;
+    quarter?: string;
+    bdId?: string;
+    marketerId?: string;
+  }) => {
+    setFilters(newFilters);
+  }, []);
+
+  const memoizedFilters = useMemo(() => filters, [
+    filters.search,
+    filters.year,
+    filters.quarter,
+    filters.bdId,
+    filters.marketerId
+  ]);
+
   const loadLeads = async () => {
     setLoading(true);
     try {
@@ -96,7 +123,11 @@ export function MarketingLeadsTable({
       const params = new URLSearchParams({
         page: page.toString(),
         limit: "10",
-        ...(search && { search }),
+        ...(filters.search && { search: filters.search }),
+        ...(filters.year && { year: filters.year }),
+        ...(filters.quarter && { quarter: filters.quarter }),
+        ...(filters.bdId && { bdId: filters.bdId }),
+        ...(filters.marketerId && { marketerId: filters.marketerId }),
         ...(selectedMarketer && { marketerId: selectedMarketer }),
       });
 
@@ -120,7 +151,7 @@ export function MarketingLeadsTable({
 
   useEffect(() => {
     loadLeads();
-  }, [page, search]);
+  }, [page, search, selectedMarketer, memoizedFilters]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this lead?")) return;
@@ -165,26 +196,24 @@ export function MarketingLeadsTable({
   }
 
   return (
-    <Card className="border-0 shadow-sm">
-      <CardHeader className="pb-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <CardTitle className="text-lg font-semibold text-gray-900">Leads</CardTitle>
-            <CardDescription className="text-gray-600">
-              Manage your sales leads and track their progress
-            </CardDescription>
+    <div className="space-y-6">
+      {/* Filters */}
+      <LeadsFilters 
+        onFiltersChange={handleFiltersChange}
+        showMarketerInfo={showMarketerInfo}
+      />
+
+      <Card className="border-0 shadow-sm">
+        <CardHeader className="pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <CardTitle className="text-lg font-semibold text-gray-900">Leads</CardTitle>
+              <CardDescription className="text-gray-600">
+                Manage your sales leads and track their progress
+              </CardDescription>
+            </div>
           </div>
-          <div className="relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Search leads..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10 h-10"
-            />
-          </div>
-        </div>
-      </CardHeader>
+        </CardHeader>
       <CardContent className="p-0">
         <div className="border-t">
           <Table>
@@ -240,17 +269,35 @@ export function MarketingLeadsTable({
                     <TableCell className="font-medium text-gray-900">{formatCurrency(lead.facilitationCost)}</TableCell>
                     <TableCell>
                       <div className="flex items-center space-x-1">
-                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-gray-100">
-                          <Edit className="h-4 w-4 text-gray-600" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 hover:bg-red-100"
-                          onClick={() => handleDelete(lead.id)}
-                        >
-                          <Trash2 className="h-4 w-4 text-red-600" />
-                        </Button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-gray-100">
+                                <Edit className="h-4 w-4 text-gray-600" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Edit lead details</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 hover:bg-red-100"
+                                onClick={() => handleDelete(lead.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-red-600" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Delete lead</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -292,5 +339,6 @@ export function MarketingLeadsTable({
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }

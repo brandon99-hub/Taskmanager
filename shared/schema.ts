@@ -973,9 +973,12 @@ export const invoiceCollectionsRelations = relations(invoiceCollections, ({ one 
 }));
 
 // Marketing Pipeline System Tables
-export const marketingUserRoleEnum = pgEnum("marketing_user_role", ['admin', 'marketer']);
+export const marketingUserRoleEnum = pgEnum("marketing_user_role", ['admin', 'marketer', 'business_development']);
 export const salesStageEnum = pgEnum("sales_stage", ['lead', 'qualified', 'proposal', 'negotiation', 'closed_won', 'closed_lost']);
 export const quarterEnum = pgEnum("quarter", ['Q1', 'Q2', 'Q3', 'Q4']);
+export const systemInPlaceEnum = pgEnum("system_in_place", ['navision', '365_bc', 'none', 'open_source', 'oracle', 'sap']);
+export const needAvailabilityEnum = pgEnum("need_availability", ['upgrade', 'under_implementation', 'none']);
+export const prospectStageEnum = pgEnum("prospect_stage", ['prospect', 'lead', 'expected_order', 'sales_won']);
 
 export const marketingUsers = pgTable("marketing_users", {
   id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
@@ -984,9 +987,10 @@ export const marketingUsers = pgTable("marketing_users", {
   firstName: varchar("first_name").notNull(),
   lastName: varchar("last_name").notNull(),
   phoneNumber: varchar("phone_number"),
-  role: marketingUserRoleEnum().default('marketer').notNull(),
+  role: marketingUserRoleEnum().default('business_development').notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   mustChangePassword: boolean("must_change_password").default(false).notNull(),
+  target: decimal("target", { precision: 12, scale: 2 }).default('0'),
   lastLoginAt: timestamp("last_login_at", { mode: 'string' }),
   resetToken: text("reset_token"),
   resetTokenExpiry: timestamp("reset_token_expiry", { mode: 'string' }),
@@ -996,16 +1000,50 @@ export const marketingUsers = pgTable("marketing_users", {
   index("marketing_users_email_unique").on(table.email),
 ]);
 
-export const marketingLeads = pgTable("marketing_leads", {
+export const marketingSectors = pgTable("marketing_sectors", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  name: varchar({ length: 200 }).notNull(),
+  description: text(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+  index("marketing_sectors_name_unique").on(table.name),
+]);
+
+export const marketingProjects = pgTable("marketing_projects", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  sectorId: varchar("sector_id"),
+  institution: varchar({ length: 200 }).notNull(),
+  leadMarketer: varchar("lead_marketer"),
+  contactPerson: varchar("contact_person", { length: 200 }),
+  contactNumber: varchar("contact_number", { length: 20 }),
+  systemInPlace: systemInPlaceEnum("system_in_place"),
+  needAvailability: needAvailabilityEnum("need_availability"),
+  currentVendor: varchar("current_vendor", { length: 200 }),
+  remarks: text(),
+  status: varchar({ length: 20 }).default('active').notNull(),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+});
+
+export const marketingProspects = pgTable("marketing_prospects", {
   id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
   date: timestamp({ mode: 'string' }).notNull(),
   client: varchar({ length: 200 }).notNull(),
-  contactDetails: text("contact_details").notNull(),
+  contactPerson: varchar("contact_person", { length: 200 }).notNull(),
+  contactNumber: varchar("contact_number", { length: 20 }).notNull(),
+  contactEmail: varchar("contact_email", { length: 255 }).notNull(),
+  systemInPlace: systemInPlaceEnum("system_in_place").notNull(),
+  needAvailability: needAvailabilityEnum("need_availability").notNull(),
+  currentVendor: varchar("current_vendor", { length: 200 }),
   remarks: text(),
-  budget: decimal({ precision: 12, scale: 2 }),
-  salesStage: salesStageEnum().default('lead').notNull(),
-  facilitationCost: decimal("facilitation_cost", { precision: 12, scale: 2 }),
-  marketerId: varchar("marketer_id").notNull(),
+  revenue: decimal({ precision: 12, scale: 2 }),
+  stage: prospectStageEnum().default('prospect').notNull(),
+  bdId: varchar("bd_id").notNull(),
+  sectorId: varchar("sector_id"),
+  sharedWithBdId: varchar("shared_with_bd_id"),
+  revenueSplit: decimal("revenue_split", { precision: 5, scale: 2 }),
   createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
 });
@@ -1036,18 +1074,6 @@ export const marketingExpectedOrders = pgTable("marketing_expected_orders", {
   updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
 });
 
-export const marketingProspects = pgTable("marketing_prospects", {
-  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
-  organisationName: varchar("organisation_name", { length: 200 }).notNull(),
-  sector: varchar({ length: 100 }).notNull(),
-  product: varchar({ length: 200 }).notNull(),
-  revenue: decimal({ precision: 12, scale: 2 }).notNull(),
-  expectedQuarter: quarterEnum("expected_quarter").notNull(),
-  comments: text(),
-  marketerId: varchar("marketer_id").notNull(),
-  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
-  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
-});
 
 export const marketingAnnualSummary = pgTable("marketing_annual_summary", {
   id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
@@ -1069,10 +1095,34 @@ export const marketingAnnualSummary = pgTable("marketing_annual_summary", {
 ]);
 
 // Marketing Relations
-export const marketingLeadsRelations = relations(marketingLeads, ({ one }) => ({
-  marketer: one(marketingUsers, {
-    fields: [marketingLeads.marketerId],
+export const marketingSectorsRelations = relations(marketingSectors, ({ many }) => ({
+  projects: many(marketingProjects),
+  prospects: many(marketingProspects),
+}));
+
+export const marketingProjectsRelations = relations(marketingProjects, ({ one }) => ({
+  sector: one(marketingSectors, {
+    fields: [marketingProjects.sectorId],
+    references: [marketingSectors.id],
+  }),
+  leadMarketer: one(marketingUsers, {
+    fields: [marketingProjects.leadMarketer],
     references: [marketingUsers.id],
+  }),
+}));
+
+export const marketingProspectsRelations = relations(marketingProspects, ({ one }) => ({
+  bd: one(marketingUsers, {
+    fields: [marketingProspects.bdId],
+    references: [marketingUsers.id],
+  }),
+  sharedWithBd: one(marketingUsers, {
+    fields: [marketingProspects.sharedWithBdId],
+    references: [marketingUsers.id],
+  }),
+  sector: one(marketingSectors, {
+    fields: [marketingProspects.sectorId],
+    references: [marketingSectors.id],
   }),
 }));
 
@@ -1090,13 +1140,6 @@ export const marketingExpectedOrdersRelations = relations(marketingExpectedOrder
   }),
 }));
 
-export const marketingProspectsRelations = relations(marketingProspects, ({ one }) => ({
-  marketer: one(marketingUsers, {
-    fields: [marketingProspects.marketerId],
-    references: [marketingUsers.id],
-  }),
-}));
-
 export const marketingAnnualSummaryRelations = relations(marketingAnnualSummary, ({ one }) => ({
   marketer: one(marketingUsers, {
     fields: [marketingAnnualSummary.marketerId],
@@ -1105,7 +1148,6 @@ export const marketingAnnualSummaryRelations = relations(marketingAnnualSummary,
 }));
 
 export const marketingUsersRelations = relations(marketingUsers, ({ many }) => ({
-  leads: many(marketingLeads),
   salesWon: many(marketingSalesWon),
   expectedOrders: many(marketingExpectedOrders),
   prospects: many(marketingProspects),
@@ -1114,7 +1156,6 @@ export const marketingUsersRelations = relations(marketingUsers, ({ many }) => (
 
 // Marketing Insert Schemas
 export const insertMarketingUserSchema = createInsertSchema(marketingUsers);
-export const insertMarketingLeadSchema = createInsertSchema(marketingLeads);
 export const insertMarketingSalesWonSchema = createInsertSchema(marketingSalesWon);
 export const insertMarketingExpectedOrdersSchema = createInsertSchema(marketingExpectedOrders);
 export const insertMarketingProspectsSchema = createInsertSchema(marketingProspects);

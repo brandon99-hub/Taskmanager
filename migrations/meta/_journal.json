@@ -50,6 +50,27 @@
       "when": 1759087501765,
       "tag": "0006_illegal_moon_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1759146818690,
+      "tag": "0007_lying_proudstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1759146866855,
+      "tag": "0008_hesitant_punisher",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1759148316111,
+      "tag": "0009_famous_tempest",
+      "breakpoints": true
     }
   ]
 }

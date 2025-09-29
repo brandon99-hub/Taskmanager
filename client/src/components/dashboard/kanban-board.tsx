@@ -143,13 +143,20 @@ export default function KanbanBoard() {
       const response = await apiRequest("PUT", endpoint, { status });
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/subtasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/metrics"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kanban-tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kanban-subtasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+    onSuccess: async () => {
+      // Invalidate all related queries for immediate UI update
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/tasks"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/subtasks"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/modules"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/milestones"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/projects"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/projects/milestones-data"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/dashboard/metrics"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kanban-tasks"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kanban-subtasks"] }),
+      ]);
+      
       toast({
         title: "Success",
         description: `${taskTerms.title.slice(0, -1)} status updated successfully`,
@@ -180,9 +187,16 @@ export default function KanbanBoard() {
       const response = await apiRequest('PUT', `/api/milestones/${milestoneId}/billing-status`, { billingStatus });
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/milestones'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/dashboard/kanban-milestones'] });
+    onSuccess: async () => {
+      // Invalidate all related queries for immediate UI update
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['/api/milestones'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/modules'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects/milestones-data'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/dashboard/kanban-milestones'] }),
+      ]);
+      
       toast({ title: 'Success', description: 'Milestone billing status updated' });
     },
     onError: (error) => {

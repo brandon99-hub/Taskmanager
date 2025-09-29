@@ -1,0 +1,1 @@
+ALTER TABLE "marketing_prospects" ALTER COLUMN "sector_id" DROP NOT NULL;

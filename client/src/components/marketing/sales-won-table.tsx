@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -20,6 +20,7 @@ import {
   Loader2
 } from "lucide-react";
 import { format } from "date-fns";
+import { SalesWonFilters } from "./sales-won-filters";
 
 interface SalesWon {
   id: string;
@@ -75,6 +76,13 @@ export function MarketingSalesWonTable({
     total: 0,
     pages: 0,
   });
+  const [filters, setFilters] = useState<{
+    search?: string;
+    year?: string;
+    quarter?: string;
+    marketerId?: string;
+    sector?: string;
+  }>({});
 
   useEffect(() => {
     // Get user info from localStorage
@@ -84,6 +92,24 @@ export function MarketingSalesWonTable({
     }
   }, []);
 
+  const handleFiltersChange = useCallback((newFilters: {
+    search?: string;
+    year?: string;
+    quarter?: string;
+    marketerId?: string;
+    sector?: string;
+  }) => {
+    setFilters(newFilters);
+  }, []);
+
+  const memoizedFilters = useMemo(() => filters, [
+    filters.search,
+    filters.year,
+    filters.quarter,
+    filters.marketerId,
+    filters.sector
+  ]);
+
   const loadSalesWon = async () => {
     setLoading(true);
     try {
@@ -91,7 +117,11 @@ export function MarketingSalesWonTable({
       const params = new URLSearchParams({
         page: page.toString(),
         limit: "10",
-        ...(search && { search }),
+        ...(filters.search && { search: filters.search }),
+        ...(filters.year && { year: filters.year }),
+        ...(filters.quarter && { quarter: filters.quarter }),
+        ...(filters.marketerId && { marketerId: filters.marketerId }),
+        ...(filters.sector && { sector: filters.sector }),
         ...(user?.role === 'admin' && selectedMarketer && { marketerId: selectedMarketer }),
       });
 
@@ -115,7 +145,7 @@ export function MarketingSalesWonTable({
 
   useEffect(() => {
     loadSalesWon();
-  }, [page, search]);
+  }, [page, search, selectedMarketer, memoizedFilters]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this sales won record?")) return;
@@ -159,24 +189,20 @@ export function MarketingSalesWonTable({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Sales Won</CardTitle>
-        <CardDescription>
-          Track your successful sales and contract wins
-        </CardDescription>
-        <div className="flex items-center space-x-2">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search sales won..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8"
-            />
-          </div>
-        </div>
-      </CardHeader>
+    <div className="space-y-6">
+      {/* Filters */}
+      <SalesWonFilters 
+        onFiltersChange={handleFiltersChange}
+        showMarketerInfo={showMarketerInfo}
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Sales Won</CardTitle>
+          <CardDescription>
+            Track your successful sales and contract wins
+          </CardDescription>
+        </CardHeader>
       <CardContent>
         <div className="rounded-md border">
           <Table>
@@ -275,5 +301,6 @@ export function MarketingSalesWonTable({
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }

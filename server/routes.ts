@@ -610,8 +610,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/dashboard/completed-milestones', isAuthenticated, async (req: any, res) => {
     try {
       const { db } = await import('./db');
-      const { milestones, projects, users } = await import('../shared/schema');
+      const { milestones, projects, users, teamMembers } = await import('../shared/schema');
       const { eq, and, inArray, sql } = await import('drizzle-orm');
+
+      let projectFilter = sql`1 = 1`; // Default: show all projects
+      
+      // Filter projects for employees based on team assignments
+      if (req.user.role === 'employee') {
+        // Get user's team IDs
+        const userTeamIds = await db
+          .select({ teamId: teamMembers.teamId })
+          .from(teamMembers)
+          .where(eq(teamMembers.userId, req.user.id))
+          .execute();
+        
+        const teamIds = userTeamIds.map(t => t.teamId);
+        
+        if (teamIds.length > 0) {
+          // Only show milestones from projects assigned to user's teams
+          projectFilter = sql`${projects.teamId} IN (${teamIds.join(',')})`;
+        } else {
+          // No teams assigned, show no milestones
+          projectFilter = sql`1 = 0`;
+        }
+      }
 
       // Get completed milestones (billingStatus = 'paid') with project and user details
       const completedMilestones = await db
@@ -644,7 +666,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(milestones)
         .leftJoin(projects, eq(milestones.projectId, projects.id))
         .leftJoin(users, eq(milestones.createdById, users.id))
-        .where(eq(milestones.billingStatus, 'paid'));
+        .where(and(
+          eq(milestones.billingStatus, 'paid'),
+          projectFilter
+        ));
 
       console.log('Found', completedMilestones.length, 'completed milestones in database');
       
@@ -1360,7 +1385,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Update password (will be hashed in updateUserPassword)
-      await storage.updateUserPassword(req.user.id, newPassword, user.mustChangePassword || false);
+      // Check if this is a forced password change (user must change password)
+      const isFirstChange = user.mustChangePassword === true;
+      await storage.updateUserPassword(req.user.id, newPassword, isFirstChange);
       
       // Log password change as system event
       const { auditService } = await import('./services/comprehensiveAuditService');
@@ -1479,7 +1506,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Milestone routes
   app.get('/api/milestones', isAuthenticated, async (req: any, res) => {
     try {
-      const milestones = await storage.getMilestones();
+      const milestones = req.user.role === 'employee'
+        ? await storage.getMilestonesForUser(req.user.id)
+        : await storage.getMilestones();
       res.json(milestones);
     } catch (error) {
       console.error("Error fetching milestones:", error);

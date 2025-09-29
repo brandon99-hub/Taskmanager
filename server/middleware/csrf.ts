@@ -54,7 +54,7 @@ export function setupCSRFProtection(app: Express) {
 
   // Enhanced CSRF protection with better route handling
   app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-    // Skip CSRF for auth endpoints and public APIs
+    // Skip CSRF for auth endpoints, marketing routes (JWT-based), and public APIs
     const skipCSRFPaths = [
       '/auth/login', 
       '/auth/register', 
@@ -62,7 +62,8 @@ export function setupCSRFProtection(app: Express) {
       '/auth/reset-password',
       '/csrf-token',
       '/public/',
-      '/webhook/'
+      '/webhook/',
+      '/marketing/'  // Skip CSRF for marketing routes as they use JWT authentication
     ];
     
     if (skipCSRFPaths.some(path => req.path.includes(path))) {

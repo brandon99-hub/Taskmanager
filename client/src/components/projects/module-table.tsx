@@ -226,12 +226,42 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
       const response = await apiRequest('PUT', endpoint, updateData);
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      // Invalidate Gantt chart cache to update progress bars immediately
+    onSuccess: async () => {
+      // Invalidate all project-related queries for immediate UI update
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['/api/projects'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects/milestones-data'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/milestones'] }),
+      ]);
+      
       if (projectId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+        // Fix: batchQuery uses different query key format - invalidate both formats
+        const batchQueryKey = [`/api/projects/${projectId}/modules`];
+        const batchMilestoneKey = [`/api/projects/${projectId}/milestones`];
+        
+        // Force refetch by removing staleTime cache and invalidating
+        await Promise.all([
+          queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+          queryClient.removeQueries({ queryKey: batchQueryKey }),
+          queryClient.removeQueries({ queryKey: batchMilestoneKey }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] }),
+          queryClient.invalidateQueries({ queryKey: batchQueryKey }),
+          queryClient.invalidateQueries({ queryKey: batchMilestoneKey }),
+        ]);
+        
+        // Force immediate refetch
+        await Promise.all([
+          queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+          queryClient.refetchQueries({ queryKey: batchQueryKey }),
+          queryClient.refetchQueries({ queryKey: batchMilestoneKey }),
+        ]);
       }
+      
       toast({ title: 'Success', description: 'Module status updated' });
     },
     onError: (error: any) => {
@@ -250,13 +280,34 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
       const response = await apiRequest('PUT', `/api/subtasks/${subtaskId}`, { status });
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/modules'] });
-      // Invalidate Gantt chart cache to update progress bars immediately
+    onSuccess: async () => {
+      // Invalidate all project-related queries for immediate UI update
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['/api/projects'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects/milestones-data'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/modules'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/subtasks'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/milestones'] }),
+      ]);
+      
       if (projectId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+        // Force refetch by removing staleTime cache and invalidating
+        await Promise.all([
+          queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] }),
+        ]);
+        
+        // Force immediate refetch
+        await Promise.all([
+          queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+        ]);
       }
+      
       toast({ title: 'Success', description: 'Subtask status updated' });
     },
     onError: (error: any) => {
@@ -279,12 +330,33 @@ export default function ModuleTable({ modules, projectSegment, projectTeam, onEd
       );
       await Promise.all(promises);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      // Invalidate Gantt chart cache to update progress bars immediately
+    onSuccess: async () => {
+      // Invalidate all project-related queries for immediate UI update
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['/api/projects'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/projects/milestones-data'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/modules'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/milestones'] }),
+      ]);
+      
       if (projectId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] });
+        // Force refetch by removing staleTime cache and invalidating
+        await Promise.all([
+          queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] }),
+        ]);
+        
+        // Force immediate refetch
+        await Promise.all([
+          queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+          queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+        ]);
       }
+      
       setSelectedModules([]);
       toast({ title: 'Success', description: `${selectedModules.length} modules updated` });
     },

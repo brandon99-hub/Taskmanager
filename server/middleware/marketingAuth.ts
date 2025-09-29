@@ -14,7 +14,7 @@ declare global {
         email: string;
         firstName: string;
         lastName: string;
-        role: 'admin' | 'marketer';
+        role: 'admin' | 'marketer' | 'business_development';
         password: string;
       };
     }
@@ -26,7 +26,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "marketing-pipeline-secret-key";
 export interface MarketingJWTPayload {
   userId: string;
   email: string;
-  role: 'admin' | 'marketer';
+  role: 'admin' | 'marketer' | 'business_development';
 }
 
 // Marketing Authentication Middleware
@@ -98,7 +98,7 @@ export const marketingUserAuth = (req: Request, res: Response, next: NextFunctio
 export const generateMarketingToken = (user: {
   id: string;
   email: string;
-  role: 'admin' | 'marketer';
+  role: 'admin' | 'marketer' | 'business_development';
 }): string => {
   return jwt.sign(
     {

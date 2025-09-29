@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,26 +24,59 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
+import { RevenueSharingModal } from "./revenue-sharing-modal";
 
 const prospectsSchema = z.object({
-  organisationName: z.string().min(1, "Organisation name is required"),
-  sector: z.string().min(1, "Sector is required"),
-  product: z.string().min(1, "Product is required"),
-  revenue: z.number().positive("Revenue must be positive"),
-  expectedQuarter: z.enum(['Q1', 'Q2', 'Q3', 'Q4']),
-  comments: z.string().optional(),
+  date: z.string().min(1, "Date is required"),
+  client: z.string().min(1, "Client name is required"),
+  contactPerson: z.string().min(1, "Contact person is required"),
+  contactNumber: z.string().min(1, "Contact number is required"),
+  contactEmail: z.string().email("Valid email is required"),
+  systemInPlace: z.enum(['navision', '365_bc', 'none', 'open_source', 'oracle', 'sap']),
+  needAvailability: z.enum(['upgrade', 'under_implementation', 'none']),
+  currentVendor: z.string().optional(),
+  remarks: z.string().optional(),
+  revenue: z.number().positive("Revenue must be positive").optional(),
+  stage: z.enum(['prospect', 'lead', 'expected_order', 'sales_won']).default('prospect'),
+  sectorId: z.string().optional(),
 });
 
 type ProspectsFormData = z.infer<typeof prospectsSchema>;
 
-interface MarketingProspectsFormProps {
-  onSuccess: () => void;
+interface Sector {
+  id: string;
+  name: string;
+  description?: string;
 }
 
-export function MarketingProspectsForm({ onSuccess }: MarketingProspectsFormProps) {
+interface MarketingProspectsFormProps {
+  onSuccess: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
+  hideTrigger?: boolean;
+}
+
+export function MarketingProspectsForm({ onSuccess, isOpen, onClose, hideTrigger }: MarketingProspectsFormProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sectors, setSectors] = useState<Sector[]>([]);
+  const [showRevenueModal, setShowRevenueModal] = useState(false);
+  const [existingProspect, setExistingProspect] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [preservedFormData, setPreservedFormData] = useState<any>(null);
   const { toast } = useToast();
+
+  // Use external open state if provided
+  const isDialogOpen = isOpen !== undefined ? isOpen : open;
+  const handleClose = () => {
+    if (onClose) {
+      onClose();
+    } else {
+      setOpen(false);
+    }
+    reset();
+    setPreservedFormData(null); // Clear preserved data when closing
+  };
 
   const {
     register,
@@ -54,19 +87,149 @@ export function MarketingProspectsForm({ onSuccess }: MarketingProspectsFormProp
     watch,
   } = useForm<ProspectsFormData>({
     resolver: zodResolver(prospectsSchema),
+    defaultValues: {
+      date: new Date().toISOString().split('T')[0],
+      stage: 'prospect',
+    },
   });
+
+  useEffect(() => {
+    loadSectors();
+    loadCurrentUser();
+  }, []);
+
+  const loadCurrentUser = () => {
+    const userData = localStorage.getItem("marketingUser");
+    if (userData) {
+      setCurrentUser(JSON.parse(userData));
+    }
+  };
+
+  const restoreFormData = () => {
+    if (preservedFormData) {
+      // Restore all the form fields
+      Object.keys(preservedFormData).forEach(key => {
+        setValue(key as any, preservedFormData[key]);
+      });
+    }
+  };
+
+  const loadSectors = async () => {
+    try {
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch("/api/marketing/sectors", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSectors(data.sectors || []);
+      }
+    } catch (error) {
+      console.error("Failed to load sectors:", error);
+    }
+  };
+
+  const checkForDuplicate = async (clientName: string, contactEmail: string, contactNumber: string) => {
+    try {
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch("/api/marketing/prospects/check-duplicate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          client: clientName,
+          contactEmail: contactEmail,
+          contactNumber: contactNumber,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.isDuplicate && data.duplicates.length > 0 ? data.duplicates[0] : null;
+      }
+    } catch (error) {
+      console.error("Error checking for duplicate:", error);
+    }
+    return null;
+  };
+
+  const handleRevenueSplit = async (splitData: any) => {
+    try {
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch(`/api/marketing/prospects/${existingProspect.id}/split-account`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          sharedWithBdId: currentUser.id,
+          revenueSplit: splitData.newPercentage, // The percentage for the new marketer
+        }),
+      });
+
+      if (response.ok) {
+        toast({
+          title: "Success",
+          description: "Revenue sharing arrangement created successfully",
+        });
+        setPreservedFormData(null); // Clear preserved data
+        handleClose();
+        onSuccess?.();
+      } else {
+        const error = await response.json();
+        toast({
+          title: "Error",
+          description: error.message || "Failed to create revenue sharing",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error creating revenue split:", error);
+      toast({
+        title: "Error",
+        description: "Failed to create revenue sharing",
+        variant: "destructive",
+      });
+    }
+  };
 
   const onSubmit = async (data: ProspectsFormData) => {
     setLoading(true);
     try {
+      // Check for duplicate prospect
+      const duplicate = await checkForDuplicate(data.client, data.contactEmail, data.contactNumber);
+      
+      if (duplicate) {
+        setExistingProspect(duplicate);
+        // Preserve the form data before closing
+        setPreservedFormData(data);
+        // Close the main modal and open revenue sharing modal
+        handleClose();
+        setShowRevenueModal(true);
+        setLoading(false);
+        return;
+      }
+
+      // No duplicate found, create new prospect
       const token = localStorage.getItem("marketingToken");
+      
+      // Convert date to datetime format for backend
+      const formattedData = {
+        ...data,
+        date: new Date(data.date).toISOString()
+      };
+      
       const response = await fetch("/api/marketing/prospects", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(formattedData),
       });
 
       if (response.ok) {
@@ -74,134 +237,368 @@ export function MarketingProspectsForm({ onSuccess }: MarketingProspectsFormProp
           title: "Success",
           description: "Prospect created successfully!",
         });
-        reset();
-        setOpen(false);
-        onSuccess();
+        setPreservedFormData(null); // Clear preserved data
+        handleClose();
+        onSuccess?.();
       } else {
         const errorData = await response.json();
-        console.error("Failed to create prospects:", errorData);
+        toast({
+          title: "Error",
+          description: errorData.error || "Failed to create prospect",
+          variant: "destructive",
+        });
       }
     } catch (error) {
-      console.error("Failed to create prospects:", error);
+      console.error("Failed to create prospect:", error);
+      toast({
+        title: "Error",
+        description: "Failed to create prospect",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button>
-          <Plus className="h-4 w-4 mr-2" />
-          Add Prospects
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle>Add New Prospects</DialogTitle>
-          <DialogDescription>
-            Enter the details for the new prospects
-          </DialogDescription>
+    <Dialog open={isDialogOpen} onOpenChange={handleClose}>
+      {!hideTrigger && (
+        <DialogTrigger asChild>
+          <Button>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Prospect
+          </Button>
+        </DialogTrigger>
+      )}
+      <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+        <DialogHeader className="space-y-3">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <Plus className="h-5 w-5 text-blue-600" />
+            </div>
+            <div>
+              <DialogTitle className="text-xl font-semibold">Add New Prospect</DialogTitle>
+              <DialogDescription className="text-gray-600">
+                Enter the details for the new prospect to track potential business opportunities.
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="organisationName">Organisation Name</Label>
-            <Input
-              id="organisationName"
-              {...register("organisationName")}
-              className={errors.organisationName ? "border-red-500" : ""}
-              placeholder="Enter organisation name"
-            />
-            {errors.organisationName && (
-              <p className="text-sm text-red-500">{errors.organisationName.message}</p>
-            )}
+        
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          {/* Basic Information Section */}
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <div className="w-1 h-6 bg-blue-600 rounded-full"></div>
+              <h3 className="text-lg font-semibold text-gray-900">Basic Information</h3>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="date" className="text-sm font-medium text-gray-700">
+                  Date <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="date"
+                  type="date"
+                  {...register("date")}
+                  className={`h-11 ${errors.date ? "border-red-500 focus:border-red-500 focus:ring-red-500" : "focus:border-blue-500 focus:ring-blue-500"}`}
+                />
+                {errors.date && (
+                  <p className="text-sm text-red-500 flex items-center">
+                    <span className="mr-1">⚠</span>
+                    {errors.date.message}
+                  </p>
+                )}
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="client" className="text-sm font-medium text-gray-700">
+                  Client Name <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="client"
+                  {...register("client")}
+                  className={`h-11 ${errors.client ? "border-red-500 focus:border-red-500 focus:ring-red-500" : "focus:border-blue-500 focus:ring-blue-500"}`}
+                  placeholder="Enter client name"
+                />
+                {errors.client && (
+                  <p className="text-sm text-red-500 flex items-center">
+                    <span className="mr-1">⚠</span>
+                    {errors.client.message}
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="sector">Sector</Label>
-              <Input
-                id="sector"
-                {...register("sector")}
-                className={errors.sector ? "border-red-500" : ""}
-                placeholder="Enter sector"
-              />
-              {errors.sector && (
-                <p className="text-sm text-red-500">{errors.sector.message}</p>
-              )}
+          {/* Contact Information Section */}
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <div className="w-1 h-6 bg-green-600 rounded-full"></div>
+              <h3 className="text-lg font-semibold text-gray-900">Contact Information</h3>
             </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="contactPerson" className="text-sm font-medium text-gray-700">
+                  Contact Person <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="contactPerson"
+                  {...register("contactPerson")}
+                  className={`h-11 ${errors.contactPerson ? "border-red-500 focus:border-red-500 focus:ring-red-500" : "focus:border-blue-500 focus:ring-blue-500"}`}
+                  placeholder="Enter contact person name"
+                />
+                {errors.contactPerson && (
+                  <p className="text-sm text-red-500 flex items-center">
+                    <span className="mr-1">⚠</span>
+                    {errors.contactPerson.message}
+                  </p>
+                )}
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="contactNumber" className="text-sm font-medium text-gray-700">
+                  Contact Number <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="contactNumber"
+                  {...register("contactNumber")}
+                  className={`h-11 ${errors.contactNumber ? "border-red-500 focus:border-red-500 focus:ring-red-500" : "focus:border-blue-500 focus:ring-blue-500"}`}
+                  placeholder="Enter contact number"
+                />
+                {errors.contactNumber && (
+                  <p className="text-sm text-red-500 flex items-center">
+                    <span className="mr-1">⚠</span>
+                    {errors.contactNumber.message}
+                  </p>
+                )}
+              </div>
+            </div>
+            
             <div className="space-y-2">
-              <Label htmlFor="product">Product</Label>
+              <Label htmlFor="contactEmail" className="text-sm font-medium text-gray-700">
+                Contact Email <span className="text-red-500">*</span>
+              </Label>
               <Input
-                id="product"
-                {...register("product")}
-                className={errors.product ? "border-red-500" : ""}
-                placeholder="Enter product name"
+                id="contactEmail"
+                type="email"
+                {...register("contactEmail")}
+                className={`h-11 ${errors.contactEmail ? "border-red-500 focus:border-red-500 focus:ring-red-500" : "focus:border-blue-500 focus:ring-blue-500"}`}
+                placeholder="Enter contact email"
               />
-              {errors.product && (
-                <p className="text-sm text-red-500">{errors.product.message}</p>
+              {errors.contactEmail && (
+                <p className="text-sm text-red-500 flex items-center">
+                  <span className="mr-1">⚠</span>
+                  {errors.contactEmail.message}
+                </p>
               )}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="revenue">Revenue (KSH)</Label>
-              <Input
-                id="revenue"
-                type="number"
-                step="0.01"
-                {...register("revenue", { valueAsNumber: true })}
-                className={errors.revenue ? "border-red-500" : ""}
-                placeholder="0.00"
-              />
-              {errors.revenue && (
-                <p className="text-sm text-red-500">{errors.revenue.message}</p>
-              )}
+          {/* System Information Section */}
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <div className="w-1 h-6 bg-purple-600 rounded-full"></div>
+              <h3 className="text-lg font-semibold text-gray-900">System Information</h3>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="expectedQuarter">Expected Quarter</Label>
-              <Select
-                value={watch("expectedQuarter")}
-                onValueChange={(value) => setValue("expectedQuarter", value as any)}
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="systemInPlace" className="text-sm font-medium text-gray-700">
+                  System in Place <span className="text-red-500">*</span>
+                </Label>
+                <Select
+                  value={watch("systemInPlace")}
+                  onValueChange={(value) => setValue("systemInPlace", value as any)}
+                >
+                  <SelectTrigger className="h-11 focus:border-blue-500 focus:ring-blue-500">
+                    <SelectValue placeholder="Select current system" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="navision">Navision</SelectItem>
+                    <SelectItem value="365_bc">365 BC</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="open_source">Open Source</SelectItem>
+                    <SelectItem value="oracle">Oracle</SelectItem>
+                    <SelectItem value="sap">SAP</SelectItem>
+                  </SelectContent>
+                </Select>
+                {errors.systemInPlace && (
+                  <p className="text-sm text-red-500 flex items-center">
+                    <span className="mr-1">⚠</span>
+                    {errors.systemInPlace.message}
+                  </p>
+                )}
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="needAvailability" className="text-sm font-medium text-gray-700">
+                  Need Availability <span className="text-red-500">*</span>
+                </Label>
+                <Select
+                  value={watch("needAvailability")}
+                  onValueChange={(value) => setValue("needAvailability", value as any)}
+                >
+                  <SelectTrigger className="h-11 focus:border-blue-500 focus:ring-blue-500">
+                    <SelectValue placeholder="Select need availability" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="upgrade">Upgrade</SelectItem>
+                    <SelectItem value="under_implementation">Under Implementation</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
+                  </SelectContent>
+                </Select>
+                {errors.needAvailability && (
+                  <p className="text-sm text-red-500 flex items-center">
+                    <span className="mr-1">⚠</span>
+                    {errors.needAvailability.message}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Business Information Section */}
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <div className="w-1 h-6 bg-orange-600 rounded-full"></div>
+              <h3 className="text-lg font-semibold text-gray-900">Business Information</h3>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="sectorId" className="text-sm font-medium text-gray-700">
+                  Sector <span className="text-gray-400">(Optional)</span>
+                </Label>
+                <Select
+                  value={watch("sectorId") || undefined}
+                  onValueChange={(value) => setValue("sectorId", value || undefined)}
+                >
+                  <SelectTrigger className="h-11 focus:border-blue-500 focus:ring-blue-500">
+                    <SelectValue placeholder="Select business sector (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sectors.map((sector) => (
+                      <SelectItem key={sector.id} value={sector.id}>
+                        {sector.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="revenue" className="text-sm font-medium text-gray-700">
+                  Revenue (KSH) <span className="text-gray-400">(Optional)</span>
+                </Label>
+                <Input
+                  id="revenue"
+                  type="number"
+                  step="0.01"
+                  {...register("revenue", { valueAsNumber: true })}
+                  className={`h-11 ${errors.revenue ? "border-red-500 focus:border-red-500 focus:ring-red-500" : "focus:border-blue-500 focus:ring-blue-500"}`}
+                  placeholder="0.00"
+                />
+                {errors.revenue && (
+                  <p className="text-sm text-red-500 flex items-center">
+                    <span className="mr-1">⚠</span>
+                    {errors.revenue.message}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Additional Information Section */}
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <div className="w-1 h-6 bg-gray-600 rounded-full"></div>
+              <h3 className="text-lg font-semibold text-gray-900">Additional Information</h3>
+              <span className="text-sm text-gray-500">(Optional)</span>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="currentVendor" className="text-sm font-medium text-gray-700">
+                  Current Vendor
+                </Label>
+                <Input
+                  id="currentVendor"
+                  {...register("currentVendor")}
+                  className="h-11 focus:border-blue-500 focus:ring-blue-500"
+                  placeholder="Enter current vendor name"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="remarks" className="text-sm font-medium text-gray-700">
+                  Remarks & Notes
+                </Label>
+                <Textarea
+                  id="remarks"
+                  {...register("remarks")}
+                  className="focus:border-blue-500 focus:ring-blue-500 resize-none"
+                  placeholder="Enter any additional remarks or notes about this prospect..."
+                  rows={4}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Form Actions */}
+          <div className="flex items-center justify-between pt-6 border-t border-gray-200">
+            <div className="text-sm text-gray-500">
+              <span className="text-red-500">*</span> Required fields
+            </div>
+            <div className="flex items-center space-x-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleClose}
+                disabled={loading}
+                className="h-11 px-6"
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select quarter" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Q1">Q1</SelectItem>
-                  <SelectItem value="Q2">Q2</SelectItem>
-                  <SelectItem value="Q3">Q3</SelectItem>
-                  <SelectItem value="Q4">Q4</SelectItem>
-                </SelectContent>
-              </Select>
-              {errors.expectedQuarter && (
-                <p className="text-sm text-red-500">{errors.expectedQuarter.message}</p>
-              )}
+                Cancel
+              </Button>
+              <Button 
+                type="submit" 
+                disabled={loading}
+                className="h-11 px-8 bg-blue-600 hover:bg-blue-700"
+              >
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Create Prospect
+              </Button>
             </div>
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="comments">Comments</Label>
-            <Textarea
-              id="comments"
-              {...register("comments")}
-              placeholder="Enter any comments"
-              rows={3}
-            />
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={loading}>
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Add Prospects
-            </Button>
-          </DialogFooter>
         </form>
       </DialogContent>
+      
+      {/* Revenue Sharing Modal - Rendered outside main modal */}
+      <RevenueSharingModal
+        isOpen={showRevenueModal}
+        onClose={() => setShowRevenueModal(false)}
+        onBack={() => {
+          setShowRevenueModal(false);
+          // Restore the preserved form data
+          restoreFormData();
+          // Re-open the main modal
+          if (isOpen !== undefined) {
+            // If using external open state, we need to trigger it
+            // This will be handled by the parent component
+          } else {
+            setOpen(true);
+          }
+        }}
+        onConfirm={handleRevenueSplit}
+        existingProspect={existingProspect}
+        newMarketer={{
+          id: currentUser?.id || '',
+          name: currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : '',
+          email: currentUser?.email || ''
+        }}
+      />
     </Dialog>
   );
 }

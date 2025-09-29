@@ -116,6 +116,12 @@ export default function ProjectDetail() {
   // Enhanced cache invalidation function for immediate table refresh
   const invalidateProjectCaches = async (projectId: string) => {
     try {
+      // Force remove cached queries to bypass staleTime
+      await Promise.all([
+        queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+        queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
+      ]);
+      
       // Invalidate all project-related queries to ensure immediate refresh
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['/api/projects'] }),
@@ -124,6 +130,12 @@ export default function ProjectDetail() {
         queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
         queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] }),
         queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] }),
+      ]);
+      
+      // Force immediate refetch from server
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
+        queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
       ]);
     } catch (error) {
       console.error('Error invalidating project caches:', error);

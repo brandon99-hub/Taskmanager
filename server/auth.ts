@@ -476,7 +476,9 @@ export async function setupAuth(app: Express) {
       }
 
       // Update user password (password will be hashed in updateUserPassword)
-      await storage.updateUserPassword(userId, newPassword);
+      // Check if this is a forced password change (user must change password)
+      const isFirstChange = user.mustChangePassword === true;
+      await storage.updateUserPassword(userId, newPassword, isFirstChange);
 
       // Invalidate all existing sessions except current one
       await SessionManager.invalidateUserSessions(userId, req.sessionID);

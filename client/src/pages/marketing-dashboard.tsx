@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,10 +37,8 @@ import { MarketingLeadsTable } from "@/components/marketing/leads-table";
 import { MarketingSalesWonTable } from "@/components/marketing/sales-won-table";
 import { MarketingExpectedOrdersTable } from "@/components/marketing/expected-orders-table";
 import { MarketingProspectsTable } from "@/components/marketing/prospects-table";
-import { MarketingLeadForm } from "@/components/marketing/lead-form";
-import { MarketingSalesWonForm } from "@/components/marketing/sales-won-form";
-import { MarketingExpectedOrdersForm } from "@/components/marketing/expected-orders-form";
 import { MarketingProspectsForm } from "@/components/marketing/prospects-form";
+import { SectorsManagement } from "@/components/marketing/sectors-management";
 import { UserManagement } from "@/components/marketing/user-management";
 import { SalesWonChart } from "@/components/marketing/sales-won-chart";
 import { ExpectedOrdersPieChart } from "@/components/marketing/expected-orders-pie-chart";
@@ -51,26 +49,29 @@ import { useScreenSize } from "@/hooks/use-mobile";
 
 interface DashboardStats {
   year: number;
+  prospectsCount: number;
   leadsCount: number;
-  salesWonTotal: number;
-  expectedOrdersTotal: number;
-  prospectsTotal: number;
+  expectedOrdersCount: number;
+  salesWonCount: number;
+  totalRevenue: number;
   annualSummary: any;
 }
 
 interface AdminDashboardStats {
   year: number;
+  totalProspectsCount: number;
   totalLeadsCount: number;
-  totalSalesWon: number;
-  totalExpectedOrders: number;
-  totalProspects: number;
-  marketerStats: Array<{
-    marketerId: string;
-    marketerName: string;
+  totalExpectedOrdersCount: number;
+  totalSalesWonCount: number;
+  totalRevenue: number;
+  bdStats: Array<{
+    bdId: string;
+    bdName: string;
+    prospectsCount: number;
     leadsCount: number;
-    salesWonTotal: number;
-    expectedOrdersTotal: number;
-    prospectsTotal: number;
+    expectedOrdersCount: number;
+    salesWonCount: number;
+    totalRevenue: number;
   }>;
 }
 
@@ -85,6 +86,16 @@ interface AnalyticsData {
     quarter: string;
     leadsCount: number;
     salesWonTotal: number;
+  }>;
+  bdStats: Array<{
+    bdId: string;
+    bdName: string;
+    prospectsCount: number;
+    leadsCount: number;
+    expectedOrdersCount: number;
+    salesWonCount: number;
+    totalRevenue: number;
+    target: number;
   }>;
   topPerformers: Array<{
     marketerId: string;
@@ -136,8 +147,7 @@ export default function MarketingDashboard() {
   const [selectedMarketer, setSelectedMarketer] = useState<string>("");
   const [showUserManagement, setShowUserManagement] = useState(false);
   const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
-  const [showLeadModal, setShowLeadModal] = useState(false);
-  const [showSalesWonModal, setShowSalesWonModal] = useState(false);
+  const [showProspectModal, setShowProspectModal] = useState(false);
   const [viewMode, setViewMode] = useState<'table' | 'chart'>('chart');
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
@@ -210,7 +220,15 @@ export default function MarketingDashboard() {
 
         if (adminResponse.ok) {
           const adminData = await adminResponse.json();
-          setAdminStats(adminData);
+          setAdminStats({
+            year: adminData.year || new Date().getFullYear(),
+            totalProspectsCount: adminData.totalProspectsCount || 0,
+            totalLeadsCount: adminData.totalLeadsCount || 0,
+            totalExpectedOrdersCount: adminData.totalExpectedOrdersCount || 0,
+            totalSalesWonCount: adminData.totalSalesWonCount || 0,
+            totalRevenue: adminData.totalRevenue || 0,
+            bdStats: adminData.bdStats || [],
+          });
           console.log("Admin stats loaded:", adminData);
         } else {
           console.error("Admin stats API failed:", adminResponse.status);
@@ -228,6 +246,7 @@ export default function MarketingDashboard() {
             year: new Date().getFullYear(),
             conversionRates: [],
             quarterlyStats: [],
+            bdStats: [],
             topPerformers: [],
             salesWonPerMarketer: [],
             expectedOrdersShare: [],
@@ -244,7 +263,15 @@ export default function MarketingDashboard() {
 
       if (response.ok) {
         const data = await response.json();
-        setStats(data);
+        setStats({
+          year: data.year || new Date().getFullYear(),
+          prospectsCount: data.prospectsCount || 0,
+          leadsCount: data.leadsCount || 0,
+          expectedOrdersCount: data.expectedOrdersCount || 0,
+          salesWonCount: data.salesWonCount || 0,
+          totalRevenue: data.totalRevenue || 0,
+          annualSummary: data.annualSummary || null,
+        });
         }
       }
     } catch (error) {
@@ -303,11 +330,12 @@ export default function MarketingDashboard() {
 
   const navigationItems = [
     { id: "overview", label: "Overview", icon: Home },
+    { id: "prospects", label: "Prospects", icon: UserCheck },
     { id: "leads", label: "Leads", icon: Users },
-    { id: "sales-won", label: "Sales Won", icon: TrendingUp },
     { id: "expected-orders", label: "Expected Orders", icon: Target },
-    { id: "prospects", label: "Prospects", icon: Calendar },
+    { id: "sales-won", label: "Sales Won", icon: TrendingUp },
     ...(user?.role === 'admin' ? [
+      { id: "sectors", label: "Sectors", icon: PieChart },
       { id: "users", label: "Users", icon: UserCheck },
     ] : []),
   ];
@@ -415,10 +443,11 @@ export default function MarketingDashboard() {
                 </h2>
                 <p className="text-sm text-gray-600">
                   {activeSection === 'overview' && 'Your marketing performance overview with analytics'}
-                  {activeSection === 'leads' && 'Manage your leads and prospects'}
-                  {activeSection === 'sales-won' && 'Track successful sales and contracts'}
+                  {activeSection === 'prospects' && 'Track potential opportunities and initial client interest'}
+                  {activeSection === 'leads' && 'Manage qualified leads and interested clients'}
                   {activeSection === 'expected-orders' && 'Monitor expected orders and revenue'}
-                  {activeSection === 'prospects' && 'Track potential opportunities'}
+                  {activeSection === 'sales-won' && 'Track successful sales and contracts'}
+                  {activeSection === 'sectors' && 'Manage business sectors and their projects'}
                   {activeSection === 'users' && 'Manage marketing team members'}
                 </p>
               </div>
@@ -452,13 +481,13 @@ export default function MarketingDashboard() {
         <div className="flex-1 p-6">
 
           {activeSection === 'overview' && (
-            <div className="space-y-6">
+            <div key="overview" className="space-y-6">
             {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <Card className="hover:shadow-md transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium text-gray-600">
-                    {user?.role === 'admin' ? 'Total Leads (All)' : 'Total Leads'}
+                    {user?.role === 'admin' ? 'Total Prospects (All)' : 'Total Prospects'}
                   </CardTitle>
                   <div className="p-2 bg-blue-100 rounded-lg">
                     <Users className="h-4 w-4 text-blue-600" />
@@ -466,7 +495,7 @@ export default function MarketingDashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
-                    {user?.role === 'admin' ? (adminStats?.totalLeadsCount || 0) : (stats?.leadsCount || 0)}
+                    {user?.role === 'admin' ? (adminStats?.totalProspectsCount || 0) : (stats?.prospectsCount || 0)}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
                     {user?.role === 'admin' ? 'All marketers combined' : `${stats?.year || new Date().getFullYear()} leads tracked`}
@@ -486,8 +515,8 @@ export default function MarketingDashboard() {
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
                     {user?.role === 'admin' 
-                      ? formatCurrency(adminStats?.totalSalesWon || 0)
-                      : formatCurrency(stats?.salesWonTotal || 0)
+                      ? formatCurrency(adminStats?.totalSalesWonCount || 0)
+                      : formatCurrency(stats?.salesWonCount || 0)
                     }
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -508,8 +537,8 @@ export default function MarketingDashboard() {
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
                     {user?.role === 'admin' 
-                      ? formatCurrency(adminStats?.totalExpectedOrders || 0)
-                      : formatCurrency(stats?.expectedOrdersTotal || 0)
+                      ? formatCurrency(adminStats?.totalExpectedOrdersCount || 0)
+                      : formatCurrency(stats?.expectedOrdersCount || 0)
                     }
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -521,7 +550,7 @@ export default function MarketingDashboard() {
               <Card className="hover:shadow-md transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium text-gray-600">
-                    {user?.role === 'admin' ? 'Total Prospects (All)' : 'Prospects'}
+                    {user?.role === 'admin' ? 'Total Revenue (All)' : 'Total Revenue'}
                   </CardTitle>
                   <div className="p-2 bg-purple-100 rounded-lg">
                     <Target className="h-4 w-4 text-purple-600" />
@@ -530,8 +559,8 @@ export default function MarketingDashboard() {
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
                     {user?.role === 'admin' 
-                      ? formatCurrency(adminStats?.totalProspects || 0)
-                      : formatCurrency(stats?.prospectsTotal || 0)
+                      ? formatCurrency(adminStats?.totalRevenue || 0)
+                      : formatCurrency(stats?.totalRevenue || 0)
                     }
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -646,15 +675,15 @@ export default function MarketingDashboard() {
                 {viewMode === 'chart' ? (
                   <div className="space-y-6">
                     {analyticsLoading ? (
-                      <>
+                      <Fragment key="loading-charts">
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                           <SalesWonChartSkeleton />
                           <PieChartSkeleton />
                         </div>
                         <LineChartSkeleton />
-                      </>
+                      </Fragment>
                     ) : analytics ? (
-                      <>
+                      <Fragment key="analytics-charts">
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                           <SalesWonChart 
                             data={analytics.salesWonPerMarketer}
@@ -673,7 +702,7 @@ export default function MarketingDashboard() {
                           title="Monthly Performance Trends"
                           description="Performance trends over the past months"
                         />
-                      </>
+                      </Fragment>
                     ) : (
                       <div className="text-center py-12">
                         <div className="text-gray-500 mb-4">
@@ -687,63 +716,90 @@ export default function MarketingDashboard() {
                       </div>
                     )}
 
-                {/* Additional Analytics Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Conversion Rates */}
-                  <Card className="border-0 shadow-sm">
-                    <CardHeader className="pb-4">
-                      <CardTitle className="text-lg font-semibold text-gray-900">Conversion Rates by Stage</CardTitle>
-                      <CardDescription className="text-gray-600">
-                        Lead progression through sales stages
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-3">
-                        {analytics?.conversionRates?.map((rate) => (
-                          <div key={rate.stage} className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
-                              <Badge variant="secondary" className="capitalize">
-                                {rate.stage.replace('_', ' ')}
-                              </Badge>
-                              <span className="text-sm text-gray-600">{rate.count} leads</span>
-                            </div>
-                            <span className="text-sm font-medium text-gray-900">{rate.percentage}%</span>
-                          </div>
-                        ))}
+                {/* Annual Summary Table */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader className="pb-4">
+                    <CardTitle className="flex items-center text-lg font-semibold text-gray-900">
+                      <BarChart3 className="h-5 w-5 text-green-600 mr-2" />
+                      Annual Summary
+                    </CardTitle>
+                    <CardDescription className="text-gray-600">
+                      Business development performance overview
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {analyticsLoading ? (
+                      <TableSkeleton />
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="font-semibold text-gray-700">Sales Executive</TableHead>
+                              <TableHead className="font-semibold text-gray-700 text-right">Won</TableHead>
+                              <TableHead className="font-semibold text-gray-700 text-right">Target</TableHead>
+                              <TableHead className="font-semibold text-gray-700 text-right">Target Achieved</TableHead>
+                              <TableHead className="font-semibold text-gray-700 text-right">Expected Orders</TableHead>
+                              <TableHead className="font-semibold text-gray-700 text-right">Status Quo</TableHead>
+                              <TableHead className="font-semibold text-gray-700 text-right">Deviation from Target</TableHead>
+                              <TableHead className="font-semibold text-gray-700 text-right">Sum of Sales + Expected Orders</TableHead>
+                              <TableHead className="font-semibold text-gray-700 text-right">Expected Target</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {analytics?.bdStats && analytics.bdStats.length > 0 ? (
+                              analytics.bdStats.map((bd: any, index: number) => {
+                                const won = bd.salesWonCount || 0;
+                                const target = bd.target || 0;
+                                const expectedOrders = bd.expectedOrdersCount || 0;
+                                const targetAchieved = target > 0 ? ((won / target) * 100).toFixed(2) : '0.00';
+                                const deviation = won - target;
+                                const sumSalesExpected = won + expectedOrders;
+                                const expectedTarget = target; // Expected target is same as target
+                                
+                                return (
+                                  <TableRow key={bd.bdId || index}>
+                                    <TableCell className="font-medium">{bd.bdName || 'Unknown'}</TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {won.toLocaleString()}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {target.toLocaleString()}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {targetAchieved}%
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {expectedOrders.toLocaleString()}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {bd.totalRevenue?.toLocaleString() || '0'}
+                                    </TableCell>
+                                    <TableCell className={`text-right font-mono ${deviation >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                      {deviation >= 0 ? '+' : ''}{deviation.toLocaleString()}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {sumSalesExpected.toLocaleString()}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {expectedTarget.toLocaleString()}
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={9} className="text-center py-8 text-gray-500">
+                                  No annual summary data available
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
                       </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Quarterly Stats */}
-                  <Card className="border-0 shadow-sm">
-                    <CardHeader className="pb-4">
-                      <CardTitle className="text-lg font-semibold text-gray-900">Quarterly Performance</CardTitle>
-                      <CardDescription className="text-gray-600">
-                        Performance breakdown by quarter
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-3">
-                        {analytics?.quarterlyStats?.map((quarter) => (
-                          <div key={quarter.quarter} className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-gray-900">{quarter.quarter}</span>
-                            <div className="text-right">
-                              <div className="text-sm text-gray-600">{quarter.leadsCount} leads</div>
-                              <div className="text-sm font-medium text-gray-900">
-                                {new Intl.NumberFormat('en-KE', {
-                                  style: 'currency',
-                                  currency: 'KES',
-                                  minimumFractionDigits: 0,
-                                  maximumFractionDigits: 0,
-                                }).format(quarter.salesWonTotal)}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
+                    )}
+                  </CardContent>
+                </Card>
 
                 {/* Top Performers */}
                 <Card className="border-0 shadow-sm">
@@ -786,13 +842,13 @@ export default function MarketingDashboard() {
                 ) : (
                   <div className="space-y-6">
                     {analyticsLoading ? (
-                      <>
+                      <Fragment key="loading-tables">
                         <TableSkeleton />
                         <TableSkeleton />
                         <TableSkeleton />
-                      </>
+                      </Fragment>
                     ) : analytics ? (
-                      <>
+                      <Fragment key="analytics-tables">
                         {/* Sales Won vs Target Table */}
                         <Card className="border-0 shadow-sm">
                       <CardHeader className="pb-3">
@@ -976,7 +1032,7 @@ export default function MarketingDashboard() {
                         </div>
                       </CardContent>
                     </Card>
-                      </>
+                      </Fragment>
                     ) : (
                       <div className="text-center py-12">
                         <div className="text-gray-500 mb-4">
@@ -1005,18 +1061,11 @@ export default function MarketingDashboard() {
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <Button 
-                    onClick={() => setShowLeadModal(true)} 
+                    onClick={() => setShowProspectModal(true)} 
                     className="h-16 flex flex-col items-center justify-center space-y-2 bg-blue-600 hover:bg-blue-700 text-white"
                   >
                     <Plus className="h-5 w-5" />
-                    <span className="text-sm font-medium">Add Lead</span>
-                  </Button>
-                  <Button 
-                    onClick={() => setShowSalesWonModal(true)} 
-                    className="h-16 flex flex-col items-center justify-center space-y-2 bg-green-600 hover:bg-green-700 text-white"
-                  >
-                    <Plus className="h-5 w-5" />
-                    <span className="text-sm font-medium">Add Sales Won</span>
+                    <span className="text-sm font-medium">Add Prospect</span>
                   </Button>
                   <Button 
                     onClick={() => handleExport("leads")} 
@@ -1041,13 +1090,12 @@ export default function MarketingDashboard() {
           )}
 
           {activeSection === 'leads' && (
-            <div className="space-y-6">
+            <div key="leads" className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Leads Management</h2>
-                <p className="text-gray-600 mt-1">Track and manage your sales leads</p>
+                <p className="text-gray-600 mt-1">Track and manage your sales leads. Edit prospects to change their stage to leads.</p>
               </div>
-              <MarketingLeadForm onSuccess={() => window.location.reload()} />
             </div>
             <MarketingLeadsTable 
               showMarketerInfo={user?.role === 'admin'} 
@@ -1058,13 +1106,12 @@ export default function MarketingDashboard() {
           )}
 
           {activeSection === 'sales-won' && (
-            <div className="space-y-6">
+            <div key="sales-won" className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Sales Won</h2>
-                <p className="text-gray-600 mt-1">Track your successful sales and contract wins</p>
+                <p className="text-gray-600 mt-1">Track your successful sales and contract wins. Edit prospects to change their stage to sales won.</p>
               </div>
-              <MarketingSalesWonForm onSuccess={() => window.location.reload()} />
             </div>
             <MarketingSalesWonTable 
               showMarketerInfo={user?.role === 'admin'} 
@@ -1075,46 +1122,59 @@ export default function MarketingDashboard() {
           )}
 
           {activeSection === 'expected-orders' && (
-            <div className="space-y-6">
+            <div key="expected-orders" className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Expected Orders</h2>
-                <p className="text-gray-600 mt-1">Track your expected orders and revenue pipeline</p>
+                <p className="text-gray-600 mt-1">Track your expected orders and revenue pipeline. Edit prospects to change their stage to expected orders.</p>
               </div>
-              <MarketingExpectedOrdersForm onSuccess={() => window.location.reload()} />
             </div>
-            <MarketingExpectedOrdersTable />
+            <MarketingExpectedOrdersTable 
+              showMarketerInfo={user?.role === 'admin'} 
+              selectedMarketer={selectedMarketer}
+              onMarketerChange={setSelectedMarketer}
+            />
             </div>
           )}
 
           {activeSection === 'prospects' && (
-            <div className="space-y-6">
+            <div key="prospects" className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Prospects</h2>
-                <p className="text-gray-600 mt-1">Track your prospects and potential opportunities</p>
+                <p className="text-gray-600 mt-1">Track your prospects and potential opportunities. Edit prospects to change their stage (prospect → lead → expected order → sales won).</p>
               </div>
-              <MarketingProspectsForm onSuccess={() => window.location.reload()} />
+              <Button 
+                onClick={() => setShowProspectModal(true)}
+                className="bg-primary hover:bg-primary/90"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Prospect
+              </Button>
             </div>
-            <MarketingProspectsTable />
+            <MarketingProspectsTable 
+              showMarketerInfo={user?.role === 'admin'} 
+              selectedMarketer={selectedMarketer}
+              onMarketerChange={setSelectedMarketer}
+            />
+            </div>
+          )}
+
+
+          {activeSection === 'sectors' && user?.role === 'admin' && (
+            <div key="sectors" className="space-y-6">
+              <SectorsManagement onSuccess={() => loadDashboardStats()} />
             </div>
           )}
 
 
           {activeSection === 'users' && user?.role === 'admin' && (
-            <div className="space-y-6">
+            <div key="users" className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">User Management</h2>
                   <p className="text-gray-600 mt-1">Manage marketing team members and their access</p>
                 </div>
-                <Button 
-                  onClick={() => setShowUserManagement(true)}
-                  className="bg-primary hover:bg-primary/90"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Marketer
-                </Button>
               </div>
 
               <UserManagement />
@@ -1143,22 +1203,12 @@ export default function MarketingDashboard() {
       />
 
       {/* Quick Action Modals (controlled, triggers hidden) */}
-      <MarketingLeadForm 
-        isOpen={showLeadModal}
-        onClose={() => setShowLeadModal(false)}
-        hideTrigger
+      <MarketingProspectsForm 
+        isOpen={showProspectModal}
+        onClose={() => setShowProspectModal(false)}
+        hideTrigger={true}
         onSuccess={() => {
-          setShowLeadModal(false);
-          loadDashboardStats();
-        }}
-      />
-      
-      <MarketingSalesWonForm 
-        isOpen={showSalesWonModal}
-        onClose={() => setShowSalesWonModal(false)}
-        hideTrigger
-        onSuccess={() => {
-          setShowSalesWonModal(false);
+          setShowProspectModal(false);
           loadDashboardStats();
         }}
       />

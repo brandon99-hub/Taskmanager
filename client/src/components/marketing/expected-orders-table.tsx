@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -20,6 +20,7 @@ import {
   Loader2
 } from "lucide-react";
 import { format } from "date-fns";
+import { ExpectedOrdersFilters } from "./expected-orders-filters";
 
 interface ExpectedOrders {
   id: string;
@@ -50,7 +51,17 @@ const quarterColors = {
   Q4: "bg-red-100 text-red-800",
 };
 
-export function MarketingExpectedOrdersTable() {
+interface MarketingExpectedOrdersTableProps {
+  showMarketerInfo?: boolean;
+  selectedMarketer?: string;
+  onMarketerChange?: (marketerId: string) => void;
+}
+
+export function MarketingExpectedOrdersTable({ 
+  showMarketerInfo = false, 
+  selectedMarketer = "",
+  onMarketerChange 
+}: MarketingExpectedOrdersTableProps) {
   const [expectedOrders, setExpectedOrders] = useState<ExpectedOrders[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -61,6 +72,13 @@ export function MarketingExpectedOrdersTable() {
     total: 0,
     pages: 0,
   });
+  const [filters, setFilters] = useState<{
+    search?: string;
+    year?: string;
+    quarter?: string;
+    marketerId?: string;
+    sector?: string;
+  }>({});
 
   const loadExpectedOrders = async () => {
     setLoading(true);
@@ -69,7 +87,12 @@ export function MarketingExpectedOrdersTable() {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: "10",
-        ...(search && { search }),
+        ...(filters.search && { search: filters.search }),
+        ...(filters.year && { year: filters.year }),
+        ...(filters.quarter && { quarter: filters.quarter }),
+        ...(filters.marketerId && { marketerId: filters.marketerId }),
+        ...(filters.sector && { sector: filters.sector }),
+        ...(selectedMarketer && { marketerId: selectedMarketer }),
       });
 
       const response = await fetch(`/api/marketing/expected-orders?${params}`, {
@@ -90,9 +113,27 @@ export function MarketingExpectedOrdersTable() {
     }
   };
 
+  const handleFiltersChange = useCallback((newFilters: {
+    search?: string;
+    year?: string;
+    quarter?: string;
+    marketerId?: string;
+    sector?: string;
+  }) => {
+    setFilters(newFilters);
+  }, []);
+
+  const memoizedFilters = useMemo(() => filters, [
+    filters.search,
+    filters.year,
+    filters.quarter,
+    filters.marketerId,
+    filters.sector
+  ]);
+
   useEffect(() => {
     loadExpectedOrders();
-  }, [page, search]);
+  }, [page, search, selectedMarketer, memoizedFilters]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this expected orders record?")) return;
@@ -136,24 +177,20 @@ export function MarketingExpectedOrdersTable() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Expected Orders</CardTitle>
-        <CardDescription>
-          Track your expected orders and revenue pipeline
-        </CardDescription>
-        <div className="flex items-center space-x-2">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search expected orders..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8"
-            />
-          </div>
-        </div>
-      </CardHeader>
+    <div className="space-y-6">
+      {/* Filters */}
+      <ExpectedOrdersFilters 
+        onFiltersChange={handleFiltersChange}
+        showMarketerInfo={showMarketerInfo}
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Expected Orders</CardTitle>
+          <CardDescription>
+            Track your expected orders and revenue pipeline
+          </CardDescription>
+        </CardHeader>
       <CardContent>
         <div className="rounded-md border">
           <Table>
@@ -241,5 +278,6 @@ export function MarketingExpectedOrdersTable() {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }

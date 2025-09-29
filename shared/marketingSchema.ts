@@ -1,9 +1,12 @@
 import { z } from "zod";
 
 // Marketing User Schemas
-export const marketingUserRoleSchema = z.enum(['admin', 'marketer']);
+export const marketingUserRoleSchema = z.enum(['admin', 'marketer', 'business_development']);
 export const salesStageSchema = z.enum(['lead', 'qualified', 'proposal', 'negotiation', 'closed_won', 'closed_lost']);
 export const quarterSchema = z.enum(['Q1', 'Q2', 'Q3', 'Q4']);
+export const systemInPlaceSchema = z.enum(['navision', '365_bc', 'none', 'open_source', 'oracle', 'sap']);
+export const needAvailabilitySchema = z.enum(['upgrade', 'under_implementation', 'none']);
+export const prospectStageSchema = z.enum(['prospect', 'lead', 'expected_order', 'sales_won']);
 
 // Marketing User Schemas
 export const marketingUserLoginSchema = z.object({
@@ -26,20 +29,78 @@ export const marketingUserUpdateSchema = z.object({
   phoneNumber: z.string().optional(),
   role: marketingUserRoleSchema.optional(),
   isActive: z.boolean().optional(),
+  target: z.number().positive("Target must be positive").optional(),
 });
 
-// Lead Schemas
-export const marketingLeadCreateSchema = z.object({
+// Sector Schemas
+export const marketingSectorCreateSchema = z.object({
+  name: z.string().min(1, "Sector name is required").max(200, "Sector name too long"),
+  description: z.string().optional(),
+});
+
+export const marketingSectorUpdateSchema = marketingSectorCreateSchema.partial();
+
+// Project Schemas
+export const marketingProjectCreateSchema = z.object({
+  sectorId: z.string().min(1, "Sector is required"),
+  institution: z.string().min(1, "Institution name is required").max(200, "Institution name too long"),
+  leadMarketer: z.string().optional(),
+  contactPerson: z.string().max(200, "Contact person name too long").optional(),
+  contactNumber: z.string().max(20, "Contact number too long").optional(),
+  systemInPlace: systemInPlaceSchema.optional(),
+  needAvailability: needAvailabilitySchema.optional(),
+  currentVendor: z.string().max(200, "Current vendor name too long").optional(),
+  remarks: z.string().optional(),
+  status: z.enum(['active', 'completed', 'paused']).default('active'),
+});
+
+export const marketingProjectUpdateSchema = z.object({
+  institution: z.string().min(1, "Institution name is required").max(200, "Institution name too long").optional(),
+  leadMarketer: z.string().nullable().optional(),
+  contactPerson: z.string().max(200, "Contact person name too long").optional(),
+  contactNumber: z.string().max(20, "Contact number too long").optional(),
+  systemInPlace: systemInPlaceSchema.optional(),
+  needAvailability: needAvailabilitySchema.optional(),
+  currentVendor: z.string().max(200, "Current vendor name too long").optional(),
+  remarks: z.string().optional(),
+  status: z.enum(['active', 'completed', 'paused']).optional(),
+  sectorId: z.string().optional(),
+}).transform((data) => {
+  // Convert empty strings to undefined for optional fields
+  return {
+    ...data,
+    leadMarketer: data.leadMarketer === "" ? undefined : data.leadMarketer,
+    contactPerson: data.contactPerson === "" ? undefined : data.contactPerson,
+    contactNumber: data.contactNumber === "" ? undefined : data.contactNumber,
+    currentVendor: data.currentVendor === "" ? undefined : data.currentVendor,
+    remarks: data.remarks === "" ? undefined : data.remarks,
+  };
+});
+
+// Prospect Schemas (updated from leads)
+export const marketingProspectCreateSchema = z.object({
   date: z.string().datetime("Invalid date format"),
   client: z.string().min(1, "Client name is required").max(200, "Client name too long"),
-  contactDetails: z.string().min(1, "Contact details are required"),
+  contactPerson: z.string().min(1, "Contact person is required").max(200, "Contact person name too long"),
+  contactNumber: z.string().min(1, "Contact number is required").max(20, "Contact number too long"),
+  contactEmail: z.string().email("Valid email required").max(255, "Email too long"),
+  systemInPlace: systemInPlaceSchema,
+  needAvailability: needAvailabilitySchema,
+  currentVendor: z.string().max(200, "Current vendor name too long").optional(),
   remarks: z.string().optional(),
-  budget: z.number().positive("Budget must be positive").optional(),
-  salesStage: salesStageSchema.default('lead'),
-  facilitationCost: z.number().positive("Facilitation cost must be positive").optional(),
+  revenue: z.number().positive("Revenue must be positive").optional(),
+  stage: prospectStageSchema.default('prospect'),
+  sectorId: z.string().optional(),
 });
 
-export const marketingLeadUpdateSchema = marketingLeadCreateSchema.partial();
+export const marketingProspectUpdateSchema = marketingProspectCreateSchema.partial();
+
+// Shared Account Schemas
+export const marketingSharedAccountSchema = z.object({
+  originalProspectId: z.string().min(1, "Original prospect ID is required"),
+  sharedWithBdId: z.string().min(1, "BD member to share with is required"),
+  revenueSplit: z.number().min(0, "Revenue split must be positive").max(100, "Revenue split cannot exceed 100%"),
+});
 
 // Sales Won Schemas
 export const marketingSalesWonCreateSchema = z.object({
@@ -65,17 +126,6 @@ export const marketingExpectedOrdersCreateSchema = z.object({
 
 export const marketingExpectedOrdersUpdateSchema = marketingExpectedOrdersCreateSchema.partial();
 
-// Prospects Schemas
-export const marketingProspectsCreateSchema = z.object({
-  organisationName: z.string().min(1, "Organisation name is required").max(200, "Organisation name too long"),
-  sector: z.string().min(1, "Sector is required").max(100, "Sector name too long"),
-  product: z.string().min(1, "Product is required").max(200, "Product name too long"),
-  revenue: z.number().positive("Revenue must be positive"),
-  expectedQuarter: quarterSchema,
-  comments: z.string().optional(),
-});
-
-export const marketingProspectsUpdateSchema = marketingProspectsCreateSchema.partial();
 
 // Annual Summary Schemas
 export const marketingAnnualSummaryCreateSchema = z.object({
@@ -102,6 +152,9 @@ export const marketingQuerySchema = z.object({
   quarter: quarterSchema.optional(),
   sector: z.string().optional(),
   marketerId: z.string().optional(),
+  bdId: z.string().optional(),
+  sectorId: z.string().optional(),
+  stage: prospectStageSchema.optional(),
   month: z.string().transform(Number).pipe(z.number().int().min(1).max(12)).optional(),
 });
 

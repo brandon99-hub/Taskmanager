@@ -139,6 +139,7 @@ export interface IStorage {
 
   // Milestone operations (for invoicable entities)
   getMilestones(): Promise<(Milestone & { project: Project; modules: Module[] })[]>;
+  getMilestonesForUser(userId: string): Promise<(Milestone & { project: Project; modules: Module[] })[]>;
   getMilestone(id: string): Promise<(Milestone & { project: Project; modules: Module[] }) | undefined>;
   createMilestone(milestone: InsertMilestone): Promise<Milestone>;
   updateMilestone(id: string, milestone: Partial<InsertMilestone>): Promise<Milestone>;
@@ -2333,10 +2334,11 @@ export class DatabaseStorage implements IStorage {
     
     const userModuleIds = userSubtaskModules.map(s => s.moduleId).filter(Boolean) as string[];
     
-    // Base condition: modules that have subtasks assigned to user
-    const userModuleCondition = userModuleIds.length > 0
-      ? inArray(modules.id, userModuleIds as any)
-      : sql`1 = 0`; // No modules if no subtasks assigned
+    // User module condition: modules that have subtasks assigned to user OR modules assigned to user's teams
+    const userModuleCondition = or(
+      userModuleIds.length > 0 ? inArray(modules.id, userModuleIds as any) : sql`1 = 0`,
+      teamIds.length > 0 ? sql`${modules.assignedTeamId} IN (${teamIds.join(',')})` : sql`1 = 0`
+    );
 
     // Get overdue modules
     const overdue = await db
@@ -4519,6 +4521,65 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       return milestonesWithProjectsAndModules;
     } catch (error) {
       console.error('Error fetching milestones:', error);
+      return [];
+    }
+  }
+
+  async getMilestonesForUser(userId: string): Promise<(Milestone & { project: Project; modules: Module[] })[]> {
+    try {
+      // Get user's team IDs to include team-assigned projects
+      const userTeamIds = await db
+        .select({ teamId: teamMembers.teamId })
+        .from(teamMembers)
+        .where(eq(teamMembers.userId, userId))
+        .execute();
+      
+      const teamIds = userTeamIds.map(t => t.teamId);
+
+      // Get projects where user's teams are assigned
+      const userProjectIds = await db
+        .select({ projectId: projects.id })
+        .from(projects)
+        .where(
+          teamIds.length > 0 ? sql`${projects.teamId} IN (${teamIds.join(',')})` : sql`1 = 0`
+        )
+        .execute();
+
+      const projectIds = userProjectIds.map(p => p.projectId);
+
+      if (projectIds.length === 0) {
+        return []; // No projects assigned to user's teams
+      }
+
+      // Get milestones for user's assigned projects
+      const milestonesWithProjects = await db
+        .select({
+          milestone: milestones,
+          project: projects
+        })
+        .from(milestones)
+        .leftJoin(projects, eq(milestones.projectId, projects.id))
+        .where(inArray(milestones.projectId, projectIds as any))
+        .orderBy(asc(milestones.createdAt));
+
+      // For each milestone, get associated modules (when the relationship is added later)
+      const milestonesWithProjectsAndModules = await Promise.all(
+        milestonesWithProjects.map(async (row) => {
+          // For now, return empty modules array since milestone-module relationship isn't implemented yet
+          // When implemented, this will query the moduleMilestones table
+          const modules: Module[] = [];
+          
+          return {
+            ...row.milestone,
+            project: row.project!,
+            modules
+          };
+        })
+      );
+
+      return milestonesWithProjectsAndModules;
+    } catch (error) {
+      console.error('Error fetching milestones for user:', error);
       return [];
     }
   }
