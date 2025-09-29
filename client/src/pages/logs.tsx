@@ -30,7 +30,7 @@ import {
   EyeOff
 } from "lucide-react";
 import { format } from "date-fns";
-import { LogDetailsModal } from "@/components/logs/log-details-modal";
+import { LogDetailsModal } from "@/components/logs";
 
 interface LogEntry {
   id: string;
@@ -52,6 +52,24 @@ interface LogEntry {
   eventCategory?: string;
   createdAt: string;
   sessionId?: string;
+  additionalContext?: {
+    userEmail?: string;
+    machineInfo?: {
+      clientHostname?: string;
+      clientPlatform?: string;
+      clientIP?: string;
+    };
+    oldValues?: any;
+    newValues?: any;
+  };
+  metadata?: {
+    userEmail?: string;
+    machineInfo?: {
+      clientHostname?: string;
+      clientPlatform?: string;
+      clientIP?: string;
+    };
+  };
 }
 
 interface LogsResponse {

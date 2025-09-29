@@ -109,17 +109,17 @@ storybook-static
 tmp/
 temp/
 
-# Logs
-logs/
+# Log files (but not component directories)
+/logs/
 *.log
 
 # Security logs (these contain sensitive information)
-logs/security-*.log
-logs/audit-*.log
-logs/error-*.log
-logs/application-*.log
-logs/exceptions-*.log
-logs/rejections-*.log
+/logs/security-*.log
+/logs/audit-*.log
+/logs/error-*.log
+/logs/application-*.log
+/logs/exceptions-*.log
+/logs/rejections-*.log
 
 # Runtime data
 pids
