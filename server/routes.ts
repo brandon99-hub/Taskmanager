@@ -20,7 +20,7 @@ import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { users } from "../shared/schema";
 import { registerMarketingRoutes } from "./routes/marketing";
-import { logProjectAction, logModuleAction, logUserManagementAction, logTeamAction, logMilestoneAction, logInvoiceAction } from "./middleware/comprehensiveAudit";
+import { logProjectAction, logModuleAction, logUserManagementAction, logTeamAction, logMilestoneAction, logInvoiceAction, logSubtaskAction } from "./middleware/comprehensiveAudit";
 
 // Utility function for date validation and conversion
 function validateAndConvertDates(data: any, dateFields: string[]): { cleanedData: any; errors: string[] } {
@@ -3161,7 +3161,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/subtasks', isAuthenticated, logProjectAction('create'), async (req: any, res) => {
+  app.post('/api/subtasks', isAuthenticated, logSubtaskAction('create'), async (req: any, res) => {
     try {
       const cleaned = {
         ...req.body,
@@ -3275,7 +3275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/subtasks/:id', isAuthenticated, logProjectAction('update'), async (req: any, res) => {
+  app.put('/api/subtasks/:id', isAuthenticated, logSubtaskAction('update'), async (req: any, res) => {
     try {
       const payload: any = {};
       
@@ -3469,7 +3469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/subtasks/:id', isAuthenticated, logProjectAction('delete'), async (req: any, res) => {
+  app.delete('/api/subtasks/:id', isAuthenticated, logSubtaskAction('delete'), async (req: any, res) => {
     try {
       if (!(await hasAdminPrivileges(req.user))) {
         return res.status(403).json({ message: 'Forbidden' });

@@ -1818,6 +1818,26 @@ export class DatabaseStorage implements IStorage {
         .update(projects)
         .set({ status: newStatus, updatedAt: new Date() } as any)
         .where(eq(projects.id, projectId));
+
+      // Log the automatic status change
+      try {
+        const { auditService } = await import('./services/comprehensiveAuditService');
+        await auditService.logSystemOperation(
+          'status_update',
+          'project',
+          projectId,
+          project.name,
+          {
+            oldStatus: project.status,
+            newStatus: newStatus,
+            reason: 'automatic_milestone_based_update',
+            milestoneCount: totalMilestones,
+            paidMilestones: paidMilestones
+          }
+        );
+      } catch (error) {
+        console.error('Error logging project status change:', error);
+      }
     }
   }
 
@@ -3833,10 +3853,16 @@ export class DatabaseStorage implements IStorage {
         .select({ 
           status: modules.status,
           phaseNumber: modules.phaseNumber,
-          projectId: modules.projectId
+          projectId: modules.projectId,
+          name: modules.name
         })
         .from(modules)
-        .where(eq(modules.id, moduleId));
+        .where(eq(modules.id, moduleId)) as Array<{
+          status: string;
+          phaseNumber: number | null;
+          projectId: string;
+          name: string;
+        }>;
 
       if (!currentModule) {
         return; // Module not found
@@ -3863,6 +3889,26 @@ export class DatabaseStorage implements IStorage {
             updatedAt: new Date() as any
           } as any)
           .where(eq(modules.id, moduleId));
+
+        // Log the automatic module status change
+        try {
+          const { auditService } = await import('./services/comprehensiveAuditService');
+          await auditService.logSystemOperation(
+            'status_update',
+            'module',
+            moduleId,
+            currentModule.name,
+            {
+              oldStatus: currentModule.status,
+              newStatus: newStatus,
+              reason: 'automatic_subtask_based_update',
+              phaseNumber: currentModule.phaseNumber,
+              projectId: currentModule.projectId
+            }
+          );
+        } catch (error) {
+          console.error('Error logging module status change:', error);
+        }
 
         // Send notification when module moves to QA status
         if (newStatus === 'qa' && currentModule.status !== 'qa') {
@@ -4568,11 +4614,19 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
 
   async deleteMilestone(id: string): Promise<void> {
     try {
-      // Get project ID before deleting
+      // Get milestone info before deleting
       const [milestoneInfo] = await db
-        .select({ projectId: milestones.projectId })
+        .select({ 
+          projectId: milestones.projectId,
+          name: milestones.name,
+          billingStatus: milestones.billingStatus
+        })
         .from(milestones)
         .where(eq(milestones.id, id));
+      
+      if (!milestoneInfo) {
+        throw new Error('Milestone not found');
+      }
       
       // First delete any related records in moduleMilestones table (when implemented)
       // For now, we skip this since milestone-module relationship isn't active yet
@@ -4581,6 +4635,24 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       await db
         .delete(milestones)
         .where(eq(milestones.id, id));
+      
+      // Log the milestone deletion
+      try {
+        const { auditService } = await import('./services/comprehensiveAuditService');
+        await auditService.logSystemOperation(
+          'delete',
+          'milestone',
+          id,
+          milestoneInfo.name,
+          {
+            projectId: milestoneInfo.projectId,
+            billingStatus: milestoneInfo.billingStatus,
+            reason: 'admin_deletion'
+          }
+        );
+      } catch (error) {
+        console.error('Error logging milestone deletion:', error);
+      }
       
       // Update project status based on remaining milestones
       if (milestoneInfo?.projectId) {

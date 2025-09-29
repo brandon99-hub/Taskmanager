@@ -8,13 +8,23 @@ import {
   type InsertSystemEventLog
 } from '../../shared/schema';
 import { eq, desc, asc, and, or, sql, count, gte, lte, like } from 'drizzle-orm';
+import { getKenyaTime } from '../utils/timezone';
+import { getMachineIdentifier, getClientMachineInfo } from '../utils/machineIdentification';
 
 export interface AuditContext {
   userId?: string;
+  userEmail?: string;
   ipAddress?: string;
   userAgent?: string;
   sessionId?: string;
   requestId?: string;
+  machineInfo?: {
+    serverHostname: string;
+    clientHostname?: string;
+    clientPlatform?: string;
+    clientArch?: string;
+    clientIP: string;
+  };
 }
 
 export interface UserActionData {
@@ -57,6 +67,16 @@ export class ComprehensiveAuditService {
     context: AuditContext
   ): Promise<void> {
     try {
+      // Add machine information and user email to additional context
+      const enhancedContext = {
+        ...data.additionalContext,
+        machineInfo: context.machineInfo || {
+          serverHostname: getMachineIdentifier(),
+          clientIP: context.ipAddress || 'unknown'
+        },
+        userEmail: context.userEmail || null
+      };
+
       await db.insert(systemActivityLogs).values({
         userId: context.userId,
         actionType: data.actionType,
@@ -71,7 +91,7 @@ export class ComprehensiveAuditService {
         requestId: context.requestId,
         success: data.success ?? true,
         errorMessage: data.errorMessage,
-        additionalContext: data.additionalContext,
+        additionalContext: enhancedContext,
       } as InsertSystemActivityLog);
     } catch (error) {
       console.error('Failed to log user action:', error);
@@ -110,12 +130,21 @@ export class ComprehensiveAuditService {
    */
   async logSystemEvent(data: SystemEventData): Promise<void> {
     try {
+      // Add machine information to metadata
+      const enhancedMetadata = {
+        ...data.metadata,
+        machineInfo: {
+          serverHostname: getMachineIdentifier(),
+          timestamp: getKenyaTime()
+        }
+      };
+
       await db.insert(systemEventsLogs).values({
         eventType: data.eventType,
         eventCategory: data.eventCategory,
         description: data.description,
         severity: data.severity || 'info',
-        metadata: data.metadata,
+        metadata: enhancedMetadata,
       } as InsertSystemEventLog);
     } catch (error) {
       console.error('Failed to log system event:', error);
@@ -422,6 +451,40 @@ export class ComprehensiveAuditService {
   async exportLogs(filters: any) {
     const logs = await this.getLogs({ ...filters, limit: 10000 });
     return logs.data;
+  }
+
+  /**
+   * Log internal system operations (like automatic status updates)
+   */
+  async logSystemOperation(
+    operationType: string,
+    resourceType: string,
+    resourceId: string,
+    resourceName: string,
+    details: any,
+    context?: AuditContext
+  ) {
+    try {
+      await db.insert(systemActivityLogs).values({
+        userId: context?.userId || null,
+        actionType: operationType,
+        resourceType,
+        resourceId,
+        resourceName,
+        newValues: details,
+        ipAddress: context?.ipAddress,
+        userAgent: context?.userAgent,
+        sessionId: context?.sessionId,
+        requestId: context?.requestId,
+        success: true,
+        additionalContext: {
+          isSystemOperation: true,
+          operationSource: 'internal_automation'
+        }
+      });
+    } catch (error) {
+      console.error('Error logging system operation:', error);
+    }
   }
 }
 

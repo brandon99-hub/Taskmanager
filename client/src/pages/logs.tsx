@@ -26,9 +26,11 @@ import {
   Server,
   Database,
   Eye,
+  Monitor,
   EyeOff
 } from "lucide-react";
 import { format } from "date-fns";
+import { LogDetailsModal } from "@/components/logs/log-details-modal";
 
 interface LogEntry {
   id: string;
@@ -106,6 +108,7 @@ export default function Logs() {
   const [currentPage, setCurrentPage] = useState(1);
   const [showDetails, setShowDetails] = useState<Record<string, boolean>>({});
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Fetch logs
   const { data: logs, isLoading: logsLoading, refetch } = useQuery<LogsResponse>({
@@ -422,6 +425,7 @@ export default function Logs() {
                       <TableHead>Action</TableHead>
                       <TableHead>Resource</TableHead>
                       <TableHead>User</TableHead>
+                      <TableHead>Machine</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Severity</TableHead>
                       <TableHead>Details</TableHead>
@@ -431,7 +435,27 @@ export default function Logs() {
                     {logs?.data?.map((log) => (
                       <TableRow key={log.id}>
                         <TableCell className="font-mono text-sm">
-                          {format(new Date(log.createdAt), 'MMM dd, yyyy HH:mm:ss')}
+                          {(() => {
+                            try {
+                              const date = new Date(log.createdAt);
+                              
+                              // The server is running in a timezone that's about 2 hours ahead of Kenya
+                              // So we need to subtract 2 hours to get the correct Kenya time
+                              const kenyaTime = new Date(date.getTime() - (2 * 60 * 60 * 1000));
+                              
+                              return kenyaTime.toLocaleString('en-GB', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: false
+                              });
+                            } catch (error) {
+                              return new Date(log.createdAt).toLocaleString();
+                            }
+                          })()}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -463,7 +487,7 @@ export default function Logs() {
                           <div className="flex items-center gap-2">
                             <User className="h-4 w-4" />
                             <span className="font-mono text-sm">
-                              {log.resourceName || (log.metadata?.userEmail) || (log.userId ? log.userId.substring(0, 8) + '...' : 'Anonymous')}
+                              {(log.additionalContext?.userEmail) || (log.metadata?.userEmail) || (log.userId ? log.userId.substring(0, 8) + '...' : 'Anonymous')}
                             </span>
                           </div>
                           {log.ipAddress && (
@@ -471,6 +495,29 @@ export default function Logs() {
                               {log.ipAddress}
                             </div>
                           )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Monitor className="h-4 w-4" />
+                            <div className="text-sm">
+                              <div className="font-medium">
+                                {log.additionalContext?.machineInfo?.clientHostname || 
+                                 log.metadata?.machineInfo?.clientHostname || 
+                                 'Unknown Client'}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {log.additionalContext?.machineInfo?.clientPlatform || 
+                                 log.metadata?.machineInfo?.clientPlatform || 
+                                 'Unknown Platform'}
+                              </div>
+                              <div className="text-xs text-muted-foreground font-mono">
+                                {log.additionalContext?.machineInfo?.clientIP || 
+                                 log.metadata?.machineInfo?.clientIP || 
+                                 log.ipAddress || 
+                                 'Unknown IP'}
+                              </div>
+                            </div>
+                          </div>
                         </TableCell>
                         <TableCell>
                           {getStatusBadge(log)}
@@ -487,9 +534,12 @@ export default function Logs() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => toggleDetails(log.id)}
+                            onClick={() => {
+                              setSelectedLog(log);
+                              setIsModalOpen(true);
+                            }}
                           >
-                            {showDetails[log.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            <Eye className="h-4 w-4" />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -530,6 +580,16 @@ export default function Logs() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Log Details Modal */}
+      <LogDetailsModal
+        log={selectedLog}
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setSelectedLog(null);
+        }}
+      />
     </div>
   );
 }
