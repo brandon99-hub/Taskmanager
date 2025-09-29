@@ -110,11 +110,16 @@ export default function PasswordChangeModal({ open, onOpenChange }: PasswordChan
 
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast({
         title: "Password Changed Successfully",
         description: "Your password has been updated. Please use your new password for future logins.",
       });
+      
+      // Invalidate queries to refresh user data and password status
+      await queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/auth/must-change-password'] });
+      
       form.reset();
       onOpenChange(false);
     },

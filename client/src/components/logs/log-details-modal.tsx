@@ -81,13 +81,14 @@ function renderChanges(oldValues: any, newValues: any) {
       {changes.map((change, index) => (
         <div key={index} className="border rounded-lg p-3 bg-gray-50">
           <div className="text-sm font-medium mb-2">{change.fieldLabel}</div>
-          <div className="flex items-center gap-2 text-sm">
-            <div className="flex items-center gap-1">
-              <span className="px-2 py-1 bg-red-100 text-red-800 rounded text-xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 text-sm">
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="px-2 py-1 bg-red-100 text-red-800 rounded text-xs break-all">
                 {formatValue(change.oldValue)}
               </span>
-              <span className="text-muted-foreground">→</span>
-              <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+              <span className="text-muted-foreground hidden sm:inline">→</span>
+              <span className="text-muted-foreground sm:hidden text-xs">to</span>
+              <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs break-all">
                 {formatValue(change.newValue)}
               </span>
             </div>
@@ -104,7 +105,7 @@ function renderChanges(oldValues: any, newValues: any) {
           {oldValues && (
             <div>
               <div className="text-xs font-medium mb-1">Previous Values</div>
-              <pre className="text-xs bg-yellow-50 p-2 rounded overflow-x-auto">
+              <pre className="text-xs bg-yellow-50 p-2 rounded overflow-x-auto whitespace-pre-wrap break-words">
                 {JSON.stringify(oldValues, null, 2)}
               </pre>
             </div>
@@ -112,7 +113,7 @@ function renderChanges(oldValues: any, newValues: any) {
           {newValues && (
             <div>
               <div className="text-xs font-medium mb-1">New Values</div>
-              <pre className="text-xs bg-green-50 p-2 rounded overflow-x-auto">
+              <pre className="text-xs bg-green-50 p-2 rounded overflow-x-auto whitespace-pre-wrap break-words">
                 {JSON.stringify(newValues, null, 2)}
               </pre>
             </div>
@@ -196,7 +197,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto w-[95vw] max-w-[95vw] sm:w-full sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <LogTypeIcon className="h-5 w-5" />
@@ -211,7 +212,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
               <CardTitle className="text-lg">Basic Information</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="flex items-center gap-2">
                   <Calendar className="h-4 w-4 text-muted-foreground" />
                   <div>
@@ -233,7 +234,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium">Action</div>
                   <div className="text-sm text-muted-foreground font-mono">
@@ -267,7 +268,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium">User Email</div>
                   <div className="text-sm text-muted-foreground font-mono">
@@ -283,7 +284,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium">Session ID</div>
                   <div className="text-sm text-muted-foreground font-mono">
@@ -310,7 +311,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium">Server Hostname</div>
                   <div className="text-sm text-muted-foreground font-mono">
@@ -330,7 +331,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium">Client Platform</div>
                   <div className="text-sm text-muted-foreground">
@@ -350,7 +351,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium">Client IP Address</div>
                   <div className="text-sm text-muted-foreground font-mono">
@@ -380,7 +381,7 @@ export function LogDetailsModal({ log, isOpen, onClose }: LogDetailsModalProps) 
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium">Status</div>
                   <div className="mt-1">

@@ -114,6 +114,8 @@ export class EmailService {
         return `📅 Project Deadline Approaching: ${data.projectName}`;
       case 'passwordReset':
         return `🔐 Password Reset Request - TaskFlow`;
+      case 'userCredentials':
+        return `🎉 Welcome to TaskFlow - Your Account Credentials`;
       default:
         return `TaskFlow Notification`;
     }
@@ -154,6 +156,10 @@ export class EmailService {
 
   async sendPasswordResetEmail(data: EmailNotificationData & { resetLink: string }): Promise<boolean> {
     return this.sendTemplatedEmail('passwordReset', data);
+  }
+
+  async sendUserCredentialsEmail(data: EmailNotificationData & { temporaryPassword: string; loginUrl: string }): Promise<boolean> {
+    return this.sendTemplatedEmail('userCredentials', data);
   }
 
   private async sendTemplatedEmail(templateName: string, data: EmailNotificationData): Promise<boolean> {
@@ -251,6 +257,26 @@ ${(data as any).resetLink}
 This link will expire in 1 hour for security reasons.
 
 If you didn't request this reset, please ignore this email.
+
+Best regards,
+TaskFlow Team
+        `.trim();
+      
+      case 'userCredentials':
+        return `
+Hi ${data.userName}!
+
+Welcome to TaskFlow! Your account has been created successfully.
+
+Your login credentials:
+Email: ${data.to}
+Temporary Password: ${(data as any).temporaryPassword}
+
+Login URL: ${(data as any).loginUrl}
+
+IMPORTANT: You must change your password on first login for security.
+
+Keep your credentials secure and do not share them with anyone.
 
 Best regards,
 TaskFlow Team

@@ -289,21 +289,23 @@ export default function Logs() {
   return (
     <div className="min-h-screen bg-background">
       <Navigation />
-      <div className="container mx-auto p-6">
+      <div className="container mx-auto p-4 sm:p-6">
         <div className="mb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <Shield className="h-8 w-8 text-primary" />
-            <h1 className="text-3xl font-bold">System Logs</h1>
-            <Badge variant="secondary" className="ml-2">Audit Trail</Badge>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-2">
+            <div className="flex items-center gap-3">
+              <Shield className="h-6 w-6 sm:h-8 sm:w-8 text-primary" />
+              <h1 className="text-2xl sm:text-3xl font-bold">System Logs</h1>
+            </div>
+            <Badge variant="secondary" className="self-start sm:ml-2">Audit Trail</Badge>
           </div>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground text-sm sm:text-base">
             Comprehensive audit trail of all system activities, security events, and API requests
           </p>
         </div>
 
         {/* Statistics Cards */}
         {statistics && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Total Activities</CardTitle>
@@ -352,7 +354,7 @@ export default function Logs() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <label className="text-sm font-medium mb-2 block">Log Type</label>
                 <Select value={filters.logType} onValueChange={(value) => handleFilterChange('logType', value)}>
@@ -400,21 +402,22 @@ export default function Logs() {
               </div>
             </div>
             
-            <div className="flex gap-2 mt-4">
+            <div className="flex flex-wrap gap-2 mt-4">
               <Button onClick={handleSearch} className="flex items-center gap-2">
                 <Search className="h-4 w-4" />
-                Search
+                <span className="hidden sm:inline">Search</span>
               </Button>
               <Button onClick={clearFilters} variant="outline">
-                Clear Filters
+                <span className="hidden sm:inline">Clear Filters</span>
+                <span className="sm:hidden">Clear</span>
               </Button>
               <Button onClick={handleExport} variant="outline" className="flex items-center gap-2">
                 <Download className="h-4 w-4" />
-                Export
+                <span className="hidden sm:inline">Export</span>
               </Button>
               <Button onClick={() => refetch()} variant="outline" className="flex items-center gap-2">
                 <RefreshCw className="h-4 w-4" />
-                Refresh
+                <span className="hidden sm:inline">Refresh</span>
               </Button>
             </div>
           </CardContent>
@@ -426,6 +429,9 @@ export default function Logs() {
             <CardTitle>System Logs</CardTitle>
             <CardDescription>
               Showing {logs?.pagination?.total || 0} log entries
+              <span className="block md:hidden text-xs text-muted-foreground mt-1">
+                Swipe horizontally to see more columns. Tap "Details" for full information.
+              </span>
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -438,42 +444,57 @@ export default function Logs() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Timestamp</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Action</TableHead>
-                      <TableHead>Resource</TableHead>
-                      <TableHead>User</TableHead>
-                      <TableHead>Machine</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Severity</TableHead>
-                      <TableHead>Details</TableHead>
+                      <TableHead className="min-w-[140px]">Timestamp</TableHead>
+                      <TableHead className="min-w-[80px]">Type</TableHead>
+                      <TableHead className="min-w-[120px]">Action</TableHead>
+                      <TableHead className="min-w-[120px] hidden md:table-cell">Resource</TableHead>
+                      <TableHead className="min-w-[120px] hidden lg:table-cell">User</TableHead>
+                      <TableHead className="min-w-[140px] hidden lg:table-cell">Machine</TableHead>
+                      <TableHead className="min-w-[80px]">Status</TableHead>
+                      <TableHead className="min-w-[80px] hidden sm:table-cell">Severity</TableHead>
+                      <TableHead className="min-w-[60px]">Details</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {logs?.data?.map((log) => (
                       <TableRow key={log.id}>
                         <TableCell className="font-mono text-sm">
-                          {(() => {
-                            try {
-                              const date = new Date(log.createdAt);
-                              
-                              // The server is running in a timezone that's about 2 hours ahead of Kenya
-                              // So we need to subtract 2 hours to get the correct Kenya time
-                              const kenyaTime = new Date(date.getTime() - (2 * 60 * 60 * 1000));
-                              
-                              return kenyaTime.toLocaleString('en-GB', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                second: '2-digit',
-                                hour12: false
-                              });
-                            } catch (error) {
-                              return new Date(log.createdAt).toLocaleString();
-                            }
-                          })()}
+                          <div className="block md:hidden">
+                            {(() => {
+                              try {
+                                const date = new Date(log.createdAt);
+                                const kenyaTime = new Date(date.getTime() - (2 * 60 * 60 * 1000));
+                                return kenyaTime.toLocaleString('en-GB', {
+                                  month: 'short',
+                                  day: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: false
+                                });
+                              } catch (error) {
+                                return new Date(log.createdAt).toLocaleString();
+                              }
+                            })()}
+                          </div>
+                          <div className="hidden md:block">
+                            {(() => {
+                              try {
+                                const date = new Date(log.createdAt);
+                                const kenyaTime = new Date(date.getTime() - (2 * 60 * 60 * 1000));
+                                return kenyaTime.toLocaleString('en-GB', {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit',
+                                  hour12: false
+                                });
+                              } catch (error) {
+                                return new Date(log.createdAt).toLocaleString();
+                              }
+                            })()}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -485,13 +506,11 @@ export default function Logs() {
                           <div className="font-medium">
                             {log.actionType || log.method || log.eventType || 'N/A'}
                           </div>
-                          {log.endpoint && (
-                            <div className="text-sm text-muted-foreground font-mono">
-                              {log.method} {log.endpoint}
-                            </div>
-                          )}
+                          <div className="text-sm text-muted-foreground font-mono hidden sm:block">
+                            {log.endpoint && `${log.method} ${log.endpoint}`}
+                          </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden md:table-cell">
                           <div className="font-medium">
                             {log.resourceName || log.resourceType || 'N/A'}
                           </div>
@@ -501,7 +520,7 @@ export default function Logs() {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden lg:table-cell">
                           <div className="flex items-center gap-2">
                             <User className="h-4 w-4" />
                             <span className="font-mono text-sm">
@@ -514,7 +533,7 @@ export default function Logs() {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden lg:table-cell">
                           <div className="flex items-center gap-2">
                             <Monitor className="h-4 w-4" />
                             <div className="text-sm">
@@ -540,12 +559,12 @@ export default function Logs() {
                         <TableCell>
                           {getStatusBadge(log)}
                           {log.statusCode && (
-                            <div className="text-sm text-muted-foreground mt-1">
+                            <div className="text-sm text-muted-foreground mt-1 hidden sm:block">
                               {log.statusCode}
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden sm:table-cell">
                           {getSeverityBadge(log.severity || 'info')}
                         </TableCell>
                         <TableCell>

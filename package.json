@@ -20,7 +20,11 @@
     "test:excel": "node scripts/test-excel-data.js",
     "clear:descriptions": "node scripts/clear-project-descriptions.js",
     "wipe:projects": "node scripts/wipe-projects-and-teams.js",
-    "wipe:milestones:non-maseno": "node scripts/wipe-non-maseno-milestones.js"
+    "wipe:milestones:non-maseno": "node scripts/wipe-non-maseno-milestones.js",
+    "import:users:excel": "node scripts/load-users-from-excel.js",
+    "test:excel:reading": "node scripts/test-excel-reading.js",
+    "test:single:user": "node scripts/test-single-user-import.js",
+    "send:test:email": "node scripts/send-test-email.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
