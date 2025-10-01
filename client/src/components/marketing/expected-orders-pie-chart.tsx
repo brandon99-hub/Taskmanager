@@ -3,12 +3,13 @@ import { PieChart as PieChartIcon } from "lucide-react";
 import {
   Chart as ChartJS,
   ArcElement,
+  PieController,
   Tooltip,
   Legend,
 } from 'chart.js';
 import { Pie } from 'react-chartjs-2';
 
-ChartJS.register(ArcElement, Tooltip, Legend);
+ChartJS.register(ArcElement, PieController, Tooltip, Legend);
 
 interface ExpectedOrdersData {
   marketerId: string;
