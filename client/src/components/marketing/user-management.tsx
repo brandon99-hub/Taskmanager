@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useToast } from "@/hooks/use-toast";
 import {
   Table,
   TableBody,
@@ -38,7 +39,9 @@ import {
   Users,
   Plus,
   UserCheck,
-  UserX
+  UserX,
+  Target,
+  TrendingUp
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -74,6 +77,17 @@ export function UserManagement() {
     total: 0,
     pages: 0,
   });
+
+  const { toast } = useToast();
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-KE', {
+      style: 'currency',
+      currency: 'KES',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<MarketingUser | null>(null);
   const [formData, setFormData] = useState({
@@ -85,6 +99,15 @@ export function UserManagement() {
     role: "marketer" as 'admin' | 'marketer',
   });
   const [submitting, setSubmitting] = useState(false);
+  const [showTargetDialog, setShowTargetDialog] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<MarketingUser | null>(null);
+  const [targetData, setTargetData] = useState({
+    year: new Date().getFullYear(),
+    target: "",
+    revisedTarget: "",
+  });
+  const [targetSubmitting, setTargetSubmitting] = useState(false);
+  const [targetLoading, setTargetLoading] = useState(false);
 
   const loadUsers = async () => {
     setLoading(true);
@@ -202,6 +225,100 @@ export function UserManagement() {
     return format(new Date(dateString), "MMM dd, yyyy");
   };
 
+  const handleSetTarget = async (user: MarketingUser) => {
+    setSelectedUser(user);
+    setTargetLoading(true);
+    
+    // Set default values first
+    setTargetData({
+      year: new Date().getFullYear(),
+      target: "",
+      revisedTarget: "",
+    });
+    
+    // Try to fetch existing target data
+    try {
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch(`/api/marketing/dashboard/stats?bdId=${user.id}&year=${new Date().getFullYear()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.target || data.revisedTarget) {
+          setTargetData({
+            year: new Date().getFullYear(),
+            target: data.target ? data.target.toString() : "",
+            revisedTarget: data.revisedTarget ? data.revisedTarget.toString() : "",
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch existing target data:", error);
+      // Continue with empty form if fetch fails
+    } finally {
+      setTargetLoading(false);
+    }
+    
+    setShowTargetDialog(true);
+  };
+
+  const handleTargetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUser) return;
+
+    setTargetSubmitting(true);
+    try {
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch("/api/marketing/admin/set-target", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          marketerId: selectedUser.id,
+          year: targetData.year,
+          target: parseFloat(targetData.target),
+          revisedTarget: targetData.revisedTarget ? parseFloat(targetData.revisedTarget) : undefined,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        setShowTargetDialog(false);
+        setSelectedUser(null);
+        setTargetData({
+          year: new Date().getFullYear(),
+          target: "",
+          revisedTarget: "",
+        });
+        
+        // Show success message
+        toast({
+          title: "Target Set Successfully",
+          description: `Target of ${formatCurrency(parseFloat(targetData.target))} has been set for ${selectedUser.firstName} ${selectedUser.lastName} for ${targetData.year}`,
+        });
+        
+        // Reload users to refresh any target-related data
+        loadUsers();
+      } else {
+        const errorData = await response.json();
+        toast({
+          title: "Failed to Set Target",
+          description: errorData.error || "An error occurred while setting the target",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to set target:", error);
+    } finally {
+      setTargetSubmitting(false);
+    }
+  };
+
   if (loading) {
     return (
       <Card>
@@ -213,6 +330,7 @@ export function UserManagement() {
   }
 
   return (
+    <>
     <Card className="border-0 shadow-sm">
       <CardHeader className="pb-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -507,14 +625,30 @@ export function UserManagement() {
                           size="sm" 
                           className="h-8 w-8 p-0 hover:bg-gray-100"
                           onClick={() => handleEdit(user)}
+                          title="Edit user"
                         >
                           <Edit className="h-4 w-4 text-gray-600" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-8 w-8 p-0 hover:bg-blue-100"
+                          onClick={() => handleSetTarget(user)}
+                          disabled={targetLoading}
+                          title="Set targets"
+                        >
+                          {targetLoading ? (
+                            <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
+                          ) : (
+                            <Target className="h-4 w-4 text-blue-600" />
+                          )}
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0 hover:bg-red-100"
                           onClick={() => handleDelete(user.id)}
+                          title="Deactivate user"
                         >
                           <Trash2 className="h-4 w-4 text-red-600" />
                         </Button>
@@ -559,5 +693,159 @@ export function UserManagement() {
         )}
       </CardContent>
     </Card>
+
+    {/* Target Management Dialog */}
+    <Dialog open={showTargetDialog} onOpenChange={setShowTargetDialog}>
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+        <DialogHeader className="space-y-3 pb-6">
+          <div className="flex items-center space-x-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-blue-600 rounded-xl flex items-center justify-center">
+              <Target className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <DialogTitle className="text-2xl font-bold text-gray-900">
+                Set Sales Targets
+              </DialogTitle>
+              <DialogDescription className="text-gray-600 text-base">
+                Set annual targets and revised targets for {selectedUser?.firstName} {selectedUser?.lastName}
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <form onSubmit={handleTargetSubmit} className="space-y-6">
+          {/* Year Selection */}
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2 pb-2 border-b border-gray-200">
+              <div className="w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center">
+                <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Target Year</h3>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="year" className="text-sm font-semibold text-gray-700 flex items-center space-x-1">
+                <span>Year</span>
+                <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={targetData.year.toString()}
+                onValueChange={(value) => setTargetData({ ...targetData, year: parseInt(value) })}
+              >
+                <SelectTrigger className="h-11 border-gray-300 focus:border-green-500 focus:ring-2 focus:ring-green-200 rounded-lg transition-all duration-200">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 5 }, (_, i) => {
+                    const year = new Date().getFullYear() + i;
+                    return (
+                      <SelectItem key={year} value={year.toString()}>
+                        {year}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Target Information */}
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2 pb-2 border-b border-gray-200">
+              <div className="w-5 h-5 bg-green-100 rounded-full flex items-center justify-center">
+                <div className="w-2 h-2 bg-green-600 rounded-full"></div>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Target Information</h3>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="target" className="text-sm font-semibold text-gray-700 flex items-center space-x-1">
+                  <span>Initial Target (KES)</span>
+                  <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="target"
+                  type="number"
+                  step="0.01"
+                  value={targetData.target}
+                  onChange={(e) => setTargetData({ ...targetData, target: e.target.value })}
+                  required
+                  className="h-11 border-gray-300 focus:border-green-500 focus:ring-2 focus:ring-green-200 rounded-lg transition-all duration-200"
+                  placeholder="Enter initial target amount"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="revisedTarget" className="text-sm font-semibold text-gray-700 flex items-center space-x-1">
+                  <span>Revised Target (KES)</span>
+                  <span className="text-gray-400">Optional</span>
+                </Label>
+                <Input
+                  id="revisedTarget"
+                  type="number"
+                  step="0.01"
+                  value={targetData.revisedTarget}
+                  onChange={(e) => setTargetData({ ...targetData, revisedTarget: e.target.value })}
+                  className="h-11 border-gray-300 focus:border-green-500 focus:ring-2 focus:ring-green-200 rounded-lg transition-all duration-200"
+                  placeholder="Enter revised target amount"
+                />
+                <p className="text-xs text-gray-500">
+                  If not specified, will use initial target
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Info Box */}
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-start space-x-3">
+              <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <div className="w-2 h-2 bg-white rounded-full"></div>
+              </div>
+              <div className="text-sm text-green-800">
+                <p className="font-medium mb-1">Target Management</p>
+                <ul className="space-y-1 text-green-700">
+                  <li>• Initial target is the original sales target for the year</li>
+                  <li>• Revised target allows for mid-year adjustments</li>
+                  <li>• Targets will be used in annual summary calculations</li>
+                  <li>• Progress tracking will be based on these targets</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-3 pt-6 border-t border-gray-200">
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={() => setShowTargetDialog(false)} 
+              disabled={targetSubmitting}
+              className="h-11 px-6 border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Cancel
+            </Button>
+            <Button 
+              type="submit" 
+              disabled={targetSubmitting}
+              className="h-11 px-6 bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {targetSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Setting Target...
+                </>
+              ) : (
+                <>
+                  <Target className="h-4 w-4 mr-2" />
+                  Set Target
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

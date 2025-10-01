@@ -82,6 +82,7 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('grid');
   const [isSubmittingProject, setIsSubmittingProject] = useState(false);
   const [isEditingProject, setIsEditingProject] = useState(false);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -165,6 +166,7 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
 
   const loadProjects = async (sectorId: string) => {
     try {
+      setIsLoadingProjects(true);
       const token = localStorage.getItem("marketingToken");
       const response = await fetch(`/api/marketing/projects?sectorId=${sectorId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -187,6 +189,8 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
         description: "Failed to load projects",
         variant: "destructive",
       });
+    } finally {
+      setIsLoadingProjects(false);
     }
   };
 
@@ -333,7 +337,7 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
       const token = localStorage.getItem("marketingToken");
       const requestData = {
         ...data,
-        leadMarketer: data.leadMarketer === "unassigned" ? null : data.leadMarketer,
+        leadMarketer: data.leadMarketer === "unassigned" ? undefined : data.leadMarketer,
         sectorId: selectedSector.id,
       };
       
@@ -385,7 +389,7 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
       const token = localStorage.getItem("marketingToken");
       const requestData = {
         ...data,
-        leadMarketer: data.leadMarketer === "unassigned" ? null : data.leadMarketer,
+        leadMarketer: data.leadMarketer === "unassigned" ? undefined : data.leadMarketer,
       };
       
       console.log("Sending project edit data:", requestData);
@@ -492,14 +496,13 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
 
     try {
       const token = localStorage.getItem("marketingToken");
-      const response = await fetch(`/api/marketing/projects/${assigningProject.id}`, {
-        method: "PUT",
+      const response = await fetch(`/api/marketing/projects/${assigningProject.id}/assign`, {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          ...assigningProject,
           leadMarketer: selectedMarketer,
         }),
       });
@@ -580,7 +583,7 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
         <div className="flex justify-end">
           <Dialog open={isProjectCreateOpen} onOpenChange={setIsProjectCreateOpen}>
             <DialogTrigger asChild>
-              <Button>
+              <Button className="bg-primary hover:bg-primary/90">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Project
               </Button>
@@ -814,14 +817,21 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
           <CardHeader>
             <CardTitle className="flex items-center">
               <FolderOpen className="h-5 w-5 mr-2" />
-              Projects ({projects.length})
+              Projects {isLoadingProjects ? '(Loading...)' : `(${projects.length})`}
             </CardTitle>
             <CardDescription>
               Manage projects within the {selectedSector.name} sector
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {projects.length === 0 ? (
+            {isLoadingProjects ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="flex flex-col items-center space-y-4">
+                  <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                  <p className="text-gray-600">Loading projects...</p>
+                </div>
+              </div>
+            ) : projects.length === 0 ? (
               <div className="text-center py-12">
                 <FolderOpen className="h-12 w-12 mx-auto text-gray-400 mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2">No projects found</h3>
@@ -1261,49 +1271,20 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
 
   // Show sectors view (default)
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      <div className="max-w-7xl mx-auto p-6 space-y-8">
-        {/* Enhanced Header */}
-        <div className="relative">
-          <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl shadow-xl"></div>
-          <div className="relative bg-white/10 backdrop-blur-sm rounded-2xl p-8 border border-white/20">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-              <div className="space-y-4">
-                <div className="flex items-center space-x-4">
-                  <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-                    <Building2 className="h-8 w-8 text-white" />
-                  </div>
-                  <div>
-                    <h1 className="text-3xl lg:text-4xl font-bold text-white">
-                      Sectors Management
-                    </h1>
-                    <p className="text-blue-100 text-lg mt-2">
-                      Organize and manage business sectors for project assignments
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-6 text-white/90">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                    <span className="text-sm font-medium">
-                      {sectors.filter(s => s.isActive).length} Active Sectors
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
-                    <span className="text-sm font-medium">
-                      {projects.length} Total Projects
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-                <DialogTrigger asChild>
-                  <Button size="lg" className="bg-white/20 hover:bg-white/30 text-white border border-white/30 backdrop-blur-sm shadow-lg">
-                    <Plus className="h-5 w-5 mr-2" />
-                    Add New Sector
-                  </Button>
-                </DialogTrigger>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Sectors Management</h2>
+          <p className="text-gray-600 mt-1">Manage business sectors and their projects</p>
+        </div>
+        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <DialogTrigger asChild>
+            <Button className="bg-primary hover:bg-primary/90">
+              <Plus className="h-4 w-4 mr-2" />
+              Add Sector
+            </Button>
+          </DialogTrigger>
                 <DialogContent>
             <DialogHeader>
               <DialogTitle>Create New Sector</DialogTitle>
@@ -1338,153 +1319,184 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
               </Button>
               <Button onClick={handleCreate}>Create Sector</Button>
             </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
+      </div>
 
-        {/* Enhanced Search and Controls */}
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
-          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-            <div className="relative flex-1 max-w-lg">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-gray-400" />
-              </div>
+      {/* Search and Controls */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
               <Input
-                placeholder="Search sectors by name or description..."
+                placeholder="Search sectors..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-12 h-12 text-lg border-2 border-gray-200 focus:border-blue-500 rounded-xl"
+                className="pl-10"
               />
             </div>
-            <div className="flex items-center space-x-4">
-              <span className="text-sm font-medium text-gray-700">View Mode:</span>
-              <div className="flex bg-gray-100 rounded-xl p-1">
-                <Button
-                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('grid')}
-                  className={`rounded-lg ${viewMode === 'grid' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'}`}
-                >
-                  <Grid3X3 className="h-4 w-4 mr-2" />
-                  Grid
-                </Button>
-                <Button
-                  variant={viewMode === 'table' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('table')}
-                  className={`rounded-lg ${viewMode === 'table' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'}`}
-                >
-                  <List className="h-4 w-4 mr-2" />
-                  List
-                </Button>
-              </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-sm font-medium text-gray-700">View:</span>
+              <Button
+                variant={viewMode === 'grid' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('grid')}
+              >
+                <Grid3X3 className="h-4 w-4 mr-2" />
+                Grid
+              </Button>
+              <Button
+                variant={viewMode === 'table' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('table')}
+              >
+                <List className="h-4 w-4 mr-2" />
+                List
+              </Button>
             </div>
           </div>
-        </div>
+        </CardContent>
+      </Card>
 
-        {/* Enhanced Sectors Display */}
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-          <div className="bg-gradient-to-r from-gray-50 to-blue-50 px-8 py-6 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                  <Building2 className="h-6 w-6 text-blue-600" />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900">
-                    Business Sectors
-                  </h2>
-                  <p className="text-gray-600 mt-1">
-                    {filteredSectors.length} sector{filteredSectors.length !== 1 ? 's' : ''} available for project organization
-                  </p>
-                </div>
-              </div>
-              <div className="hidden sm:flex items-center space-x-6 text-sm">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {sectors.filter(s => s.isActive).length}
-                  </div>
-                  <div className="text-gray-500">Active</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-green-600">
-                    {projects.length}
-                  </div>
-                  <div className="text-gray-500">Projects</div>
-                </div>
-              </div>
+      {/* Sectors Display */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center text-lg font-semibold text-gray-900">
+            <Building2 className="h-5 w-5 text-blue-600 mr-2" />
+            Business Sectors
+          </CardTitle>
+          <CardDescription>
+            {filteredSectors.length} sector{filteredSectors.length !== 1 ? 's' : ''} available
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {filteredSectors.length === 0 ? (
+            <div className="text-center py-12">
+              <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                {searchTerm ? "No sectors found" : "No sectors yet"}
+              </h3>
+              <p className="text-gray-500 mb-4">
+                {searchTerm 
+                  ? "Try adjusting your search terms."
+                  : "Create your first business sector to organize projects."
+                }
+              </p>
+              {!searchTerm && (
+                <Button onClick={() => setIsCreateOpen(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Sector
+                </Button>
+              )}
             </div>
-          </div>
-          <div className="p-8">
-            {filteredSectors.length === 0 ? (
-              <div className="text-center py-16">
-                <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Building2 className="h-12 w-12 text-gray-400" />
-                </div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-3">
-                  {searchTerm ? "No sectors found" : "No sectors yet"}
-                </h3>
-                <p className="text-gray-500 mb-8 max-w-md mx-auto">
-                  {searchTerm 
-                    ? "No sectors match your search criteria. Try adjusting your search terms."
-                    : "Get started by creating your first business sector to organize projects and prospects."
-                  }
-                </p>
-                {!searchTerm && (
-                  <Button 
-                    size="lg" 
-                    onClick={() => setIsCreateOpen(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl shadow-lg"
-                  >
-                    <Plus className="h-5 w-5 mr-2" />
-                    Create Your First Sector
-                  </Button>
-                )}
-              </div>
-            ) : viewMode === 'grid' ? (
-              // Enhanced Grid View
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {filteredSectors.map((sector) => (
-                  <div 
-                    key={sector.id} 
-                    className="group bg-white border-2 border-gray-200 rounded-2xl overflow-hidden hover:border-blue-300 hover:shadow-xl transition-all duration-300 cursor-pointer"
-                    onClick={() => handleSectorClick(sector)}
-                  >
-                    {/* Card Header with Gradient */}
-                    <div className={`h-2 ${sector.isActive ? 'bg-gradient-to-r from-green-400 to-green-500' : 'bg-gradient-to-r from-gray-300 to-gray-400'}`}></div>
+          ) : viewMode === 'grid' ? (
+            // Grid View
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredSectors.map((sector) => (
+                <Card 
+                  key={sector.id} 
+                  className="hover:shadow-md transition-shadow cursor-pointer"
+                  onClick={() => handleSectorClick(sector)}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                        <Building2 className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <Badge 
+                        variant={sector.isActive ? "default" : "secondary"}
+                      >
+                        {sector.isActive ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
                     
-                    <div className="p-6">
-                      {/* Sector Icon and Status */}
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center group-hover:bg-blue-200 transition-colors">
-                          <Building2 className="h-6 w-6 text-blue-600" />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      {sector.name}
+                    </h3>
+                    
+                    <p className="text-gray-600 text-sm mb-4 line-clamp-2">
+                      {sector.description || "No description provided."}
+                    </p>
+                    
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500">
+                        {new Date(sector.createdAt).toLocaleDateString()}
+                      </span>
+                      <div className="flex space-x-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditDialog(sector);
+                          }}
+                          className="h-7 w-7 p-0"
+                        >
+                          <Edit className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(sector.id);
+                          }}
+                          className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            ) : (
+            // Table View
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Sector</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredSectors.map((sector) => (
+                    <TableRow 
+                      key={sector.id} 
+                      className="hover:bg-gray-50 cursor-pointer"
+                      onClick={() => handleSectorClick(sector)}
+                    >
+                      <TableCell>
+                        <div className="flex items-center space-x-2">
+                          <Building2 className="h-4 w-4 text-gray-500" />
+                          <span className="font-medium">{sector.name}</span>
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-gray-600 text-sm">
+                          {sector.description || "No description"}
+                        </span>
+                      </TableCell>
+                      <TableCell>
                         <Badge 
                           variant={sector.isActive ? "default" : "secondary"}
-                          className={`${sector.isActive ? 'bg-green-100 text-green-800 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}
                         >
                           {sector.isActive ? "Active" : "Inactive"}
                         </Badge>
-                      </div>
-                      
-                      {/* Sector Name */}
-                      <h3 className="text-xl font-bold text-gray-900 mb-3 group-hover:text-blue-600 transition-colors">
-                        {sector.name}
-                      </h3>
-                      
-                      {/* Description */}
-                      <p className="text-gray-600 text-sm mb-6 line-clamp-3">
-                        {sector.description || "No description provided for this sector."}
-                      </p>
-                      
-                      {/* Footer */}
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-gray-500">
-                          Created {new Date(sector.createdAt).toLocaleDateString()}
-                        </div>
-                        <div className="flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-gray-600 text-sm">
+                          {new Date(sector.createdAt).toLocaleDateString()}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end space-x-1">
                           <Button
                             variant="outline"
                             size="sm"
@@ -1492,7 +1504,7 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
                               e.stopPropagation();
                               openEditDialog(sector);
                             }}
-                            className="h-8 w-8 p-0 rounded-lg hover:bg-blue-50 hover:border-blue-300"
+                            className="h-7 w-7 p-0"
                           >
                             <Edit className="h-3 w-3" />
                           </Button>
@@ -1503,90 +1515,20 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
                               e.stopPropagation();
                               handleDelete(sector.id);
                             }}
-                            className="h-8 w-8 p-0 rounded-lg hover:bg-red-50 hover:border-red-300"
+                            className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
                           >
                             <Trash2 className="h-3 w-3" />
                           </Button>
                         </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              // Enhanced Table View
-              <div className="overflow-hidden rounded-xl border border-gray-200">
-                <Table>
-                  <TableHeader className="bg-gray-50">
-                    <TableRow>
-                      <TableHead className="font-semibold text-gray-900">Sector Name</TableHead>
-                      <TableHead className="font-semibold text-gray-900">Description</TableHead>
-                      <TableHead className="font-semibold text-gray-900">Status</TableHead>
-                      <TableHead className="font-semibold text-gray-900">Created</TableHead>
-                      <TableHead className="text-right font-semibold text-gray-900">Actions</TableHead>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredSectors.map((sector) => (
-                      <TableRow key={sector.id} className="hover:bg-gray-50 transition-colors">
-                        <TableCell className="font-medium">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                              <Building2 className="h-4 w-4 text-blue-600" />
-                            </div>
-                            <span className="font-semibold text-gray-900">{sector.name}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-gray-600">
-                          {sector.description || "No description provided"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge 
-                            variant={sector.isActive ? "default" : "secondary"}
-                            className={`${sector.isActive ? 'bg-green-100 text-green-800 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}
-                          >
-                            {sector.isActive ? "Active" : "Inactive"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-gray-500">
-                          {new Date(sector.createdAt).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end space-x-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleSectorClick(sector)}
-                              className="hover:bg-blue-50 hover:border-blue-300"
-                            >
-                              View Projects
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openEditDialog(sector)}
-                              className="hover:bg-blue-50 hover:border-blue-300"
-                            >
-                              <Edit className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleDelete(sector.id)}
-                              className="hover:bg-red-50 hover:border-red-300"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </div>
-        </div>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Edit Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
@@ -1626,7 +1568,6 @@ export function SectorsManagement({ onSuccess }: SectorsManagementProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      </div>
     </div>
   );
 }

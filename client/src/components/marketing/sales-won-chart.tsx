@@ -5,16 +5,20 @@ import {
   CategoryScale,
   LinearScale,
   BarElement,
+  LineElement,
+  PointElement,
   Title,
   Tooltip,
   Legend,
 } from 'chart.js';
-import { Bar } from 'react-chartjs-2';
+import { Chart } from 'react-chartjs-2';
 
 ChartJS.register(
   CategoryScale,
   LinearScale,
   BarElement,
+  LineElement,
+  PointElement,
   Title,
   Tooltip,
   Legend
@@ -40,8 +44,9 @@ export function SalesWonChart({
   description = "Individual marketer sales performance" 
 }: SalesWonChartProps) {
   const safeData = Array.isArray(data) ? data : [];
+  
   const maxValue = safeData.length
-    ? Math.max(...safeData.map(d => Math.max(d.salesWon, d.target)))
+    ? Math.max(...safeData.map(d => Math.max(d.salesWon || 0, d.target || 0)))
     : 0;
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-KE', {
@@ -72,26 +77,46 @@ export function SalesWonChart({
       </CardHeader>
       <CardContent>
         <div className="h-80">
-          <Bar data={{
+          {safeData.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-gray-500">
+              <div className="text-center">
+                <BarChart3 className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <p className="text-lg font-medium">No data available</p>
+                <p className="text-sm">Set targets and record sales to see performance comparison</p>
+              </div>
+            </div>
+          ) : (
+            <Chart type='bar' data={{
             labels: safeData.map(item => item.marketerName),
             datasets: [
               {
-                label: 'Sales Won',
-                data: safeData.map(item => item.salesWon),
-                backgroundColor: 'rgba(34, 197, 94, 0.8)',
-                borderColor: 'rgba(34, 197, 94, 1)',
-                borderWidth: 2,
-                borderRadius: 6,
-                borderSkipped: false,
-              },
-              {
+                type: 'bar' as const,
                 label: 'Target',
                 data: safeData.map(item => item.target),
-                backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                backgroundColor: 'rgba(239, 68, 68, 0.6)',
                 borderColor: 'rgba(239, 68, 68, 1)',
                 borderWidth: 2,
                 borderRadius: 6,
                 borderSkipped: false,
+                order: 2,
+              },
+              {
+                type: 'line' as const,
+                label: 'Sales Won',
+                data: safeData.map(item => item.salesWon),
+                borderColor: 'rgba(34, 197, 94, 1)',
+                backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                borderWidth: 3,
+                fill: false,
+                tension: 0.4,
+                pointBackgroundColor: 'rgba(34, 197, 94, 1)',
+                pointBorderColor: '#ffffff',
+                pointBorderWidth: 2,
+                pointRadius: 6,
+                pointHoverRadius: 8,
+                pointHoverBackgroundColor: 'rgba(34, 197, 94, 1)',
+                pointHoverBorderColor: '#ffffff',
+                order: 1,
               },
             ],
           }} options={{
@@ -165,9 +190,17 @@ export function SalesWonChart({
               bar: {
                 borderRadius: 6,
                 borderSkipped: false,
+              },
+              line: {
+                tension: 0.4,
+              },
+              point: {
+                radius: 6,
+                hoverRadius: 8,
               }
             }
           }} />
+          )}
         </div>
       </CardContent>
     </Card>

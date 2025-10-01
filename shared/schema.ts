@@ -978,7 +978,7 @@ export const salesStageEnum = pgEnum("sales_stage", ['lead', 'qualified', 'propo
 export const quarterEnum = pgEnum("quarter", ['Q1', 'Q2', 'Q3', 'Q4']);
 export const systemInPlaceEnum = pgEnum("system_in_place", ['navision', '365_bc', 'none', 'open_source', 'oracle', 'sap']);
 export const needAvailabilityEnum = pgEnum("need_availability", ['upgrade', 'under_implementation', 'none']);
-export const prospectStageEnum = pgEnum("prospect_stage", ['prospect', 'lead', 'expected_order', 'sales_won']);
+export const prospectStageEnum = pgEnum("prospect_stage", ['prospect', 'lead', 'expected_order', 'sales_won', 'lost']);
 
 export const marketingUsers = pgTable("marketing_users", {
   id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
@@ -1057,6 +1057,9 @@ export const marketingSalesWon = pgTable("marketing_sales_won", {
   expectedQuarter: quarterEnum("expected_quarter").notNull(),
   comments: text(),
   marketerId: varchar("marketer_id").notNull(),
+  contactPerson: varchar("contact_person", { length: 200 }),
+  contactNumber: varchar("contact_number", { length: 20 }),
+  contactEmail: varchar("contact_email", { length: 255 }),
   createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
 });
@@ -1070,6 +1073,9 @@ export const marketingExpectedOrders = pgTable("marketing_expected_orders", {
   expectedQuarter: quarterEnum("expected_quarter").notNull(),
   comments: text(),
   marketerId: varchar("marketer_id").notNull(),
+  contactPerson: varchar("contact_person", { length: 200 }),
+  contactNumber: varchar("contact_number", { length: 20 }),
+  contactEmail: varchar("contact_email", { length: 255 }),
   createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
 });
@@ -1081,6 +1087,7 @@ export const marketingAnnualSummary = pgTable("marketing_annual_summary", {
   salesExecutive: varchar("sales_executive", { length: 200 }).notNull(),
   won: decimal({ precision: 12, scale: 2 }).default('0').notNull(),
   target: decimal({ precision: 12, scale: 2 }).notNull(),
+  revisedTarget: decimal("revised_target", { precision: 12, scale: 2 }).default('0').notNull(),
   targetAchieved: decimal("target_achieved", { precision: 5, scale: 2 }).default('0').notNull(),
   expectedOrders: decimal("expected_orders", { precision: 12, scale: 2 }).default('0').notNull(),
   statusQuo: decimal("status_quo", { precision: 12, scale: 2 }).default('0').notNull(),
@@ -1092,6 +1099,28 @@ export const marketingAnnualSummary = pgTable("marketing_annual_summary", {
   updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
 }, (table) => [
   index("unique_year_marketer").on(table.year, table.marketerId),
+]);
+
+export const marketingLostProjects = pgTable("marketing_lost_projects", {
+  id: varchar().default(sql`gen_random_uuid()`).primaryKey().notNull(),
+  organisationName: varchar("organisation_name", { length: 255 }).notNull(),
+  sector: varchar({ length: 100 }).default('Unknown').notNull(),
+  product: varchar({ length: 100 }).default('Service').notNull(),
+  revenue: decimal({ precision: 12, scale: 2 }),
+  expectedQuarter: varchar("expected_quarter", { length: 10 }).default('Q1').notNull(),
+  comments: text(),
+  marketerId: varchar("marketer_id").notNull(),
+  contactPerson: varchar("contact_person", { length: 200 }),
+  contactNumber: varchar("contact_number", { length: 20 }),
+  contactEmail: varchar("contact_email", { length: 255 }),
+  lostReason: text("lost_reason").notNull(),
+  lostDate: timestamp("lost_date", { mode: 'string' }).defaultNow().notNull(),
+  canRevive: boolean("can_revive").default(true).notNull(),
+  createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+  index("marketing_lost_projects_marketer_id_idx").on(table.marketerId),
+  index("marketing_lost_projects_lost_date_idx").on(table.lostDate),
 ]);
 
 // Marketing Relations

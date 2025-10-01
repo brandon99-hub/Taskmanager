@@ -31,13 +31,15 @@ import {
   PieChart as PieChartIcon,
   Table as TableIcon,
   LineChart,
-  Filter
+  Filter,
+  XCircle
 } from "lucide-react";
 import { MarketingLeadsTable } from "@/components/marketing/leads-table";
 import { MarketingSalesWonTable } from "@/components/marketing/sales-won-table";
 import { MarketingExpectedOrdersTable } from "@/components/marketing/expected-orders-table";
 import { MarketingProspectsTable } from "@/components/marketing/prospects-table";
 import { MarketingProspectsForm } from "@/components/marketing/prospects-form";
+import { LostProjectsTable } from "@/components/marketing/lost-projects-table";
 import { SectorsManagement } from "@/components/marketing/sectors-management";
 import { UserManagement } from "@/components/marketing/user-management";
 import { SalesWonChart } from "@/components/marketing/sales-won-chart";
@@ -54,6 +56,10 @@ interface DashboardStats {
   expectedOrdersCount: number;
   salesWonCount: number;
   totalRevenue: number;
+  target: number;
+  revisedTarget: number;
+  expectedTarget: number;
+  targetAchievement: number;
   annualSummary: any;
 }
 
@@ -100,9 +106,14 @@ interface AnalyticsData {
   topPerformers: Array<{
     marketerId: string;
     marketerName: string;
-    totalRevenue: number;
+    salesWonAmount: number;
+    expectedOrdersAmount: number;
     leadsCount: number;
+    totalProspectsHandled: number;
+    target: number;
     conversionRate: number;
+    weightedScore: number;
+    totalRevenue: number; // For backward compatibility
   }>;
   salesWonPerMarketer: Array<{
     marketerId: string;
@@ -229,7 +240,6 @@ export default function MarketingDashboard() {
             totalRevenue: adminData.totalRevenue || 0,
             bdStats: adminData.bdStats || [],
           });
-          console.log("Admin stats loaded:", adminData);
         } else {
           console.error("Admin stats API failed:", adminResponse.status);
         }
@@ -237,7 +247,6 @@ export default function MarketingDashboard() {
         if (analyticsResponse.ok) {
           const analyticsData = await analyticsResponse.json();
           setAnalytics(analyticsData);
-          console.log("Analytics data loaded:", analyticsData);
         } else {
           const errorText = await analyticsResponse.text();
           console.error("Analytics API failed:", analyticsResponse.status, errorText);
@@ -270,6 +279,10 @@ export default function MarketingDashboard() {
           expectedOrdersCount: data.expectedOrdersCount || 0,
           salesWonCount: data.salesWonCount || 0,
           totalRevenue: data.totalRevenue || 0,
+          target: data.target || 0,
+          revisedTarget: data.revisedTarget || 0,
+          expectedTarget: data.expectedTarget || 0,
+          targetAchievement: data.targetAchievement || 0,
           annualSummary: data.annualSummary || null,
         });
         }
@@ -334,6 +347,7 @@ export default function MarketingDashboard() {
     { id: "leads", label: "Leads", icon: Users },
     { id: "expected-orders", label: "Expected Orders", icon: Target },
     { id: "sales-won", label: "Sales Won", icon: TrendingUp },
+    { id: "lost-projects", label: "Lost Projects", icon: XCircle },
     ...(user?.role === 'admin' ? [
       { id: "sectors", label: "Sectors", icon: PieChart },
       { id: "users", label: "Users", icon: UserCheck },
@@ -447,6 +461,7 @@ export default function MarketingDashboard() {
                   {activeSection === 'leads' && 'Manage qualified leads and interested clients'}
                   {activeSection === 'expected-orders' && 'Monitor expected orders and revenue'}
                   {activeSection === 'sales-won' && 'Track successful sales and contracts'}
+                  {activeSection === 'lost-projects' && 'Review projects that didn\'t proceed and analyze reasons for loss'}
                   {activeSection === 'sectors' && 'Manage business sectors and their projects'}
                   {activeSection === 'users' && 'Manage marketing team members'}
                 </p>
@@ -484,10 +499,11 @@ export default function MarketingDashboard() {
             <div key="overview" className="space-y-6">
             {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {user?.role === 'admin' ? (
               <Card className="hover:shadow-md transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium text-gray-600">
-                    {user?.role === 'admin' ? 'Total Prospects (All)' : 'Total Prospects'}
+                      Total Prospects (All)
                   </CardTitle>
                   <div className="p-2 bg-blue-100 rounded-lg">
                     <Users className="h-4 w-4 text-blue-600" />
@@ -495,13 +511,39 @@ export default function MarketingDashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
-                    {user?.role === 'admin' ? (adminStats?.totalProspectsCount || 0) : (stats?.prospectsCount || 0)}
+                      {adminStats?.totalProspectsCount || 0}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    {user?.role === 'admin' ? 'All marketers combined' : `${stats?.year || new Date().getFullYear()} leads tracked`}
+                      All marketers combined
                   </p>
                 </CardContent>
               </Card>
+              ) : (
+                <Card className="hover:shadow-md transition-shadow">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium text-gray-600">
+                      Target Achievement
+                    </CardTitle>
+                    <div className="p-2 bg-orange-100 rounded-lg">
+                      <Target className="h-4 w-4 text-orange-600" />
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold text-gray-900">
+                      {formatCurrency(stats?.totalRevenue || 0)}
+                    </div>
+                    <p className="text-xs text-green-600 font-medium mt-1">
+                      {stats && (stats.revisedTarget > 0 || stats.target > 0) ? (
+                        <>
+                          of {formatCurrency(stats.revisedTarget > 0 ? stats.revisedTarget : stats.target)} {stats.revisedTarget > 0 ? 'revised ' : ''}target
+                        </>
+                      ) : (
+                        'No target set for this year'
+                      )}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
 
               <Card className="hover:shadow-md transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -515,8 +557,8 @@ export default function MarketingDashboard() {
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
                     {user?.role === 'admin' 
-                      ? formatCurrency(adminStats?.totalSalesWonCount || 0)
-                      : formatCurrency(stats?.salesWonCount || 0)
+                      ? (adminStats?.totalSalesWonCount || 0)
+                      : (stats?.salesWonCount || 0)
                     }
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -537,8 +579,8 @@ export default function MarketingDashboard() {
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
                     {user?.role === 'admin' 
-                      ? formatCurrency(adminStats?.totalExpectedOrdersCount || 0)
-                      : formatCurrency(stats?.expectedOrdersCount || 0)
+                      ? (adminStats?.totalExpectedOrdersCount || 0)
+                      : (stats?.expectedOrdersCount || 0)
                     }
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -550,7 +592,7 @@ export default function MarketingDashboard() {
               <Card className="hover:shadow-md transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium text-gray-600">
-                    {user?.role === 'admin' ? 'Total Revenue (All)' : 'Total Revenue'}
+                    {user?.role === 'admin' ? 'Contract Value (All)' : 'Contract Value'}
                   </CardTitle>
                   <div className="p-2 bg-purple-100 rounded-lg">
                     <Target className="h-4 w-4 text-purple-600" />
@@ -749,9 +791,9 @@ export default function MarketingDashboard() {
                           <TableBody>
                             {analytics?.bdStats && analytics.bdStats.length > 0 ? (
                               analytics.bdStats.map((bd: any, index: number) => {
-                                const won = bd.salesWonCount || 0;
+                                const won = bd.salesWonAmount || 0;
                                 const target = bd.target || 0;
-                                const expectedOrders = bd.expectedOrdersCount || 0;
+                                const expectedOrders = bd.expectedOrdersAmount || 0;
                                 const targetAchieved = target > 0 ? ((won / target) * 100).toFixed(2) : '0.00';
                                 const deviation = won - target;
                                 const sumSalesExpected = won + expectedOrders;
@@ -761,28 +803,28 @@ export default function MarketingDashboard() {
                                   <TableRow key={bd.bdId || index}>
                                     <TableCell className="font-medium">{bd.bdName || 'Unknown'}</TableCell>
                                     <TableCell className="text-right font-mono">
-                                      {won.toLocaleString()}
+                                      {formatCurrency(won)}
                                     </TableCell>
                                     <TableCell className="text-right font-mono">
-                                      {target.toLocaleString()}
+                                      {formatCurrency(target)}
                                     </TableCell>
                                     <TableCell className="text-right font-mono">
                                       {targetAchieved}%
                                     </TableCell>
                                     <TableCell className="text-right font-mono">
-                                      {expectedOrders.toLocaleString()}
+                                      {formatCurrency(expectedOrders)}
                                     </TableCell>
                                     <TableCell className="text-right font-mono">
-                                      {bd.totalRevenue?.toLocaleString() || '0'}
+                                      {formatCurrency(bd.totalRevenue || 0)}
                                     </TableCell>
                                     <TableCell className={`text-right font-mono ${deviation >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                      {deviation >= 0 ? '+' : ''}{deviation.toLocaleString()}
+                                      {deviation >= 0 ? '+' : ''}{formatCurrency(deviation)}
                                     </TableCell>
                                     <TableCell className="text-right font-mono">
-                                      {sumSalesExpected.toLocaleString()}
+                                      {formatCurrency(sumSalesExpected)}
                                     </TableCell>
                                     <TableCell className="text-right font-mono">
-                                      {expectedTarget.toLocaleString()}
+                                      {formatCurrency(expectedTarget)}
                                     </TableCell>
                                   </TableRow>
                                 );
@@ -806,32 +848,58 @@ export default function MarketingDashboard() {
                   <CardHeader className="pb-4">
                     <CardTitle className="text-lg font-semibold text-gray-900">Top Performers</CardTitle>
                     <CardDescription className="text-gray-600">
-                      Best performing marketers this year
+                      Ranked by weighted performance score (Sales Won 40%, Expected Orders 25%, Leads 20%, Conversion 15%)
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
                       {analytics?.topPerformers?.map((performer, index) => (
-                        <div key={performer.marketerId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 bg-primary text-white rounded-full flex items-center justify-center text-sm font-semibold">
+                        <div key={performer.marketerId} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-blue-50 rounded-lg border border-gray-100">
+                          <div className="flex items-center space-x-4">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white ${
+                              index === 0 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
+                              index === 1 ? 'bg-gradient-to-r from-gray-300 to-gray-500' :
+                              index === 2 ? 'bg-gradient-to-r from-orange-400 to-orange-600' :
+                              'bg-gradient-to-r from-blue-500 to-blue-600'
+                            }`}>
                               {index + 1}
                             </div>
                             <div>
-                              <div className="font-medium text-gray-900">{performer.marketerName}</div>
-                              <div className="text-sm text-gray-600">{performer.leadsCount} leads</div>
+                              <div className="font-semibold text-gray-900">{performer.marketerName}</div>
+                              <div className="text-xs text-gray-600 flex items-center space-x-3 mt-1">
+                                <span className="flex items-center">
+                                  <DollarSign className="w-3 h-3 mr-1 text-green-600" />
+                                  {formatCurrency(performer.salesWonAmount)}
+                                </span>
+                                <span className="flex items-center">
+                                  <TrendingUp className="w-3 h-3 mr-1 text-blue-600" />
+                                  {formatCurrency(performer.expectedOrdersAmount)}
+                                </span>
+                                <span className="flex items-center">
+                                  <Users className="w-3 h-3 mr-1 text-purple-600" />
+                                  {performer.leadsCount} leads
+                                </span>
+                                {performer.target > 0 && (
+                                  <span className="flex items-center">
+                                    <Target className="w-3 h-3 mr-1 text-orange-600" />
+                                    {formatCurrency(performer.target)} target
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="font-semibold text-gray-900">
-                              {new Intl.NumberFormat('en-KE', {
-                                style: 'currency',
-                                currency: 'KES',
-                                minimumFractionDigits: 0,
-                                maximumFractionDigits: 0,
-                              }).format(performer.totalRevenue)}
+                            <div className="flex items-center space-x-2 mb-1">
+                              <div className="text-lg font-bold text-gray-900">
+                                {performer.weightedScore.toFixed(1)}
                             </div>
-                            <div className="text-sm text-gray-600">{performer.conversionRate.toFixed(1)}% conversion</div>
+                              <div className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded-full">
+                                Score
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              {performer.conversionRate.toFixed(1)}% conversion
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -1114,6 +1182,22 @@ export default function MarketingDashboard() {
               </div>
             </div>
             <MarketingSalesWonTable 
+              showMarketerInfo={user?.role === 'admin'} 
+              selectedMarketer={selectedMarketer}
+              onMarketerChange={setSelectedMarketer}
+            />
+            </div>
+          )}
+
+          {activeSection === 'lost-projects' && (
+            <div key="lost-projects" className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Lost Projects</h2>
+                <p className="text-gray-600 mt-1">Review projects that didn't proceed and analyze reasons for loss. Projects can be revived back to prospects if needed.</p>
+              </div>
+            </div>
+            <LostProjectsTable 
               showMarketerInfo={user?.role === 'admin'} 
               selectedMarketer={selectedMarketer}
               onMarketerChange={setSelectedMarketer}

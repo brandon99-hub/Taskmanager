@@ -9,6 +9,7 @@ import {
   marketingSalesWon,
   marketingExpectedOrders,
   marketingAnnualSummary,
+  marketingLostProjects,
 } from "../../shared/schema";
 import {
   marketingUserLoginSchema,
@@ -477,6 +478,7 @@ export function registerMarketingRoutes(app: Express) {
 
   app.post("/api/marketing/projects", marketingAuth, marketingAdminAuth, async (req, res) => {
     try {
+      console.log("Received project creation request:", req.body);
       const projectData = marketingProjectCreateSchema.parse(req.body);
 
       const newProject = await db
@@ -525,8 +527,14 @@ export function registerMarketingRoutes(app: Express) {
 
       res.status(201).json({ project: newProject[0] });
     } catch (error) {
+      console.error("Project creation error:", error);
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Validation error", details: error.errors });
+        console.error("Validation errors:", error.errors);
+        return res.status(400).json({ 
+          error: "Validation error", 
+          details: error.errors,
+          receivedData: req.body
+        });
       }
       res.status(500).json({ error: "Internal server error" });
     }
@@ -705,12 +713,13 @@ export function registerMarketingRoutes(app: Express) {
         .values({
           date: new Date().toISOString(),
           client: project.institution, // Using project institution as client name
-          contactPerson: "To be determined", // Default values that can be updated
-          contactNumber: "To be determined",
-          contactEmail: "To be determined",
-          systemInPlace: 'none',
-          needAvailability: 'none',
-          remarks: `Converted from marketing project: ${project.institution}`,
+          contactPerson: project.contactPerson || "To be determined",
+          contactNumber: project.contactNumber || "To be determined", 
+          contactEmail: "To be determined", // Projects don't store email, will need to be updated manually
+          systemInPlace: project.systemInPlace || 'none',
+          needAvailability: project.needAvailability || 'none',
+          currentVendor: project.currentVendor || null,
+          remarks: project.remarks ? `Converted from marketing project: ${project.institution}\n\nOriginal remarks: ${project.remarks}` : `Converted from marketing project: ${project.institution}`,
           stage: 'prospect',
           bdId: leadMarketer,
           sectorId: project.sectorId,
@@ -721,16 +730,72 @@ export function registerMarketingRoutes(app: Express) {
       try {
         await emailService.sendEmail({
           to: bdUser[0].email,
-          subject: `Project Assigned: ${project.institution}`,
+          subject: `🎯 New Project Assignment: ${project.institution}`,
           html: `
-            <h2>Project Assignment Notification</h2>
-            <p>Hello ${bdUser[0].firstName},</p>
-            <p>A new project has been assigned to you:</p>
-            <p><strong>Project:</strong> ${project.institution}</p>
-            <p><strong>Prospect ID:</strong> ${newProspect[0].id}</p>
-            <p>Please log in to view details and start working on this project.</p>
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8fafc; padding: 20px;">
+              <div style="background-color: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                <!-- Header -->
+                <div style="text-align: center; margin-bottom: 30px;">
+                  <div style="background-color: #3b82f6; color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <h1 style="margin: 0; font-size: 24px;">🎯 Project Assignment</h1>
+                  </div>
+                  <p style="color: #6b7280; font-size: 16px; margin: 0;">A new project has been assigned to you</p>
+                </div>
+
+                <!-- Project Details -->
+                <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin-bottom: 25px;">
+                  <h2 style="color: #1e293b; margin-top: 0; margin-bottom: 15px; font-size: 20px;">📋 Project Details</h2>
+                  <div style="margin-bottom: 10px;">
+                    <strong style="color: #374151;">Institution:</strong>
+                    <span style="color: #1f2937; margin-left: 8px;">${project.institution}</span>
+                  </div>
+                  <div style="margin-bottom: 10px;">
+                    <strong style="color: #374151;">Prospect ID:</strong>
+                    <span style="color: #1f2937; margin-left: 8px; font-family: monospace; background-color: #e5e7eb; padding: 2px 6px; border-radius: 4px;">${newProspect[0].id}</span>
+                  </div>
+                  ${project.contactPerson && project.contactPerson !== "To be determined" ? `
+                  <div style="margin-bottom: 10px;">
+                    <strong style="color: #374151;">Contact Person:</strong>
+                    <span style="color: #1f2937; margin-left: 8px;">${project.contactPerson}</span>
+                  </div>
+                  ` : ''}
+                  ${project.contactNumber && project.contactNumber !== "To be determined" ? `
+                  <div style="margin-bottom: 10px;">
+                    <strong style="color: #374151;">Contact Number:</strong>
+                    <span style="color: #1f2937; margin-left: 8px;">${project.contactNumber}</span>
+                  </div>
+                  ` : ''}
+                </div>
+
+                <!-- Next Steps -->
+                <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin-bottom: 25px;">
+                  <h3 style="color: #92400e; margin-top: 0; margin-bottom: 10px;">🚀 Next Steps</h3>
+                  <ul style="color: #92400e; margin: 0; padding-left: 20px;">
+                    <li>Log in to your marketing dashboard</li>
+                    <li>Review the prospect details in the Prospects section</li>
+                    <li>Update contact information if needed</li>
+                    <li>Begin your outreach and qualification process</li>
+                  </ul>
+                </div>
+
+                <!-- Call to Action -->
+                <div style="text-align: center;">
+                  <a href="${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5000'}/marketing/dashboard" 
+                     style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                    📊 View Dashboard
+                  </a>
+                </div>
+
+                <!-- Footer -->
+                <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                  <p style="color: #6b7280; font-size: 14px; margin: 0;">
+                    This is an automated notification from TaskFlow Marketing Pipeline
+                  </p>
+                </div>
+              </div>
+            </div>
           `,
-          text: `Project Assignment Notification\n\nHello ${bdUser[0].firstName},\n\nA new project has been assigned to you:\nProject: ${project.institution}\nProspect ID: ${newProspect[0].id}\n\nPlease log in to view details.`
+          text: `Project Assignment Notification\n\nHello ${bdUser[0].firstName},\n\nA new project has been assigned to you:\n\nInstitution: ${project.institution}\nProspect ID: ${newProspect[0].id}\nContact Person: ${project.contactPerson || 'To be determined'}\nContact Number: ${project.contactNumber || 'To be determined'}\n\nNext Steps:\n- Log in to your marketing dashboard\n- Review the prospect details\n- Update contact email if available\n- Begin your outreach process\n\nDashboard: ${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5000'}/marketing/dashboard`
         });
       } catch (emailError) {
         console.error("Failed to send assignment email:", emailError);
@@ -1168,7 +1233,7 @@ export function registerMarketingRoutes(app: Express) {
   app.put("/api/marketing/prospects/:id/stage", marketingAuth, marketingUserAuth, async (req, res) => {
     try {
       const { id } = req.params;
-      const { stage, revenue } = req.body;
+      const { stage, revenue, lostReason } = req.body;
 
       // Get the existing prospect
       const existingProspect = await db
@@ -1201,6 +1266,10 @@ export function registerMarketingRoutes(app: Express) {
             expectedQuarter: 'Q1', // Default value, could be calculated from date
             comments: prospect.remarks,
             marketerId: prospect.bdId,
+            contactPerson: prospect.contactPerson,
+            contactNumber: prospect.contactNumber,
+            contactEmail: prospect.contactEmail,
+            createdAt: prospect.date, // Preserve original prospect date
           })
           .returning();
 
@@ -1225,6 +1294,10 @@ export function registerMarketingRoutes(app: Express) {
             expectedQuarter: 'Q1', // Default value, could be calculated from date
             comments: prospect.remarks,
             marketerId: prospect.bdId,
+            contactPerson: prospect.contactPerson,
+            contactNumber: prospect.contactNumber,
+            contactEmail: prospect.contactEmail,
+            createdAt: prospect.date, // Preserve original prospect date
           })
           .returning();
 
@@ -1236,6 +1309,40 @@ export function registerMarketingRoutes(app: Express) {
         return res.json({ 
           message: "Prospect moved to expected orders",
           expectedOrder: newExpectedOrder[0]
+        });
+      } else if (stage === 'lost') {
+        // Validate lost reason
+        if (!lostReason || lostReason.trim().length < 10) {
+          return res.status(400).json({ error: "Lost reason is required and must be at least 10 characters long" });
+        }
+
+        // Create entry in lost_projects table
+        const newLostProject = await db
+          .insert(marketingLostProjects)
+          .values({
+            organisationName: prospect.client,
+            sector: prospect.sectorId || 'Unknown',
+            product: 'Service',
+            revenue: revenue ? revenue.toString() : prospect.revenue || '0',
+            expectedQuarter: 'Q1',
+            comments: prospect.remarks,
+            marketerId: prospect.bdId,
+            contactPerson: prospect.contactPerson,
+            contactNumber: prospect.contactNumber,
+            contactEmail: prospect.contactEmail,
+            lostReason: lostReason.trim(),
+            lostDate: new Date().toISOString(),
+          })
+          .returning();
+
+        // Delete from prospects table
+        await db
+          .delete(marketingProspects)
+          .where(eq(marketingProspects.id, id));
+
+        return res.json({ 
+          message: "Prospect moved to lost projects",
+          lostProject: newLostProject[0]
         });
       } else {
         // For other stages (prospect, lead), just update the stage
@@ -1303,6 +1410,9 @@ export function registerMarketingRoutes(app: Express) {
           expectedQuarter: marketingSalesWon.expectedQuarter,
           comments: marketingSalesWon.comments,
           marketerId: marketingSalesWon.marketerId,
+          contactPerson: marketingSalesWon.contactPerson,
+          contactNumber: marketingSalesWon.contactNumber,
+          contactEmail: marketingSalesWon.contactEmail,
           createdAt: marketingSalesWon.createdAt,
           updatedAt: marketingSalesWon.updatedAt,
           // Include marketer info for admin views
@@ -1478,6 +1588,9 @@ export function registerMarketingRoutes(app: Express) {
             expectedQuarter: marketingExpectedOrders.expectedQuarter,
             comments: marketingExpectedOrders.comments,
             marketerId: marketingExpectedOrders.marketerId,
+            contactPerson: marketingExpectedOrders.contactPerson,
+            contactNumber: marketingExpectedOrders.contactNumber,
+            contactEmail: marketingExpectedOrders.contactEmail,
             createdAt: marketingExpectedOrders.createdAt,
             updatedAt: marketingExpectedOrders.updatedAt,
             // Include marketer info for admin views
@@ -1605,6 +1718,136 @@ export function registerMarketingRoutes(app: Express) {
     }
   });
 
+  // Change expected order stage
+  app.put("/api/marketing/expected-orders/:id/stage", marketingAuth, marketingUserAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { stage, revenue, lostReason } = req.body;
+
+      if (!stage) {
+        return res.status(400).json({ error: "Stage is required" });
+      }
+
+      // Get the expected order
+      const expectedOrder = await db
+        .select()
+        .from(marketingExpectedOrders)
+        .where(eq(marketingExpectedOrders.id, id))
+        .limit(1);
+
+      if (expectedOrder.length === 0) {
+        return res.status(404).json({ error: "Expected order not found" });
+      }
+
+      const order = expectedOrder[0];
+
+      // Check permissions (admin or owner)
+      if (req.marketingUser!.role !== 'admin' && order.marketerId !== req.marketingUser!.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Handle different stage transitions
+      if (stage === 'sales_won') {
+        // Create entry in sales_won table
+        const newSalesWon = await db
+          .insert(marketingSalesWon)
+          .values({
+            organisationName: order.organisationName,
+            sector: order.sector,
+            product: order.product,
+            contractAmount: revenue ? revenue.toString() : order.revenue,
+            expectedQuarter: order.expectedQuarter,
+            comments: order.comments,
+            marketerId: order.marketerId,
+            contactPerson: order.contactPerson,
+            contactNumber: order.contactNumber,
+            contactEmail: order.contactEmail,
+            createdAt: order.createdAt, // Preserve original date
+          })
+          .returning();
+
+        // Delete from expected_orders table
+        await db
+          .delete(marketingExpectedOrders)
+          .where(eq(marketingExpectedOrders.id, id));
+
+        return res.json({ 
+          message: "Expected order moved to sales won",
+          salesWon: newSalesWon[0]
+        });
+      } else if (stage === 'lead' || stage === 'prospect') {
+        // Create entry in prospects table
+        const newProspect = await db
+          .insert(marketingProspects)
+          .values({
+            date: order.createdAt, // Preserve original date
+            client: order.organisationName,
+            contactPerson: order.contactPerson,
+            contactNumber: order.contactNumber,
+            contactEmail: order.contactEmail,
+            systemInPlace: 'none' as any,
+            needAvailability: 'none' as any,
+            currentVendor: '',
+            remarks: order.comments,
+            revenue: revenue ? revenue.toString() : order.revenue,
+            stage: stage,
+            bdId: order.marketerId,
+            sectorId: order.sector,
+          } as any)
+          .returning();
+
+        // Delete from expected_orders table
+        await db
+          .delete(marketingExpectedOrders)
+          .where(eq(marketingExpectedOrders.id, id));
+
+        return res.json({ 
+          message: `Expected order moved to ${stage}`,
+          prospect: newProspect[0]
+        });
+      } else if (stage === 'lost') {
+        // Validate lost reason
+        if (!lostReason || lostReason.trim().length < 10) {
+          return res.status(400).json({ error: "Lost reason is required and must be at least 10 characters long" });
+        }
+
+        // Create entry in lost_projects table
+        const newLostProject = await db
+          .insert(marketingLostProjects)
+          .values({
+            organisationName: order.organisationName,
+            sector: order.sector,
+            product: order.product,
+            revenue: revenue ? revenue.toString() : order.revenue,
+            expectedQuarter: order.expectedQuarter,
+            comments: order.comments,
+            marketerId: order.marketerId,
+            contactPerson: order.contactPerson,
+            contactNumber: order.contactNumber,
+            contactEmail: order.contactEmail,
+            lostReason: lostReason.trim(),
+            lostDate: new Date().toISOString(),
+          })
+          .returning();
+
+        // Delete from expected_orders table
+        await db
+          .delete(marketingExpectedOrders)
+          .where(eq(marketingExpectedOrders.id, id));
+
+        return res.json({ 
+          message: "Expected order moved to lost projects",
+          lostProject: newLostProject[0]
+        });
+      }
+
+      res.status(400).json({ error: "Invalid stage transition" });
+    } catch (error) {
+      console.error("Error changing expected order stage:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Duplicate routes removed - using the first set above
 
   // Annual Summary Routes
@@ -1664,7 +1907,7 @@ export function registerMarketingRoutes(app: Express) {
           sumSalesExpected: annualSummaryData.sumSalesExpected.toString(),
           expectedTarget: annualSummaryData.expectedTarget.toString(),
           year: annualSummaryData.year,
-          bdId: req.marketingUser!.id,
+          marketerId: req.marketingUser!.id,
         } as any)
         .returning();
 
@@ -1673,6 +1916,93 @@ export function registerMarketingRoutes(app: Express) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Validation error", details: error.errors });
       }
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Admin endpoint to set targets for any user
+  app.post("/api/marketing/admin/set-target", marketingAuth, marketingAdminAuth, async (req, res) => {
+    try {
+      const { marketerId, year, target, revisedTarget } = req.body;
+
+      if (!marketerId || !year || !target) {
+        return res.status(400).json({ error: "marketerId, year, and target are required" });
+      }
+
+      // Check if annual summary already exists for this marketer and year
+      const existingSummary = await db
+        .select()
+        .from(marketingAnnualSummary)
+        .where(and(
+          eq(marketingAnnualSummary.marketerId, marketerId),
+          eq(marketingAnnualSummary.year, year)
+        ))
+        .limit(1);
+
+      const targetData = {
+        year,
+        salesExecutive: "", // Will be filled from user data
+        target: parseFloat(target),
+        revisedTarget: parseFloat(revisedTarget || target),
+        won: existingSummary[0]?.won || "0",
+        targetAchieved: existingSummary[0]?.targetAchieved || "0",
+        expectedOrders: existingSummary[0]?.expectedOrders || "0",
+        statusQuo: existingSummary[0]?.statusQuo || "0",
+        deviationFromTarget: existingSummary[0]?.deviationFromTarget || "0",
+        sumSalesExpected: existingSummary[0]?.sumSalesExpected || "0",
+        expectedTarget: parseFloat(revisedTarget || target),
+        marketerId,
+      };
+
+      if (existingSummary.length > 0) {
+        // Update existing summary
+        const updatedSummary = await db
+          .update(marketingAnnualSummary)
+          .set({
+            target: targetData.target.toString(),
+            revisedTarget: targetData.revisedTarget.toString(),
+            expectedTarget: targetData.expectedTarget.toString(),
+            updatedAt: new Date().toISOString()
+          })
+          .where(eq(marketingAnnualSummary.id, existingSummary[0].id))
+          .returning();
+
+        res.json({ annualSummary: updatedSummary[0] });
+      } else {
+        // Create new summary
+        // Get user name for sales executive
+        const user = await db
+          .select({
+            firstName: marketingUsers.firstName,
+            lastName: marketingUsers.lastName,
+          })
+          .from(marketingUsers)
+          .where(eq(marketingUsers.id, marketerId))
+          .limit(1);
+
+        const salesExecutive = user[0] ? `${user[0].firstName} ${user[0].lastName}` : "Unknown";
+
+        const newSummary = await db
+          .insert(marketingAnnualSummary)
+          .values({
+            ...targetData,
+            salesExecutive,
+            target: targetData.target.toString(),
+            revisedTarget: targetData.revisedTarget.toString(),
+            won: targetData.won,
+            targetAchieved: targetData.targetAchieved,
+            expectedOrders: targetData.expectedOrders,
+            statusQuo: targetData.statusQuo,
+            deviationFromTarget: targetData.deviationFromTarget,
+            sumSalesExpected: targetData.sumSalesExpected,
+            expectedTarget: targetData.expectedTarget.toString(),
+          } as any)
+          .returning();
+
+        res.status(201).json({ annualSummary: newSummary[0] });
+      }
+    } catch (error) {
+      console.error("Error setting target:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -1852,7 +2182,7 @@ export function registerMarketingRoutes(app: Express) {
       const targetBdId = bdId || req.marketingUser!.id;
 
       // Get stats for the specified year using the new prospects table
-      const [prospectsCount, leadsCount, expectedOrdersCount, salesWonCount, totalRevenue] = await Promise.all([
+      const [prospectsCount, leadsCount, expectedOrdersCount, salesWonCount, totalRevenue, targetData] = await Promise.all([
         // Prospects count
         db
           .select({ count: count() })
@@ -1875,39 +2205,62 @@ export function registerMarketingRoutes(app: Express) {
               sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
             )
           ),
-        // Expected Orders count
+        // Expected Orders count - from actual expected orders table
         db
           .select({ count: count() })
-          .from(marketingProspects)
+          .from(marketingExpectedOrders)
           .where(
             and(
-              eq(marketingProspects.bdId, targetBdId),
-              eq(marketingProspects.stage, 'expected_order'),
-              sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
+              eq(marketingExpectedOrders.marketerId, targetBdId),
+              sql`EXTRACT(YEAR FROM ${marketingExpectedOrders.createdAt}) = ${currentYear}`
             )
           ),
-        // Sales Won count
+        // Sales Won count - from actual sales won table
         db
           .select({ count: count() })
-          .from(marketingProspects)
+          .from(marketingSalesWon)
           .where(
             and(
-              eq(marketingProspects.bdId, targetBdId),
-              eq(marketingProspects.stage, 'sales_won'),
-              sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
+              eq(marketingSalesWon.marketerId, targetBdId),
+              sql`EXTRACT(YEAR FROM ${marketingSalesWon.createdAt}) = ${currentYear}`
             )
           ),
-        // Total revenue
+        // Total revenue - from sales won only (actual closed deals)
         db
-          .select({ total: sql<number>`COALESCE(SUM(${marketingProspects.revenue}), 0)` })
-          .from(marketingProspects)
+          .select({ total: sql<number>`COALESCE(SUM(${marketingSalesWon.contractAmount}), 0)` })
+          .from(marketingSalesWon)
           .where(
             and(
-              eq(marketingProspects.bdId, targetBdId),
-              sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
+              eq(marketingSalesWon.marketerId, targetBdId),
+              sql`EXTRACT(YEAR FROM ${marketingSalesWon.createdAt}) = ${currentYear}`
             )
           ),
+        // Target data from annual summary
+        db
+          .select({ 
+            target: marketingAnnualSummary.target,
+            revisedTarget: marketingAnnualSummary.revisedTarget,
+            expectedTarget: marketingAnnualSummary.expectedTarget
+          })
+          .from(marketingAnnualSummary)
+          .where(
+            and(
+              eq(marketingAnnualSummary.marketerId, targetBdId),
+              eq(marketingAnnualSummary.year, currentYear)
+            )
+          )
+          .limit(1),
       ]);
+
+      const target = targetData[0] ? Number(targetData[0].target) : 0;
+      const revisedTarget = targetData[0] ? Number((targetData[0] as any).revisedTarget || 0) : 0;
+      const expectedTarget = targetData[0] ? Number(targetData[0].expectedTarget) : 0;
+      const actualRevenue = Number(totalRevenue[0].total);
+      
+      // Calculate target achievement percentage based on sales won vs expected target
+      // Use expectedTarget (which is the revised target) if available, otherwise use initial target
+      const targetForCalculation = expectedTarget > 0 ? expectedTarget : (revisedTarget > 0 ? revisedTarget : target);
+      const targetAchievement = targetForCalculation > 0 ? ((actualRevenue / targetForCalculation) * 100) : 0;
 
       res.json({
         year: currentYear,
@@ -1915,7 +2268,11 @@ export function registerMarketingRoutes(app: Express) {
         leadsCount: leadsCount[0].count,
         expectedOrdersCount: expectedOrdersCount[0].count,
         salesWonCount: salesWonCount[0].count,
-        totalRevenue: Number(totalRevenue[0].total),
+        totalRevenue: actualRevenue,
+        target: target,
+        revisedTarget: revisedTarget,
+        expectedTarget: expectedTarget,
+        targetAchievement: Math.round(targetAchievement * 100) / 100,
       });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -1950,32 +2307,26 @@ export function registerMarketingRoutes(app: Express) {
               sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
             )
           ),
-        // Total expected orders count
+        // Total expected orders count - from actual expected orders table
         db
           .select({ count: count() })
-          .from(marketingProspects)
+          .from(marketingExpectedOrders)
           .where(
-            and(
-              eq(marketingProspects.stage, 'expected_order'),
-              sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
-            )
+            sql`EXTRACT(YEAR FROM ${marketingExpectedOrders.createdAt}) = ${currentYear}`
           ),
-        // Total sales won count
+        // Total sales won count - from actual sales won table
         db
           .select({ count: count() })
-          .from(marketingProspects)
+          .from(marketingSalesWon)
           .where(
-            and(
-              eq(marketingProspects.stage, 'sales_won'),
-              sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
-            )
+            sql`EXTRACT(YEAR FROM ${marketingSalesWon.createdAt}) = ${currentYear}`
           ),
-        // Total revenue
+        // Total revenue - from sales won table (actual contract values)
         db
-          .select({ total: sql<number>`COALESCE(SUM(${marketingProspects.revenue}), 0)` })
-          .from(marketingProspects)
-          .where(sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`),
-        // Get individual BD member performance
+          .select({ total: sql<number>`COALESCE(SUM(${marketingSalesWon.contractAmount}), 0)` })
+          .from(marketingSalesWon)
+          .where(sql`EXTRACT(YEAR FROM ${marketingSalesWon.createdAt}) = ${currentYear}`),
+        // Get individual BD member performance (simplified without targets for now)
         db
           .select({
             bdId: marketingUsers.id,
@@ -1984,8 +2335,8 @@ export function registerMarketingRoutes(app: Express) {
             leadsCount: sql<number>`COALESCE(COUNT(CASE WHEN ${marketingProspects.stage} = 'lead' THEN 1 END), 0)`,
             expectedOrdersCount: sql<number>`COALESCE(COUNT(CASE WHEN ${marketingProspects.stage} = 'expected_order' THEN 1 END), 0)`,
             salesWonCount: sql<number>`COALESCE(COUNT(CASE WHEN ${marketingProspects.stage} = 'sales_won' THEN 1 END), 0)`,
-            totalRevenue: sql<number>`COALESCE(SUM(${marketingProspects.revenue}), 0)`,
-            target: sql<number>`COALESCE(${marketingUsers.target}, 0)`,
+            totalRevenue: sql<number>`COALESCE((SELECT SUM(${marketingSalesWon.contractAmount}) FROM marketing_sales_won WHERE marketer_id = ${marketingUsers.id} AND EXTRACT(YEAR FROM created_at) = ${currentYear}), 0)`,
+            target: sql<number>`0`, // Default target for now
           })
           .from(marketingUsers)
           .leftJoin(marketingProspects, and(
@@ -1993,7 +2344,8 @@ export function registerMarketingRoutes(app: Express) {
             sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
           ))
           .where(eq(marketingUsers.isActive, true))
-          .groupBy(marketingUsers.id, marketingUsers.firstName, marketingUsers.lastName, marketingUsers.target),
+          .groupBy(marketingUsers.id, marketingUsers.firstName, marketingUsers.lastName)
+          .orderBy(desc(sql`COALESCE(SUM(${marketingProspects.revenue}), 0)`)),
       ]);
 
       res.json({
@@ -2100,7 +2452,7 @@ export function registerMarketingRoutes(app: Express) {
       const queryFilters = { currentYear, month };
 
       // Get conversion rates and pipeline health
-      const [conversionRates, quarterlyStats, topPerformers, salesWonPerMarketer, expectedOrdersShare, monthlyTrends] = await Promise.all([
+      const [conversionRates, quarterlyStats, topPerformers, salesWonPerMarketer, expectedOrdersShare, monthlyTrends, bdStats] = await Promise.all([
         // Conversion rates by stage
         db
           .select({
@@ -2122,34 +2474,49 @@ export function registerMarketingRoutes(app: Express) {
           .from(marketingProspects)
           .where(dateFilter),
 
-        // Top performers - Simplified to avoid complex joins
+        // Top performers - Weighted scoring system (Sales Won 40%, Expected Orders 25%, Leads 20%, Conversion Rate 15%)
         db
           .select({
             bdId: marketingUsers.id,
             marketerName: sql<string>`CONCAT(${marketingUsers.firstName}, ' ', ${marketingUsers.lastName})`,
-            totalRevenue: sql<number>`0`, // Simplified for now
-            leadsCount: sql<number>`0`, // Simplified for now
-            conversionRate: sql<number>`0` // Simplified for now
+            salesWonAmount: sql<number>`COALESCE((SELECT SUM(${marketingSalesWon.contractAmount}) FROM marketing_sales_won WHERE marketer_id = ${marketingUsers.id} AND EXTRACT(YEAR FROM created_at) = ${currentYear}), 0)`,
+            expectedOrdersAmount: sql<number>`COALESCE((SELECT SUM(${marketingExpectedOrders.revenue}) FROM marketing_expected_orders WHERE marketer_id = ${marketingUsers.id} AND EXTRACT(YEAR FROM created_at) = ${currentYear}), 0)`,
+            leadsCount: sql<number>`COALESCE(COUNT(CASE WHEN ${marketingProspects.stage} = 'lead' THEN 1 END), 0)`,
+            totalProspectsHandled: sql<number>`COALESCE(COUNT(${marketingProspects.id}), 0)`,
+            target: sql<number>`COALESCE(CAST(${marketingAnnualSummary.expectedTarget} AS DECIMAL), CAST(${marketingAnnualSummary.revisedTarget} AS DECIMAL), CAST(${marketingAnnualSummary.target} AS DECIMAL), 0)`,
           })
           .from(marketingUsers)
+          .leftJoin(marketingProspects, and(
+            eq(marketingProspects.bdId, marketingUsers.id),
+            sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
+          ))
+          .leftJoin(marketingAnnualSummary, and(
+            eq(marketingAnnualSummary.marketerId, marketingUsers.id),
+            eq(marketingAnnualSummary.year, currentYear)
+          ))
           .where(eq(marketingUsers.isActive, true))
+          .groupBy(marketingUsers.id, marketingUsers.firstName, marketingUsers.lastName, marketingAnnualSummary.expectedTarget, marketingAnnualSummary.revisedTarget, marketingAnnualSummary.target)
           .limit(10),
 
-        // Sales Won Per Marketer - Real data
+        // Sales Won Per Marketer - Real data with actual targets
         db
           .select({
             bdId: marketingUsers.id,
             marketerName: sql<string>`CONCAT(${marketingUsers.firstName}, ' ', ${marketingUsers.lastName})`,
             salesWon: sql<number>`COALESCE(SUM(${marketingSalesWon.contractAmount}), 0)`,
-            target: sql<number>`COALESCE(SUM(${marketingSalesWon.contractAmount}) * 1.2, 0)`, // Set target as 120% of current sales
+            target: sql<number>`COALESCE(CAST(${marketingAnnualSummary.expectedTarget} AS DECIMAL), CAST(${marketingAnnualSummary.revisedTarget} AS DECIMAL), CAST(${marketingAnnualSummary.target} AS DECIMAL), 0)`,
           })
           .from(marketingUsers)
           .leftJoin(marketingSalesWon, and(
             eq(marketingSalesWon.marketerId, marketingUsers.id),
             month ? sql`EXTRACT(YEAR FROM ${marketingSalesWon.createdAt}) = ${currentYear} AND EXTRACT(MONTH FROM ${marketingSalesWon.createdAt}) = ${month}` : sql`EXTRACT(YEAR FROM ${marketingSalesWon.createdAt}) = ${currentYear}`
           ))
+          .leftJoin(marketingAnnualSummary, and(
+            eq(marketingAnnualSummary.marketerId, marketingUsers.id),
+            eq(marketingAnnualSummary.year, currentYear)
+          ))
           .where(eq(marketingUsers.isActive, true))
-          .groupBy(marketingUsers.id, marketingUsers.firstName, marketingUsers.lastName)
+          .groupBy(marketingUsers.id, marketingUsers.firstName, marketingUsers.lastName, marketingAnnualSummary.expectedTarget, marketingAnnualSummary.revisedTarget, marketingAnnualSummary.target)
           .orderBy(desc(sql`COALESCE(SUM(${marketingSalesWon.contractAmount}), 0)`)),
 
         // Expected Orders Share - Real data
@@ -2168,17 +2535,91 @@ export function registerMarketingRoutes(app: Express) {
           .groupBy(marketingUsers.id, marketingUsers.firstName, marketingUsers.lastName)
           .orderBy(desc(sql`COALESCE(SUM(${marketingExpectedOrders.revenue}), 0)`)),
 
-        // Monthly Trends - Simplified to avoid template literal issues
+        // Monthly Trends - Get data from all three tables separately and combine
         db
           .select({
-            month: sql<string>`'Sep 2025'`,
-            leads: count(marketingProspects.id),
-            salesWon: sql<number>`0`,
-            expectedOrders: sql<number>`0`,
+            month: sql<string>`month_label`,
+            leads: sql<number>`COALESCE(leads_amount, 0)`,
+            salesWon: sql<number>`COALESCE(sales_won_amount, 0)`,
+            expectedOrders: sql<number>`COALESCE(expected_orders_amount, 0)`,
           })
-          .from(marketingProspects)
-          .where(dateFilter)
+          .from(sql`(
+            WITH monthly_data AS (
+              -- Get leads revenue from prospects table
+              SELECT 
+                TO_CHAR(date, 'Mon YYYY') as month_label,
+                COALESCE(SUM(CAST(revenue AS DECIMAL)), 0) as leads_amount,
+                0 as sales_won_amount,
+                0 as expected_orders_amount
+              FROM marketing_prospects 
+              WHERE stage = 'lead' 
+                AND EXTRACT(YEAR FROM date) >= ${currentYear - 1}
+              GROUP BY TO_CHAR(date, 'Mon YYYY')
+              
+              UNION ALL
+              
+              -- Get sales won revenue from sales won table
+              SELECT 
+                TO_CHAR(created_at, 'Mon YYYY') as month_label,
+                0 as leads_amount,
+                COALESCE(SUM(CAST(contract_amount AS DECIMAL)), 0) as sales_won_amount,
+                0 as expected_orders_amount
+              FROM marketing_sales_won 
+              WHERE EXTRACT(YEAR FROM created_at) >= ${currentYear - 1}
+              GROUP BY TO_CHAR(created_at, 'Mon YYYY')
+              
+              UNION ALL
+              
+              -- Get expected orders revenue from expected orders table
+              SELECT 
+                TO_CHAR(created_at, 'Mon YYYY') as month_label,
+                0 as leads_amount,
+                0 as sales_won_amount,
+                COALESCE(SUM(CAST(revenue AS DECIMAL)), 0) as expected_orders_amount
+              FROM marketing_expected_orders 
+              WHERE EXTRACT(YEAR FROM created_at) >= ${currentYear - 1}
+              GROUP BY TO_CHAR(created_at, 'Mon YYYY')
+            )
+            SELECT 
+              month_label,
+              SUM(leads_amount) as leads_amount,
+              SUM(sales_won_amount) as sales_won_amount,
+              SUM(expected_orders_amount) as expected_orders_amount
+            FROM monthly_data
+            GROUP BY month_label
+            ORDER BY month_label
+          ) as combined_data`),
+
+        // BD Stats for Annual Summary Table - Get data from all relevant tables
+        db
+          .select({
+            bdId: marketingUsers.id,
+            bdName: sql<string>`CONCAT(${marketingUsers.firstName}, ' ', ${marketingUsers.lastName})`,
+            prospectsCount: sql<number>`COALESCE(COUNT(CASE WHEN ${marketingProspects.stage} = 'prospect' THEN 1 END), 0)`,
+            leadsCount: sql<number>`COALESCE(COUNT(CASE WHEN ${marketingProspects.stage} = 'lead' THEN 1 END), 0)`,
+            // Get actual sales won amount from sales won table
+            salesWonAmount: sql<number>`COALESCE((SELECT SUM(${marketingSalesWon.contractAmount}) FROM marketing_sales_won WHERE marketer_id = ${marketingUsers.id} AND EXTRACT(YEAR FROM created_at) = ${currentYear}), 0)`,
+            // Get actual expected orders amount from expected orders table
+            expectedOrdersAmount: sql<number>`COALESCE((SELECT SUM(${marketingExpectedOrders.revenue}) FROM marketing_expected_orders WHERE marketer_id = ${marketingUsers.id} AND EXTRACT(YEAR FROM created_at) = ${currentYear}), 0)`,
+            // Total revenue from sales won only (actual closed deals)
+            totalRevenue: sql<number>`COALESCE((SELECT SUM(${marketingSalesWon.contractAmount}) FROM marketing_sales_won WHERE marketer_id = ${marketingUsers.id} AND EXTRACT(YEAR FROM created_at) = ${currentYear}), 0)`,
+            // Get actual targets from annual summary table
+            target: sql<number>`COALESCE(CAST(${marketingAnnualSummary.expectedTarget} AS DECIMAL), CAST(${marketingAnnualSummary.revisedTarget} AS DECIMAL), CAST(${marketingAnnualSummary.target} AS DECIMAL), 0)`,
+          })
+          .from(marketingUsers)
+          .leftJoin(marketingProspects, and(
+            eq(marketingProspects.bdId, marketingUsers.id),
+            sql`EXTRACT(YEAR FROM ${marketingProspects.date}) = ${currentYear}`
+          ))
+          .leftJoin(marketingAnnualSummary, and(
+            eq(marketingAnnualSummary.marketerId, marketingUsers.id),
+            eq(marketingAnnualSummary.year, currentYear)
+          ))
+          .where(eq(marketingUsers.isActive, true))
+          .groupBy(marketingUsers.id, marketingUsers.firstName, marketingUsers.lastName, marketingAnnualSummary.expectedTarget, marketingAnnualSummary.revisedTarget, marketingAnnualSummary.target)
+          .orderBy(desc(sql`COALESCE(SUM(${marketingProspects.revenue}), 0)`))
       ]);
+
 
       res.json({
         year: currentYear,
@@ -2192,17 +2633,54 @@ export function registerMarketingRoutes(app: Express) {
           leadsCount: Number(stat.leadsCount),
           salesWonTotal: Number(stat.salesWonTotal)
         })),
-        topPerformers: topPerformers.map(performer => ({
+        topPerformers: topPerformers.map(performer => {
+          const salesWonAmount = Number(performer.salesWonAmount);
+          const expectedOrdersAmount = Number(performer.expectedOrdersAmount);
+          const leadsCount = Number(performer.leadsCount);
+          const totalProspectsHandled = Number(performer.totalProspectsHandled);
+          const target = Number(performer.target);
+          
+          // Calculate conversion rate (sales won / target, or sales won / total prospects if no target)
+          const conversionRate = target > 0 ? ((salesWonAmount / target) * 100) : 
+                                (totalProspectsHandled > 0 ? (salesWonAmount > 0 ? 100 : 0) : 0);
+          
+          // Weighted scoring: Sales Won 40%, Expected Orders 25%, Leads 20%, Conversion Rate 15%
+          // Normalize values (assuming max values for scoring)
+          const maxSalesWon = Math.max(...topPerformers.map(p => Number(p.salesWonAmount)), 1);
+          const maxExpectedOrders = Math.max(...topPerformers.map(p => Number(p.expectedOrdersAmount)), 1);
+          const maxLeads = Math.max(...topPerformers.map(p => Number(p.leadsCount)), 1);
+          const maxConversion = Math.max(...topPerformers.map(p => {
+            const target = Number(p.target);
+            const salesWon = Number(p.salesWonAmount);
+            const prospects = Number(p.totalProspectsHandled);
+            return target > 0 ? ((salesWon / target) * 100) : (prospects > 0 ? (salesWon > 0 ? 100 : 0) : 0);
+          }), 1);
+          
+          const salesWonScore = (salesWonAmount / maxSalesWon) * 40;
+          const expectedOrdersScore = (expectedOrdersAmount / maxExpectedOrders) * 25;
+          const leadsScore = (leadsCount / maxLeads) * 20;
+          const conversionScore = (conversionRate / maxConversion) * 15;
+          
+          const weightedScore = salesWonScore + expectedOrdersScore + leadsScore + conversionScore;
+          
+          return {
           ...performer,
-          totalRevenue: Number(performer.totalRevenue),
-          leadsCount: Number(performer.leadsCount),
-          conversionRate: Number(performer.conversionRate)
-        })),
+            salesWonAmount,
+            expectedOrdersAmount,
+            leadsCount,
+            totalProspectsHandled,
+            target,
+            conversionRate: Math.round(conversionRate * 100) / 100,
+            weightedScore: Math.round(weightedScore * 100) / 100,
+            totalRevenue: salesWonAmount // For backward compatibility
+          };
+        }).sort((a, b) => b.weightedScore - a.weightedScore),
         salesWonPerMarketer: salesWonPerMarketer.length > 0 ? salesWonPerMarketer.map(marketer => {
           const salesWon = Number(marketer.salesWon);
           const target = Number(marketer.target);
           return {
-            ...marketer,
+            marketerId: marketer.bdId,
+            marketerName: marketer.marketerName,
             salesWon,
             target,
             achievementRate: target > 0 ? Math.round((salesWon / target) * 100) : 0
@@ -2227,17 +2705,232 @@ export function registerMarketingRoutes(app: Express) {
           leads: Number(trend.leads),
           salesWon: Number(trend.salesWon),
           expectedOrders: Number(trend.expectedOrders)
-        })) : [{
-          month: `${new Date().toLocaleString('default', { month: 'short' })} ${currentYear}`,
+        })) : (() => {
+          // Generate sample data for the last 6 months if no real data exists
+          const months = [];
+          const currentDate = new Date();
+          for (let i = 5; i >= 0; i--) {
+            const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+            months.push({
+              month: date.toLocaleString('default', { month: 'short' }) + ' ' + date.getFullYear(),
           leads: 0,
           salesWon: 0,
           expectedOrders: 0
-        }]
+            });
+          }
+          return months;
+        })(),
+        bdStats: bdStats.map(stat => ({
+          ...stat,
+          totalRevenue: Number(stat.totalRevenue),
+          target: Number(stat.target),
+          salesWonAmount: Number(stat.salesWonAmount),
+          expectedOrdersAmount: Number(stat.expectedOrdersAmount),
+        }))
       });
       
       // Analytics data processed successfully
     } catch (error) {
       console.error("Analytics error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Lost Projects Routes
+  app.get("/api/marketing/lost-projects", marketingAuth, marketingUserAuth, async (req, res) => {
+    try {
+      const { page = 1, limit = 50, year, marketerId, search, quarter, sectorId } = req.query;
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+      const currentYear = year ? parseInt(year as string) : new Date().getFullYear();
+
+      let whereCondition: any = sql`1=1`;
+      
+      // Filter by year
+      whereCondition = sql`EXTRACT(YEAR FROM ${marketingLostProjects.lostDate}) = ${currentYear}`;
+      
+      // Filter by marketer if provided (admin can filter, regular users see only their own)
+      if (marketerId) {
+        whereCondition = sql`${whereCondition} AND ${marketingLostProjects.marketerId} = ${marketerId}`;
+      } else if (req.marketingUser?.role !== 'admin') {
+        whereCondition = sql`${whereCondition} AND ${marketingLostProjects.marketerId} = ${req.marketingUser!.id}`;
+      }
+
+      // Filter by search term
+      if (search) {
+        whereCondition = sql`${whereCondition} AND (
+          ${marketingLostProjects.organisationName} ILIKE ${'%' + search + '%'} OR
+          ${marketingLostProjects.lostReason} ILIKE ${'%' + search + '%'}
+        )`;
+      }
+
+      // Filter by quarter
+      if (quarter) {
+        const quarterMap: { [key: string]: string } = {
+          'Q1': '01,02,03',
+          'Q2': '04,05,06', 
+          'Q3': '07,08,09',
+          'Q4': '10,11,12'
+        };
+        const months = quarterMap[quarter as string];
+        if (months) {
+          whereCondition = sql`${whereCondition} AND EXTRACT(MONTH FROM ${marketingLostProjects.lostDate}) IN (${months})`;
+        }
+      }
+
+      // Filter by sector
+      if (sectorId) {
+        whereCondition = sql`${whereCondition} AND ${marketingLostProjects.sector} = ${sectorId}`;
+      }
+
+      const [lostProjects, totalCount] = await Promise.all([
+        db
+          .select({
+            id: marketingLostProjects.id,
+            organisationName: marketingLostProjects.organisationName,
+            sector: marketingLostProjects.sector,
+            product: marketingLostProjects.product,
+            revenue: marketingLostProjects.revenue,
+            expectedQuarter: marketingLostProjects.expectedQuarter,
+            comments: marketingLostProjects.comments,
+            marketerId: marketingLostProjects.marketerId,
+            contactPerson: marketingLostProjects.contactPerson,
+            contactNumber: marketingLostProjects.contactNumber,
+            contactEmail: marketingLostProjects.contactEmail,
+            lostReason: marketingLostProjects.lostReason,
+            lostDate: marketingLostProjects.lostDate,
+            canRevive: marketingLostProjects.canRevive,
+            createdAt: marketingLostProjects.createdAt,
+            updatedAt: marketingLostProjects.updatedAt,
+            marketerName: sql<string>`CONCAT(${marketingUsers.firstName}, ' ', ${marketingUsers.lastName})`,
+            marketerEmail: marketingUsers.email,
+          })
+          .from(marketingLostProjects)
+          .leftJoin(marketingUsers, eq(marketingLostProjects.marketerId, marketingUsers.id))
+          .where(whereCondition)
+          .orderBy(desc(marketingLostProjects.lostDate))
+          .limit(limitNum)
+          .offset(offset),
+        db
+          .select({ count: count() })
+          .from(marketingLostProjects)
+          .where(whereCondition)
+      ]);
+
+      res.json({
+        lostProjects,
+        totalCount: totalCount[0].count,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(totalCount[0].count / limitNum)
+      });
+    } catch (error) {
+      console.error("Error fetching lost projects:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+  // Revive lost project (move back to prospects)
+  app.put("/api/marketing/lost-projects/:id/revive", marketingAuth, marketingUserAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { stage = 'prospect' } = req.body;
+
+      // Get the lost project
+      const lostProject = await db
+        .select()
+        .from(marketingLostProjects)
+        .where(eq(marketingLostProjects.id, id))
+        .limit(1);
+
+      if (lostProject.length === 0) {
+        return res.status(404).json({ error: "Lost project not found" });
+      }
+
+      const project = lostProject[0];
+
+      // Check permissions (admin or project owner)
+      if (req.marketingUser?.role !== 'admin' && project.marketerId !== req.marketingUser?.id) {
+        return res.status(403).json({ error: "Unauthorized to revive this project" });
+      }
+
+      // Create new prospect entry
+      const newProspect = await db
+        .insert(marketingProspects)
+        .values({
+          date: project.lostDate,
+          client: project.organisationName,
+          contactPerson: project.contactPerson || 'Contact Person',
+          contactNumber: project.contactNumber || 'N/A',
+          contactEmail: project.contactEmail || 'contact@example.com',
+          systemInPlace: 'none' as any,
+          needAvailability: 'none' as any,
+          currentVendor: '',
+          remarks: project.comments || `Revived from lost projects. Original lost reason: ${project.lostReason}`,
+          revenue: project.revenue || '0',
+          stage: stage as any,
+          bdId: project.marketerId,
+          sectorId: project.sector,
+        } as any)
+        .returning();
+
+      // Delete from lost projects
+      await db
+        .delete(marketingLostProjects)
+        .where(eq(marketingLostProjects.id, id));
+
+      res.json({ 
+        message: "Project revived successfully",
+        prospect: newProspect[0]
+      });
+    } catch (error) {
+      console.error("Error reviving lost project:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+  // Update lost project reason
+  app.put("/api/marketing/lost-projects/:id", marketingAuth, marketingUserAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { lostReason } = req.body;
+
+      if (!lostReason || lostReason.trim().length < 10) {
+        return res.status(400).json({ error: "Lost reason must be at least 10 characters long" });
+      }
+
+      // Check if project exists and user has permission
+      const existingProject = await db
+        .select()
+        .from(marketingLostProjects)
+        .where(eq(marketingLostProjects.id, id))
+        .limit(1);
+
+      if (existingProject.length === 0) {
+        return res.status(404).json({ error: "Lost project not found" });
+      }
+
+      // Check permissions (admin or project owner)
+      if (req.marketingUser?.role !== 'admin' && existingProject[0].marketerId !== req.marketingUser?.id) {
+        return res.status(403).json({ error: "Unauthorized to update this project" });
+      }
+
+      const updatedProject = await db
+        .update(marketingLostProjects)
+        .set({
+          lostReason,
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(marketingLostProjects.id, id))
+        .returning();
+
+      res.json({ 
+        message: "Lost reason updated successfully",
+        lostProject: updatedProject[0]
+      });
+    } catch (error) {
+      console.error("Error updating lost project:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });

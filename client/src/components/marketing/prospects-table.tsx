@@ -40,6 +40,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "@/hooks/use-toast";
 import { ProspectFilters } from "./prospect-filters";
+import { LostReasonModal } from "./lost-reason-modal";
 
 interface Prospect {
   id: string;
@@ -53,7 +54,7 @@ interface Prospect {
   currentVendor?: string;
   remarks?: string;
   revenue?: number;
-  stage: 'prospect' | 'lead' | 'expected_order' | 'sales_won';
+  stage: 'prospect' | 'lead' | 'expected_order' | 'sales_won' | 'lost';
   sectorId: string;
   bdId: string;
   createdAt: string;
@@ -89,7 +90,7 @@ const prospectUpdateSchema = z.object({
   currentVendor: z.string().optional(),
   remarks: z.string().optional(),
   revenue: z.number().positive("Revenue must be positive").optional(),
-  stage: z.enum(['prospect', 'lead', 'expected_order', 'sales_won']),
+  stage: z.enum(['prospect', 'lead', 'expected_order', 'sales_won', 'lost']),
   sectorId: z.string().min(1, "Sector is required"),
 });
 
@@ -100,6 +101,7 @@ const stageColors = {
   lead: "bg-green-100 text-green-800",
   expected_order: "bg-yellow-100 text-yellow-800",
   sales_won: "bg-purple-100 text-purple-800",
+  lost: "bg-red-100 text-red-800",
 };
 
 const stageLabels = {
@@ -107,6 +109,7 @@ const stageLabels = {
   lead: "Lead",
   expected_order: "Expected Order",
   sales_won: "Sales Won",
+  lost: "Lost",
 };
 
 interface MarketingProspectsTableProps {
@@ -128,6 +131,8 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
   const [stageChangeProspect, setStageChangeProspect] = useState<Prospect | null>(null);
   const [newStage, setNewStage] = useState<string>("");
   const [newRevenue, setNewRevenue] = useState<string>("");
+  const [isLostReasonModalOpen, setIsLostReasonModalOpen] = useState(false);
+  const [lostReasonData, setLostReasonData] = useState<{prospect: Prospect, stage: string, revenue?: string} | null>(null);
   const [filters, setFilters] = useState<{
     search?: string;
     year?: string;
@@ -370,6 +375,66 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
     setIsStageChangeOpen(true);
   };
 
+  const handleStageSelection = (stage: string, prospect: Prospect) => {
+    if (stage === 'lost') {
+      // Open lost reason modal instead of stage change dialog
+      setLostReasonData({
+        prospect,
+        stage: 'lost',
+        revenue: newRevenue
+      });
+      setIsLostReasonModalOpen(true);
+      setIsStageChangeOpen(false);
+    } else {
+      // Continue with normal stage change
+      setNewStage(stage);
+    }
+  };
+
+  const handleLostReasonSubmit = async (reason: string) => {
+    if (!lostReasonData) return;
+
+    try {
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch(`/api/marketing/prospects/${lostReasonData.prospect.id}/stage`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          stage: 'lost',
+          revenue: lostReasonData.revenue ? parseFloat(lostReasonData.revenue) : undefined,
+          lostReason: reason,
+        }),
+      });
+
+      if (response.ok) {
+        toast({
+          title: "Success",
+          description: "Prospect marked as lost successfully",
+        });
+        setIsLostReasonModalOpen(false);
+        setLostReasonData(null);
+        loadProspects();
+      } else {
+        const error = await response.json();
+        toast({
+          title: "Error",
+          description: error.error || "Failed to mark prospect as lost",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error marking prospect as lost:", error);
+      toast({
+        title: "Error",
+        description: "Failed to mark prospect as lost",
+        variant: "destructive",
+      });
+    }
+  };
+
 
   if (loading) {
     return (
@@ -416,6 +481,7 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
               <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Client</TableHead>
+                    <TableHead>Marketer</TableHead>
                     <TableHead>Contact Person</TableHead>
                     <TableHead>Contact Info</TableHead>
                     <TableHead>System in Place</TableHead>
@@ -434,6 +500,17 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
                         {format(new Date(prospect.date), "MMM dd, yyyy")}
                       </TableCell>
                       <TableCell className="font-medium">{prospect.client}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center">
+                          <User className="h-4 w-4 mr-2 text-blue-400" />
+                          <span className="text-sm font-medium text-gray-700">
+                            {prospect.bdName || 'Unknown'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {prospect.bdEmail || ''}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center">
                           <User className="h-4 w-4 mr-2 text-gray-400" />
@@ -934,7 +1011,7 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
                     <Target className="h-4 w-4 mr-2 text-gray-500" />
                     New Stage <span className="text-red-500 ml-1">*</span>
                   </Label>
-                  <Select value={newStage} onValueChange={setNewStage}>
+                  <Select value={newStage} onValueChange={(value) => handleStageSelection(value, stageChangeProspect!)}>
                     <SelectTrigger className="h-11 focus:border-blue-500 focus:ring-blue-500">
                       <SelectValue placeholder="Select new stage" />
                     </SelectTrigger>
@@ -943,6 +1020,7 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
                       <SelectItem value="lead">Lead</SelectItem>
                       <SelectItem value="expected_order">Expected Order</SelectItem>
                       <SelectItem value="sales_won">Sales Won</SelectItem>
+                      <SelectItem value="lost" className="text-red-600">Lost</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -989,6 +1067,20 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Lost Reason Modal */}
+      {lostReasonData && (
+        <LostReasonModal
+          isOpen={isLostReasonModalOpen}
+          onClose={() => {
+            setIsLostReasonModalOpen(false);
+            setLostReasonData(null);
+          }}
+          onSubmit={handleLostReasonSubmit}
+          projectName={lostReasonData.prospect.client}
+          projectRevenue={lostReasonData.revenue || lostReasonData.prospect.revenue}
+        />
+      )}
     </div>
   );
 }

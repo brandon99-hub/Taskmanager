@@ -152,11 +152,7 @@ export function MonthlyTrendsChart({
                 callbacks: {
                   label: function(context: any) {
                     const value = context.parsed.y;
-                    if (context.dataset.label === 'Leads') {
-                      return `${context.dataset.label}: ${value}`;
-                    } else {
-                      return `${context.dataset.label}: ${formatCurrency(value)}`;
-                    }
+                    return `${context.dataset.label}: ${formatCurrency(value)}`;
                   }
                 }
               }
@@ -180,8 +176,8 @@ export function MonthlyTrendsChart({
                 },
                 ticks: {
                   callback: function(value: any) {
-                    if (typeof value === 'number' && value >= 1000) {
-                      return formatNumber(value);
+                    if (typeof value === 'number') {
+                      return formatCurrency(value);
                     }
                     return value;
                   },
