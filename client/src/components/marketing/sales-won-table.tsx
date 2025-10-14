@@ -350,7 +350,14 @@ export function MarketingSalesWonTable({
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{sale.sector}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center">
+                        <Building2 className="h-4 w-4 mr-2 text-gray-400" />
+                        <span className="text-sm font-medium text-gray-700">
+                          {sale.sector || 'No sector'}
+                        </span>
+                      </div>
+                    </TableCell>
                     <TableCell>{sale.product}</TableCell>
                     <TableCell>{formatCurrency(sale.contractAmount)}</TableCell>
                     <TableCell>

@@ -427,6 +427,7 @@ export function MarketingExpectedOrdersTable({
                 <TableHead>Product</TableHead>
                 <TableHead>Revenue</TableHead>
                 <TableHead>Expected Quarter</TableHead>
+                <TableHead>Comments</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
@@ -434,7 +435,7 @@ export function MarketingExpectedOrdersTable({
             <TableBody>
               {expectedOrders.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8">
+                  <TableCell colSpan={10} className="text-center py-8">
                     No expected orders found
                   </TableCell>
                 </TableRow>
@@ -475,6 +476,13 @@ export function MarketingExpectedOrdersTable({
                       <Badge className={quarterColors[order.expectedQuarter]}>
                         {order.expectedQuarter}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="max-w-xs">
+                        <p className="text-sm text-gray-700 truncate" title={order.comments || ''}>
+                          {order.comments || 'No comments'}
+                        </p>
+                      </div>
                     </TableCell>
                     <TableCell>{formatDate(order.createdAt)}</TableCell>
                     <TableCell>

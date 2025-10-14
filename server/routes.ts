@@ -855,7 +855,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       
       const reportName = reportNames[reportType as keyof typeof reportNames] || 'Report';
-      const filename = `AppKings Solutions Limited - ${reportName} - ${timestamp}.xlsx`;
+      const fileExtension = format === 'pdf' ? 'pdf' : 'xlsx';
+      const filename = `AppKings Solutions Limited - ${reportName} - ${timestamp}.${fileExtension}`;
 
       // Get export data based on report type
       let exportData;
@@ -896,27 +897,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Return JSON data for detailed view
         console.log('Returning JSON data for report type:', reportType, 'Data length:', Array.isArray(exportData) ? exportData.length : 'Not an array');
         
-        // Ensure we always return an array for the frontend
-        let jsonData;
-        if (Array.isArray(exportData)) {
-          jsonData = exportData;
+        // For projects report, return structured data with projects and milestones
+        if (reportType === 'projects' && typeof exportData === 'object' && exportData.projects && exportData.milestones) {
+          res.json(exportData);
+        }
+        // For financial report, only return the financial array
+        else if (reportType === 'financial' && typeof exportData === 'object' && exportData.financial) {
+          res.json(exportData.financial);
+        }
+        // For complete report, return only the projects array (most comprehensive view)
+        else if (reportType === 'complete' && typeof exportData === 'object' && exportData.projects) {
+          res.json(exportData.projects);
+        }
+        // Ensure we always return an array for other reports
+        else if (Array.isArray(exportData)) {
+          res.json(exportData);
         } else if (typeof exportData === 'object' && exportData !== null) {
           // Flatten object data into array
-          jsonData = [];
+          const jsonData: any[] = [];
           Object.values(exportData).forEach((section: any) => {
             if (Array.isArray(section)) {
               jsonData.push(...section);
             }
           });
+          res.json(jsonData);
         } else {
-          jsonData = [];
+          res.json([]);
         }
-        
-        res.json(jsonData);
-      } else {
-        // Generate Excel buffer (use template for gantt if available)
-        const isGantt = reportType === 'gantt';
-        const templatePath = isGantt ? path.join(__dirname, 'templates', 'gantt-chart(2).xlsx') : undefined;
+      } else if (reportType === 'gantt') {
+        // Generate Excel buffer for Gantt Chart only
+        const templatePath = path.join(__dirname, 'templates', 'gantt-chart(2).xlsx');
         const excelBuffer = generateExcelBuffer({
           filename,
           data: exportData,
@@ -925,13 +935,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           templateSheetName: undefined
         });
 
-        // Set response headers for file download
+        // Set response headers for Excel download
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.setHeader('Content-Length', excelBuffer.length);
 
         // Send the Excel file
         res.send(excelBuffer);
+      } else {
+        // Generate PDF for all other report types
+        const { generatePDFBuffer } = await import('./utils/pdfExport');
+        const pdfBuffer = await generatePDFBuffer({
+          filename,
+          data: exportData,
+          reportType
+        });
+
+        // Set response headers for PDF download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Length', pdfBuffer.length);
+
+        // Send the PDF file
+        res.send(pdfBuffer);
       }
 
     } catch (error: any) {
@@ -4477,24 +4503,35 @@ async function getProjectsExportData(storage: any, filters: any) {
 }
 
 async function getMilestonesExportData(storage: any, filters: any) {
-  const tasks = await storage.getTasks();
+  const projects = await storage.getProjects();
+  const allMilestones: any[] = [];
   
-  return tasks.map((task: any) => ({
-    'Milestone Name': task.name,
-    'Project': task.project?.name || 'N/A',
-    'Status': task.status,
-    'Priority': task.priority,
-    'Start Date': task.startDate ? new Date(task.startDate).toLocaleDateString() : 'N/A',
-    'Due Date': task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A',
-    'Assigned User': task.assignedUser?.firstName || task.assignedUser?.email || 'Unassigned',
-    'Fee Amount (KSh)': task.feeAmount ? parseFloat(task.feeAmount).toLocaleString() : '0',
-    'Billing Status': task.billingStatus || 'none',
-    'Progress (%)': task.progressPercent || 0,
-    'Overdue': task.dueDate ? new Date(task.dueDate) < new Date() && task.status !== 'done' : false,
-    'Days Overdue': task.dueDate ? Math.max(0, Math.ceil((new Date().getTime() - new Date(task.dueDate).getTime()) / (1000 * 60 * 60 * 24))) : 0,
-    'Created Date': new Date(task.createdAt).toLocaleDateString(),
-    'Description': task.description || 'N/A'
-  }));
+  for (const project of projects) {
+    const milestones = await storage.getModulesByProject(project.id);
+    
+    for (const milestone of milestones) {
+      allMilestones.push({
+        'Project Name': project.name || 'N/A',
+        'Milestone Name': milestone.name,
+        'Client': project.client || 'N/A',
+        '_projectName': project.name,
+        'Manager': project.manager?.firstName && project.manager?.lastName 
+          ? `${project.manager.firstName} ${project.manager.lastName}`
+          : project.manager?.email || 'Not assigned',
+        'Priority': milestone.priority,
+        'Start Date': milestone.startDate ? new Date(milestone.startDate).toLocaleDateString() : 'N/A',
+        'Due Date': milestone.dueDate ? new Date(milestone.dueDate).toLocaleDateString() : 'N/A',
+        'Fee Amount (KSh)': milestone.feeAmount ? parseFloat(milestone.feeAmount).toLocaleString() : '0',
+        'Billing Status': milestone.billingStatus || 'none',
+        'Progress (%)': milestone.progressPercent || 0,
+        'Overdue': milestone.dueDate ? (new Date(milestone.dueDate) < new Date() && milestone.status !== 'done' ? 'Yes' : 'No') : 'No',
+        'Days Overdue': milestone.dueDate ? Math.max(0, Math.ceil((new Date().getTime() - new Date(milestone.dueDate).getTime()) / (1000 * 60 * 60 * 24))) : 0,
+        'Created Date': new Date(milestone.createdAt).toLocaleDateString()
+      });
+    }
+  }
+  
+  return allMilestones;
 }
 
 async function getPerformanceExportData(storage: any, filters: any) {
@@ -4518,45 +4555,36 @@ async function getPerformanceExportData(storage: any, filters: any) {
 }
 
 async function getWorkloadExportData(storage: any, filters: any) {
-  const teams = await storage.getTeams();
   const workload = await storage.getTeamWorkload();
   
-  // Group workload by teams
-  const teamWorkload = teams.map((team: any) => {
-    const teamMembers = workload.filter((member: any) => {
-      // This would need actual team membership data
-      return true; // Placeholder - implement team filtering
-    });
-    
-    const totalTasks = teamMembers.reduce((sum: number, member: any) => sum + member.totalTasks, 0);
-    const completedTasks = teamMembers.reduce((sum: number, member: any) => sum + member.completedTasks, 0);
-    
-    return {
-      'Team Name': team.name,
-      'Team Description': team.description || 'N/A',
-      'Members Count': teamMembers.length,
-      'Total Tasks': totalTasks,
-      'Completed Tasks': completedTasks,
-      'Team Completion Rate (%)': totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-      'Average Workload (%)': teamMembers.length > 0 ? Math.round(teamMembers.reduce((sum: number, member: any) => sum + member.workloadPercentage, 0) / teamMembers.length) : 0,
-      'Created Date': new Date(team.createdAt).toLocaleDateString()
-    };
-  });
-  
-  return teamWorkload;
+  return workload.map((member: any) => ({
+    'Team Member': member.user.firstName && member.user.lastName 
+      ? `${member.user.firstName} ${member.user.lastName}`
+      : member.user.email,
+    'Email': member.user.email,
+    'Role': member.user.role,
+    'Total Subtasks': member.totalTasks,
+    'Completed Subtasks': member.completedTasks,
+    'Pending Subtasks': member.totalTasks - member.completedTasks,
+    'Completion Rate (%)': member.workloadPercentage,
+    'Workload Status': member.workloadPercentage >= 80 ? 'High' : 
+                        member.workloadPercentage >= 50 ? 'Medium' : 'Low',
+    'Last Active': new Date(member.user.lastLogin || member.user.createdAt).toLocaleDateString()
+  }));
 }
 
 async function getFinancialExportData(storage: any, filters: any) {
   const projects = await storage.getProjects();
-  const tasks = await storage.getTasks();
+  const financialData = [];
   
-  const financialData = projects.map((project: any) => {
-    const projectTasks = tasks.filter((task: any) => task.projectId === project.id);
-    const totalFees = projectTasks.reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
-    const paidFees = projectTasks.filter((task: any) => task.billingStatus === 'paid').reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
-    const pendingFees = projectTasks.filter((task: any) => ['to_send', 'sent'].includes(task.billingStatus)).reduce((sum: number, task: any) => sum + parseFloat(task.feeAmount || 0), 0);
+  for (const project of projects) {
+    const projectMilestones = await storage.getModulesByProject(project.id);
     
-    return {
+    const totalFees = projectMilestones.reduce((sum: number, milestone: any) => sum + parseFloat(milestone.feeAmount || 0), 0);
+    const paidFees = projectMilestones.filter((milestone: any) => milestone.billingStatus === 'paid').reduce((sum: number, milestone: any) => sum + parseFloat(milestone.feeAmount || 0), 0);
+    const pendingFees = projectMilestones.filter((milestone: any) => ['to_send', 'sent'].includes(milestone.billingStatus)).reduce((sum: number, milestone: any) => sum + parseFloat(milestone.feeAmount || 0), 0);
+    
+    financialData.push({
       'Project Name': project.name,
       'Client': project.client || 'N/A',
       'Project Status': project.status,
@@ -4565,14 +4593,14 @@ async function getFinancialExportData(storage: any, filters: any) {
       'Pending Payment (KSh)': pendingFees.toLocaleString(),
       'Outstanding (KSh)': (totalFees - paidFees).toLocaleString(),
       'Payment Completion (%)': totalFees > 0 ? Math.round((paidFees / totalFees) * 100) : 0,
-      'Milestones Count': projectTasks.length,
-      'Paid Milestones': projectTasks.filter((task: any) => task.billingStatus === 'paid').length,
-      'Invoices to Send': projectTasks.filter((task: any) => task.billingStatus === 'to_send').length,
-      'Invoices Sent': projectTasks.filter((task: any) => task.billingStatus === 'sent').length,
+      'Milestones Count': projectMilestones.length,
+      'Paid Milestones': projectMilestones.filter((milestone: any) => milestone.billingStatus === 'paid').length,
+      'Invoices to Send': projectMilestones.filter((milestone: any) => milestone.billingStatus === 'to_send').length,
+      'Invoices Sent': projectMilestones.filter((milestone: any) => milestone.billingStatus === 'sent').length,
       'Project Start': project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A',
       'Project End': project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A'
-    };
-  });
+    });
+  }
   
   return financialData;
 }

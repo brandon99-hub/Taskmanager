@@ -153,13 +153,13 @@ export default function ExecutiveDashboard() {
     enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
   });
 
-  const { data: tasksData, isLoading: tasksLoading } = useQuery<any[]>({
-    queryKey: ['/api/tasks'],
+  const { data: milestonesData, isLoading: milestonesLoading } = useQuery<any[]>({
+    queryKey: ['/api/milestones'],
     queryFn: async () => {
-      const response = await fetch('/api/tasks', { 
+      const response = await fetch('/api/milestones', { 
         credentials: 'include' 
       });
-      if (!response.ok) throw new Error('Failed to fetch tasks data');
+      if (!response.ok) throw new Error('Failed to fetch milestones data');
       return response.json();
     },
     enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
@@ -177,6 +177,132 @@ export default function ExecutiveDashboard() {
     enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
   });
 
+  // Fetch real recent activity data
+  const { data: recentActivities, isLoading: activitiesLoading } = useQuery<any[]>({
+    queryKey: ['/api/dashboard/recent-activities'],
+    queryFn: async () => {
+      const response = await fetch('/api/dashboard/recent-activities', { 
+        credentials: 'include' 
+      });
+      if (!response.ok) {
+        // Fallback to notifications if recent-activities endpoint doesn't exist
+        const notificationsResponse = await fetch('/api/notifications', { 
+          credentials: 'include' 
+        });
+        if (!notificationsResponse.ok) throw new Error('Failed to fetch activities');
+        return notificationsResponse.json();
+      }
+      return response.json();
+    },
+    enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
+    staleTime: 2 * 60 * 1000, // 2 minutes cache
+  });
+
+  // Fetch risk data for Risk Alert Center
+  const { data: riskData, isLoading: riskLoading } = useQuery<any>({
+    queryKey: ['/api/dashboard/risk-analysis'],
+    queryFn: async () => {
+      // Since this endpoint might not exist, we'll aggregate data from existing endpoints
+      const [projectsRes, milestonesRes, metricsRes] = await Promise.all([
+        fetch('/api/projects', { credentials: 'include' }),
+        fetch('/api/milestones', { credentials: 'include' }),
+        fetch('/api/dashboard/metrics', { credentials: 'include' })
+      ]);
+      
+      const projects = projectsRes.ok ? await projectsRes.json() : [];
+      const milestones = milestonesRes.ok ? await milestonesRes.json() : [];
+      const metrics = metricsRes.ok ? await metricsRes.json() : {};
+      
+      // Calculate risk metrics with more credible assessment
+      const now = new Date();
+      const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+      
+      // Enhanced at-risk project detection
+      const atRiskProjects = projects.filter((p: any) => {
+        if (p.status !== 'active') return false;
+        
+        const progress = p.progress || 0;
+        const dueDate = p.dueDate ? new Date(p.dueDate) : null;
+        const startDate = p.startDate ? new Date(p.startDate) : null;
+        
+        // Calculate expected progress based on timeline
+        let expectedProgress = 0;
+        if (startDate && dueDate) {
+          const totalDuration = dueDate.getTime() - startDate.getTime();
+          const elapsed = now.getTime() - startDate.getTime();
+          expectedProgress = Math.max(0, Math.min(100, (elapsed / totalDuration) * 100));
+        }
+        
+        // Risk factors:
+        // 1. Progress significantly behind schedule (>20% behind expected)
+        const behindSchedule = expectedProgress > 0 && (progress < expectedProgress - 20);
+        
+        // 2. Very low progress (< 30%) and project started more than 2 weeks ago
+        const lowProgressOldProject = progress < 30 && startDate && (now.getTime() - startDate.getTime()) > 14 * 24 * 60 * 60 * 1000;
+        
+        // 3. Due within 2 weeks but progress < 70%
+        const dueSoonLowProgress = dueDate && dueDate <= twoWeeksFromNow && progress < 70;
+        
+        // 4. Overdue
+        const overdue = dueDate && dueDate < now;
+        
+        // 5. Stalled projects (0% progress for active projects older than 1 week)
+        const stalled = progress === 0 && startDate && (now.getTime() - startDate.getTime()) > 7 * 24 * 60 * 60 * 1000;
+        
+        return behindSchedule || lowProgressOldProject || dueSoonLowProgress || overdue || stalled;
+      });
+      
+      // Use metrics API for overdue milestones (more reliable)
+      const overdueMilestones = milestones.filter((m: any) => 
+        m.dueDate && new Date(m.dueDate) < now && m.status !== 'done'
+      );
+      
+      // Enhanced resource conflict detection
+      const teamWorkloads = projects.reduce((acc: any, p: any) => {
+        if (p.status === 'active' && p.teamId) {
+          if (!acc[p.teamId]) {
+            acc[p.teamId] = { projects: [], totalBudget: 0, avgProgress: 0 };
+          }
+          acc[p.teamId].projects.push(p);
+          acc[p.teamId].totalBudget += parseFloat(p.budget || '0');
+          acc[p.teamId].avgProgress += p.progress || 0;
+        }
+        return acc;
+      }, {});
+      
+      // Calculate average progress per team
+      Object.keys(teamWorkloads).forEach(teamId => {
+        const team = teamWorkloads[teamId];
+        team.avgProgress = team.projects.length > 0 ? team.avgProgress / team.projects.length : 0;
+      });
+      
+      // Resource conflicts: teams with >2 active projects AND (low avg progress OR high budget load)
+      const resourceConflicts = Object.entries(teamWorkloads).filter(([teamId, team]: [string, any]) => {
+        const projectCount = team.projects.length;
+        const avgProgress = team.avgProgress;
+        const highBudgetLoad = team.totalBudget > 5000000; // > 5M KSh
+        
+        return projectCount > 2 && (avgProgress < 60 || highBudgetLoad);
+      }).map(([teamId, team]: [string, any]) => ({ 
+        teamId, 
+        projects: team.projects, 
+        totalBudget: team.totalBudget, 
+        avgProgress: team.avgProgress 
+      }));
+      
+      return {
+        atRiskProjects,
+        overdueMilestones,
+        resourceConflicts,
+        overdueSubtasks: metrics.overdueSubtasksCount || 0,
+        totalRiskScore: atRiskProjects.length + overdueMilestones.length + resourceConflicts.length
+      };
+    },
+    enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+  });
+
   // Invoice data fallback for charts (replicate main dashboard behavior)
   const invoice = invoiceData || {
     year: selectedYear,
@@ -189,10 +315,10 @@ export default function ExecutiveDashboard() {
 
   // Calculate real metrics from the data
   const calculateMetrics = () => {
-    if (!projectsData || !tasksData || !metricsData) return null;
+    if (!projectsData || !milestonesData || !metricsData) return null;
 
     const projects = filteredProjects; // Use filtered data instead of raw projectsData
-    const tasks = filteredTasks; // Use filtered data instead of raw tasksData
+    const milestones = filteredMilestones; // Use filtered data instead of raw milestonesData
     const metrics = metricsData;
 
     // Project status counts - count ALL projects regardless of status
@@ -205,16 +331,14 @@ export default function ExecutiveDashboard() {
     const inactiveProjects = projects.filter(p => p.status === 'inactive').length;
     const activeProjects = projects.filter(p => p.status === 'active').length;
 
-    // Task status counts
-    const totalMilestones = tasks.length;
-    const completedMilestones = tasks.filter(t => t.status === 'done').length;
-    const inProgressMilestones = tasks.filter(t => t.status === 'in_progress').length;
-    const overdueMilestones = tasks.filter(t => {
-      if (t.dueDate && t.status !== 'done') {
-        return new Date(t.dueDate) < new Date();
-      }
-      return false;
-    }).length;
+    // Use API metrics for overdue counts (same as main dashboard)
+    const overdueMilestones = metrics?.overdueMilestonesCount || 0;
+    const overdueSubtasks = metrics?.overdueSubtasksCount || 0;
+    
+    // Milestone status counts - using proper milestone data
+    const totalMilestones = milestones.length;
+    const completedMilestones = milestones.filter(m => m.status === 'done').length;
+    const inProgressMilestones = milestones.filter(m => m.status === 'in_progress').length;
 
     // Revenue calculations - Use corrected invoice report data for consistency
     // The invoice report now uses milestone due dates (not completion dates) and includes ALL milestones
@@ -267,6 +391,7 @@ export default function ExecutiveDashboard() {
       completedMilestones,
       inProgressMilestones,
       overdueMilestones,
+      overdueSubtasks,
       expectedRevenue,
       totalRevenue,
       collectedRevenue,
@@ -282,7 +407,7 @@ export default function ExecutiveDashboard() {
     };
   };
 
-  const dashboardLoading = metricsLoading || workloadLoading || invoiceLoading || projectsLoading || tasksLoading || teamsLoading;
+  const dashboardLoading = metricsLoading || workloadLoading || invoiceLoading || projectsLoading || milestonesLoading || teamsLoading || activitiesLoading || riskLoading;
   
   // More granular loading states for better UX
   const loadingStates = {
@@ -290,8 +415,10 @@ export default function ExecutiveDashboard() {
     workload: workloadLoading,
     invoice: invoiceLoading,
     projects: projectsLoading,
-    tasks: tasksLoading,
-    teams: teamsLoading
+    milestones: milestonesLoading,
+    teams: teamsLoading,
+    activities: activitiesLoading,
+    risk: riskLoading
   };
   
   const loadingCount = Object.values(loadingStates).filter(Boolean).length;
@@ -355,7 +482,7 @@ export default function ExecutiveDashboard() {
 
   // Chart data preparation - Fixed "On Support" logic with filtering
   const filteredProjects = filterDataByPeriod(projectsData || [], selectedPeriod, selectedYear, selectedMonth);
-  const filteredTasks = filterDataByPeriod(tasksData || [], selectedPeriod, selectedYear, selectedMonth);
+  const filteredMilestones = filterDataByPeriod(milestonesData || [], selectedPeriod, selectedYear, selectedMonth);
   
   // Calculate metrics after filtering
   const metrics = calculateMetrics();
@@ -540,183 +667,214 @@ export default function ExecutiveDashboard() {
     { name: 'Overdue', value: metrics.overdueMilestones, color: '#EF4444' }
   ];
 
-  // Prepare data for the new pie chart - use REAL invoice data from API
+  // Prepare data for the segment performance chart - use REAL data with fallback
   const segmentPerformanceData = (() => {
-    if (!invoiceData || !invoiceData.segmentBreakdown) return [];
-    
-    // Use real segment data from invoice API
-    const segmentBreakdown = invoiceData.segmentBreakdown;
-    
-    return segmentBreakdown
-      .filter((segment: any) => segment.collected > 0) // Only show segments with actual collections
-      .map((segment: any) => ({
+    // First try to use invoice data
+    if (invoiceData && invoiceData.segmentBreakdown && invoiceData.segmentBreakdown.length > 0) {
+      const segmentBreakdown = invoiceData.segmentBreakdown;
+      
+      return segmentBreakdown.map((segment: any) => ({
         name: segment.segment.charAt(0).toUpperCase() + segment.segment.slice(1),
-        value: segment.collected || 0, // Use real collected amount
+        value: segment.collected || 0,
         color: segment.segment === 'academic' ? '#3B82F6' : 
                segment.segment === 'parastals' ? '#10B981' : 
-               segment.segment === 'private' ? '#8B5CF6' : '#6B7280' // Default color for other segments
-      }))
-      .sort((a: any, b: any) => b.value - a.value); // Sort by revenue descending
+               segment.segment === 'private' ? '#8B5CF6' : '#6B7280'
+      })).filter((segment: any) => segment.value > 0); // Only show segments with collections
+    }
+    
+    // Fallback to project-based segment data if invoice data is not available
+    if (metrics && metrics.segmentData) {
+      return Object.entries(metrics.segmentData).map(([segment, data]: [string, any]) => ({
+        name: segment.charAt(0).toUpperCase() + segment.slice(1),
+        value: data.collectedRevenue || data.revenue || 0,
+        color: segment === 'academic' ? '#3B82F6' : 
+               segment === 'parastals' ? '#10B981' : 
+               segment === 'private' ? '#8B5CF6' : '#6B7280'
+      })).filter((segment: any) => segment.value > 0);
+    }
+    
+    // Final fallback - return empty array
+    return [];
   })();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
+    <div className="min-h-screen bg-background-page">
       <Navigation />
       
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 lg:py-12">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         
-        {/* Executive Dashboard Header */}
-        <div className="mb-6">
-          <div className="text-center mb-4">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl mb-6">
-              <BarChart3 className="h-8 w-8 text-white" />
-            </div>
-            <h1 className="text-4xl lg:text-5xl font-bold text-gray-900 mb-4">
-              Executive Dashboard
-            </h1>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
-              Strategic insights and performance metrics for executive decision-making
-            </p>
-            {isFiltering && (
-              <div className="flex items-center justify-center gap-3 mt-6">
-                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-                  Filters Active
-                </Badge>
-                <span className="text-slate-700">
-                  {selectedPeriod !== 'all' && `${selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}`}
-                  {selectedMonth && ` - ${new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`}
-                </span>
-              </div>
-            )}
-          </div>
-          
-          {/* Professional Filter Controls */}
-          <div className="flex flex-col lg:flex-row items-center justify-center gap-4 bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
-            <div className="flex items-center gap-3">
-              <span className="text-slate-700 font-medium">Time Period:</span>
-              <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-                <SelectTrigger className="w-40 bg-white border-slate-300 text-slate-900">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Time</SelectItem>
-                  <SelectItem value="year">This Year</SelectItem>
-                  <SelectItem value="quarter">This Quarter</SelectItem>
-                  <SelectItem value="month">This Month</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div className="flex items-center gap-3">
-              <span className="text-slate-700 font-medium">Year:</span>
-              <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
-                <SelectTrigger className="w-32 bg-white border-slate-300 text-slate-900">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
-                    <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div className="flex items-center gap-3">
-              <span className="text-slate-700 font-medium">Month:</span>
-              <Select 
-                value={selectedMonth?.toString() || "all"} 
-                onValueChange={handleMonthChange}
-              >
-                <SelectTrigger className="w-36 bg-white border-slate-300 text-slate-900">
-                  <SelectValue placeholder="All Months" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Months</SelectItem>
-                  <SelectItem value="1">January</SelectItem>
-                  <SelectItem value="2">February</SelectItem>
-                  <SelectItem value="3">March</SelectItem>
-                  <SelectItem value="4">April</SelectItem>
-                  <SelectItem value="5">May</SelectItem>
-                  <SelectItem value="6">June</SelectItem>
-                  <SelectItem value="7">July</SelectItem>
-                  <SelectItem value="8">August</SelectItem>
-                  <SelectItem value="9">September</SelectItem>
-                  <SelectItem value="10">October</SelectItem>
-                  <SelectItem value="11">November</SelectItem>
-                  <SelectItem value="12">December</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <Button variant="outline" size="sm" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white border-0 hover:from-blue-700 hover:to-purple-700 shadow-lg">
-              <Zap className="h-4 w-4 mr-2" />
-              Export Report
-            </Button>
-            
-            {/* Enhanced loading indicator for data refresh */}
-            {dashboardLoading && (
-              <div className="flex items-center gap-3 px-4 py-2 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200 shadow-sm">
-                <div className="relative">
-                  <div className="w-5 h-5 border-2 border-blue-400 border-t-blue-600 rounded-full animate-spin"></div>
-                  <div className="absolute inset-0 w-5 h-5 border-2 border-purple-400 border-t-purple-600 rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
+        {/* Modern Executive Dashboard Header */}
+        <div className="relative overflow-hidden bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-700 rounded-2xl mb-8">
+          <div className="absolute inset-0 bg-black/10"></div>
+          <div className="relative px-8 py-12">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center">
+              <div className="text-white">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
+                    <BarChart3 className="h-8 w-8 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-4xl font-bold mb-2" data-testid="text-title">Executive Dashboard</h2>
+                    <p className="text-blue-100 text-lg" data-testid="text-subtitle">Strategic insights and performance metrics for executive decision-making</p>
+                  </div>
                 </div>
-                <span className="text-sm font-medium text-blue-700">Refreshing Data</span>
-                <div className="flex space-x-1">
-                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                  <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                </div>
+                {isFiltering && (
+                  <div className="flex items-center gap-3 mt-4">
+                    <Badge className="bg-white/20 text-white border-white/30 backdrop-blur-sm">
+                      Filters Active
+                    </Badge>
+                    <span className="text-blue-100">
+                      {selectedPeriod !== 'all' && `${selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}`}
+                      {selectedMonth && ` - ${new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`}
+                    </span>
+                  </div>
+                )}
               </div>
-            )}
+              <div className="flex space-x-3 mt-6 md:mt-0">
+                <Button 
+                  className="flex items-center bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm"
+                  data-testid="button-export-report"
+                >
+                  <Zap className="h-4 w-4 mr-2" />
+                  Export Report
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
+        
+        {/* Modern Filter Controls */}
+        <Card className="border-0 shadow-xl bg-gradient-to-br from-white to-gray-50 mb-8">
+          <CardContent className="p-6">
+            <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-700 font-medium">Time Period:</span>
+                  <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+                    <SelectTrigger className="w-40 h-11 border-gray-300 focus:border-primary focus:ring-primary">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Time</SelectItem>
+                      <SelectItem value="year">This Year</SelectItem>
+                      <SelectItem value="quarter">This Quarter</SelectItem>
+                      <SelectItem value="month">This Month</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-700 font-medium">Year:</span>
+                  <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
+                    <SelectTrigger className="w-32 h-11 border-gray-300 focus:border-primary focus:ring-primary">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                        <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-700 font-medium">Month:</span>
+                  <Select 
+                    value={selectedMonth?.toString() || "all"} 
+                    onValueChange={handleMonthChange}
+                  >
+                    <SelectTrigger className="w-36 h-11 border-gray-300 focus:border-primary focus:ring-primary">
+                      <SelectValue placeholder="All Months" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Months</SelectItem>
+                      <SelectItem value="1">January</SelectItem>
+                      <SelectItem value="2">February</SelectItem>
+                      <SelectItem value="3">March</SelectItem>
+                      <SelectItem value="4">April</SelectItem>
+                      <SelectItem value="5">May</SelectItem>
+                      <SelectItem value="6">June</SelectItem>
+                      <SelectItem value="7">July</SelectItem>
+                      <SelectItem value="8">August</SelectItem>
+                      <SelectItem value="9">September</SelectItem>
+                      <SelectItem value="10">October</SelectItem>
+                      <SelectItem value="11">November</SelectItem>
+                      <SelectItem value="12">December</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              
+              {/* Loading indicator */}
+              {dashboardLoading && (
+                <div className="flex items-center gap-3 px-4 py-2 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
+                  <div className="w-5 h-5 border-2 border-blue-400 border-t-blue-600 rounded-full animate-spin"></div>
+                  <span className="text-sm font-medium text-blue-700">Refreshing Data</span>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* Executive KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-6">
+        {/* Modern Executive KPI Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {/* Total Revenue */}
-          <Card className="bg-gradient-to-br from-emerald-600 to-green-700 border-0 shadow-2xl transform hover:scale-105 transition-all duration-300">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-sm font-semibold text-emerald-100 flex items-center gap-2">
-                <DollarSign className="h-6 w-6" />
-                {selectedPeriod === 'all' ? 'Yearly Revenue' : selectedPeriod === 'year' ? 'Yearly Revenue' : selectedPeriod === 'month' ? 'Monthly Revenue' : 'Revenue Target'}
-              </CardTitle>
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-green-50 to-emerald-100 hover:shadow-xl transition-all duration-300">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-semibold text-green-800">
+                  {selectedPeriod === 'all' ? 'Yearly Revenue' : selectedPeriod === 'year' ? 'Yearly Revenue' : selectedPeriod === 'month' ? 'Monthly Revenue' : 'Revenue Target'}
+                </CardTitle>
+                <div className="p-2 bg-green-200 rounded-lg">
+                  <DollarSign className="h-4 w-4 text-green-600" />
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-white mb-2">
+              <div className="space-y-2">
+                <div className="text-3xl font-bold text-green-900">
                   {formatCurrency(metrics.yearlyRevenue)}
                 </div>
-                <div className="text-lg text-emerald-100 font-medium">
-                  {formatCurrency(metrics.yearlyCollected)}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-green-700">Collected:</span>
+                  <span className="text-sm font-medium text-green-800">
+                    {formatCurrency(metrics.yearlyCollected)}
+                  </span>
                 </div>
-                <div className="text-sm text-emerald-200 mt-2">
-                  collected
+                <div className="w-full bg-green-200 rounded-full h-2">
+                  <div 
+                    className="bg-green-600 h-2 rounded-full transition-all duration-500" 
+                    style={{ width: `${Math.min(100, (metrics.yearlyCollected / metrics.yearlyRevenue) * 100)}%` }}
+                  ></div>
                 </div>
               </div>
             </CardContent>
           </Card>
 
           {/* Active Projects */}
-          <Card className="bg-gradient-to-br from-blue-600 to-cyan-700 border-0 shadow-2xl transform hover:scale-105 transition-all duration-300">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-sm font-semibold text-blue-100 flex items-center gap-2">
-                <Briefcase className="h-6 w-6" />
-                Active Projects
-              </CardTitle>
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-50 to-blue-100 hover:shadow-xl transition-all duration-300">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-semibold text-blue-800">Active Projects</CardTitle>
+                <div className="p-2 bg-blue-200 rounded-lg">
+                  <Briefcase className="h-4 w-4 text-blue-600" />
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-white mb-2">
+              <div className="space-y-2">
+                <div className="text-3xl font-bold text-blue-900">
                   {metrics.activeProjects}
                 </div>
-                <div className="text-lg text-blue-100 font-medium">
-                  out of {metrics.totalProjects}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-blue-700">Total:</span>
+                  <span className="text-sm font-medium text-blue-800">{metrics.totalProjects}</span>
                 </div>
-                <div className="text-sm text-blue-200 mt-2">
-                  total projects
-                </div>
-                <div className="text-xs text-blue-300 mt-1 font-medium">
-                  {metrics.totalProjects - metrics.activeProjects} other statuses
+                <div className="w-full bg-blue-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-500" 
+                    style={{ width: `${Math.min(100, (metrics.activeProjects / metrics.totalProjects) * 100)}%` }}
+                  ></div>
                 </div>
               </div>
             </CardContent>
@@ -726,24 +884,29 @@ export default function ExecutiveDashboard() {
           <MilestoneDetailModal
             type="overdue"
             trigger={
-              <Card className="bg-gradient-to-br from-orange-600 to-red-700 border-0 shadow-2xl transform hover:scale-105 transition-all duration-300 cursor-pointer">
-                <CardHeader className="pb-4">
-                  <CardTitle className="text-sm font-semibold text-orange-100 flex items-center gap-2">
-                    <AlertTriangle className="h-6 w-6" />
-                    At Risk Milestones
-                  </CardTitle>
+              <Card className="border-0 shadow-lg bg-gradient-to-br from-red-50 to-orange-100 hover:shadow-xl transition-all duration-300 cursor-pointer">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-semibold text-red-800">At Risk Milestones</CardTitle>
+                    <div className="p-2 bg-red-200 rounded-lg">
+                      <AlertTriangle className="h-4 w-4 text-red-600" />
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-center">
-                    <div className="text-4xl font-bold text-white mb-2">
-                      {metrics.overdueMilestones}
+                  <div className="space-y-2">
+                    <div className="text-3xl font-bold text-red-900">
+                      {metrics?.overdueMilestones || 0}
                     </div>
-                    <div className="text-lg text-orange-100 font-medium">
-                      overdue
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-red-700">Overdue Subtasks:</span>
+                      <span className="text-sm font-medium text-red-800">{metrics?.overdueSubtasks || 0}</span>
                     </div>
-                    <div className="text-sm text-orange-200 mt-2">
-                      within 1 week
-                    </div>
+                    {(metrics?.overdueMilestones > 0 || metrics?.overdueSubtasks > 0) && (
+                      <div className="text-xs text-red-600 bg-red-100 px-2 py-1 rounded">
+                        Requires immediate attention
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -751,43 +914,49 @@ export default function ExecutiveDashboard() {
           />
 
           {/* Completion Rate */}
-          <Card className="bg-gradient-to-br from-purple-600 to-violet-700 border-0 shadow-2xl transform hover:scale-105 transition-all duration-300">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-sm font-semibold text-purple-100 flex items-center gap-2">
-                <Target className="h-6 w-6" />
-                Completion Rate
-              </CardTitle>
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-purple-50 to-violet-100 hover:shadow-xl transition-all duration-300">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-semibold text-purple-800">Completion Rate</CardTitle>
+                <div className="p-2 bg-purple-200 rounded-lg">
+                  <Target className="h-4 w-4 text-purple-600" />
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-white mb-2">
+              <div className="space-y-2">
+                <div className="text-3xl font-bold text-purple-900">
                   {formatPercentage(metrics.completedMilestones, metrics.totalMilestones)}%
                 </div>
-                <div className="text-lg text-purple-100 font-medium">
-                  {metrics.completedMilestones}/{metrics.totalMilestones}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-purple-700">Completed:</span>
+                  <span className="text-sm font-medium text-purple-800">
+                    {metrics.completedMilestones}/{metrics.totalMilestones}
+                  </span>
                 </div>
-                <div className="text-sm text-purple-200 mt-2">
-                  milestones completed
-                </div>
-                <div className="text-xs text-purple-300 mt-1 font-medium">
-                  {metrics.inProgressMilestones} in progress
+                <div className="w-full bg-purple-200 rounded-full h-2">
+                  <div 
+                    className="bg-purple-600 h-2 rounded-full transition-all duration-500" 
+                    style={{ width: `${formatPercentage(metrics.completedMilestones, metrics.totalMilestones)}%` }}
+                  ></div>
                 </div>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Executive Charts Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          {/* Invoice Sent vs Paid Chart - Fresh Start */}
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
-            <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-emerald-50 to-green-100/80">
-              <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-gradient-to-r from-emerald-500 to-green-600 rounded-lg">
-                  <DollarSign className="h-4 w-4 text-white" />
+        {/* Modern Executive Charts Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Invoice Sent vs Paid Chart */}
+          <Card className="border-0 shadow-xl bg-gradient-to-br from-white to-gray-50">
+            <CardHeader className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-gray-800 flex items-center">
+                <div className="p-2 bg-green-100 rounded-lg mr-3">
+                  <DollarSign className="h-5 w-5 text-green-600" />
                 </div>
-                Invoice Sent vs Paid
+                Invoice Performance
               </CardTitle>
+              <CardDescription className="text-gray-600">Monthly invoice sent vs paid comparison</CardDescription>
             </CardHeader>
             <CardContent className="p-6">
               {!invoiceChartData || invoiceChartData.length === 0 ? (
@@ -939,17 +1108,16 @@ export default function ExecutiveDashboard() {
             </CardContent>
           </Card>
 
-          {/* Main Content with Smooth Transitions - Equal width */}
-          <div className={`space-y-6 transition-all duration-300 ease-in-out ${isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'}`}>
-          {/* Revenue Overview - Line Chart with Real Data */}
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
-            <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-emerald-50 to-green-100/80">
-              <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-gradient-to-r from-emerald-500 to-green-600 rounded-lg">
-                  <LineChart className="h-5 w-5 text-white" />
+          {/* Revenue Overview Chart */}
+          <Card className="border-0 shadow-xl bg-gradient-to-br from-white to-gray-50">
+            <CardHeader className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-gray-800 flex items-center">
+                <div className="p-2 bg-blue-100 rounded-lg mr-3">
+                  <LineChart className="h-5 w-5 text-blue-600" />
                 </div>
                 Revenue Overview
               </CardTitle>
+              <CardDescription className="text-gray-600">Monthly revenue collection trends</CardDescription>
             </CardHeader>
             <CardContent className="p-6">
               <div className="h-64">
@@ -1028,9 +1196,10 @@ export default function ExecutiveDashboard() {
               </div>
             </CardContent>
           </Card>
+        </div>
 
-            {/* Strategic Charts Section */}
-            <div className="space-y-6">
+        {/* Strategic Charts Section */}
+        <div className="space-y-6">
           {/* Monthly Performance & Achievement Analysis - Full Width */}
           <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-indigo-50/30 w-full">
             <CardHeader className="bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-t-lg">
@@ -1190,10 +1359,8 @@ export default function ExecutiveDashboard() {
             </CardContent>
           </Card>
         </div>
-              </div>
-      </div>
 
-      {/* Performance & Support Overview */}
+        {/* Performance & Support Overview */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           {/* Task Progress - Pie Chart */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
@@ -1284,88 +1451,362 @@ export default function ExecutiveDashboard() {
             </CardContent>
           </Card>
 
-          {/* Executive Actions & Insights */}
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
-            <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-blue-50 to-blue-100/80">
-              <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-gradient-to-r from-blue-500 to-cyan-600 rounded-lg">
-                  <Zap className="h-4 w-4 text-white" />
+          {/* 🚨 AMAZING Risk Alert Center */}
+          <Card className="relative overflow-hidden border-0 shadow-2xl bg-gradient-to-br from-red-50 via-orange-50 to-yellow-50">
+            {/* Animated background elements */}
+            <div className="absolute inset-0 opacity-10">
+              <div className="absolute top-4 right-4 w-32 h-32 bg-red-400 rounded-full blur-3xl animate-pulse"></div>
+              <div className="absolute bottom-4 left-4 w-24 h-24 bg-orange-400 rounded-full blur-2xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+            </div>
+            
+            <CardHeader className="relative bg-gradient-to-r from-red-600 via-orange-600 to-amber-600 text-white rounded-t-lg">
+              <CardTitle className="text-xl font-bold flex items-center">
+                <div className="p-3 bg-white/20 rounded-xl mr-3 backdrop-blur-sm">
+                  <AlertTriangle className="h-6 w-6 text-white animate-pulse" />
                 </div>
-                Executive Actions
+                <div>
+                  <div className="flex items-center gap-3">
+                    Risk Alert Center
+                    {riskData?.totalRiskScore > 0 && (
+                      <Badge className="bg-white/20 text-white border-white/30 animate-bounce">
+                        {riskData.totalRiskScore} Alerts
+                      </Badge>
+                    )}
+                  </div>
+                  <CardDescription className="text-red-100 text-sm mt-1">
+                    Real-time risk monitoring and alerts
+                  </CardDescription>
+                </div>
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-6">
-              <div className="space-y-3">
-                <Button variant="outline" className="w-full justify-start h-12 bg-gradient-to-r from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 border-blue-200 text-blue-800" size="sm">
-                  <FileText className="h-4 w-4 mr-2" />
-                  Generate Monthly Report
-                </Button>
-                
-                <Button variant="outline" className="w-full justify-start h-12 bg-gradient-to-r from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 border-purple-200 text-purple-800" size="sm">
-                  <Users className="h-4 w-4 mr-2" />
-                  Review Team Performance
-                </Button>
-                
-                <Button variant="outline" className="w-full justify-start h-12 bg-gradient-to-r from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 border-green-200 text-green-800" size="sm">
-                  <DollarSign className="h-4 w-4 mr-3" />
-                  Financial Overview
-                </Button>
-                
-                <Button variant="outline" className="w-full justify-start h-12 bg-gradient-to-r from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 border-orange-200 text-orange-800" size="sm">
-                  <Target className="h-4 w-4 mr-2" />
-                  Set Milestone Targets
-                </Button>
-              </div>
+            
+            <CardContent className="relative p-6">
+              {riskLoading ? (
+                <div className="space-y-4">
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="animate-pulse flex items-center space-x-4">
+                      <div className="w-12 h-12 bg-gray-200 rounded-xl"></div>
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                        <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* At Risk Projects Alert */}
+                  <div className={`group relative p-4 rounded-xl border-2 transition-all duration-300 ${
+                    (riskData?.atRiskProjects?.length || 0) > 0 
+                      ? 'border-red-200 bg-red-50 hover:bg-red-100 hover:shadow-lg' 
+                      : 'border-green-200 bg-green-50'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className={`p-3 rounded-xl ${
+                          (riskData?.atRiskProjects?.length || 0) > 0 ? 'bg-red-200' : 'bg-green-200'
+                        }`}>
+                          <Briefcase className={`h-5 w-5 ${
+                            (riskData?.atRiskProjects?.length || 0) > 0 ? 'text-red-600' : 'text-green-600'
+                          }`} />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900">At-Risk Projects</h4>
+                          <p className="text-sm text-gray-600">
+                            {riskData?.atRiskProjects?.length || 0} projects need attention
+                          </p>
+                          {(riskData?.atRiskProjects?.length || 0) > 0 && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              Behind schedule, stalled, or due soon
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className={`text-2xl font-bold ${
+                        (riskData?.atRiskProjects?.length || 0) > 0 ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {riskData?.atRiskProjects?.length || 0}
+                      </div>
+                    </div>
+                    {(riskData?.atRiskProjects?.length || 0) > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <div className="text-xs text-red-600 bg-red-100 px-2 py-1 rounded-lg inline-block">
+                          🔥 Critical: Multiple risk factors detected
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          Factors: Progress delays, timeline issues, stalled work
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Overdue Items Alert */}
+                  <div className={`group relative p-4 rounded-xl border-2 transition-all duration-300 ${
+                    (riskData?.overdueMilestones?.length || 0) > 0 
+                      ? 'border-orange-200 bg-orange-50 hover:bg-orange-100 hover:shadow-lg' 
+                      : 'border-green-200 bg-green-50'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className={`p-3 rounded-xl ${
+                          (riskData?.overdueMilestones?.length || 0) > 0 ? 'bg-orange-200' : 'bg-green-200'
+                        }`}>
+                          <Clock className={`h-5 w-5 ${
+                            (riskData?.overdueMilestones?.length || 0) > 0 ? 'text-orange-600' : 'text-green-600'
+                          }`} />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900">Overdue Items</h4>
+                          <p className="text-sm text-gray-600">
+                            {riskData?.overdueMilestones?.length || 0} milestones, {riskData?.overdueSubtasks || 0} subtasks
+                          </p>
+                        </div>
+                      </div>
+                      <div className={`text-2xl font-bold ${
+                        (riskData?.overdueMilestones?.length || 0) > 0 ? 'text-orange-600' : 'text-green-600'
+                      }`}>
+                        {(riskData?.overdueMilestones?.length || 0) + (riskData?.overdueSubtasks || 0)}
+                      </div>
+                    </div>
+                    {(riskData?.overdueMilestones?.length || 0) > 0 && (
+                      <div className="mt-3 text-xs text-orange-600 bg-orange-100 px-2 py-1 rounded-lg inline-block">
+                        ⏰ Urgent: Past due dates
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Resource Conflicts Alert */}
+                  <div className={`group relative p-4 rounded-xl border-2 transition-all duration-300 ${
+                    (riskData?.resourceConflicts?.length || 0) > 0 
+                      ? 'border-yellow-200 bg-yellow-50 hover:bg-yellow-100 hover:shadow-lg' 
+                      : 'border-green-200 bg-green-50'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className={`p-3 rounded-xl ${
+                          (riskData?.resourceConflicts?.length || 0) > 0 ? 'bg-yellow-200' : 'bg-green-200'
+                        }`}>
+                          <Users className={`h-5 w-5 ${
+                            (riskData?.resourceConflicts?.length || 0) > 0 ? 'text-yellow-600' : 'text-green-600'
+                          }`} />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900">Resource Conflicts</h4>
+                          <p className="text-sm text-gray-600">
+                            {riskData?.resourceConflicts?.length || 0} teams overloaded
+                          </p>
+                          {(riskData?.resourceConflicts?.length || 0) > 0 && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              High workload or budget concentration
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className={`text-2xl font-bold ${
+                        (riskData?.resourceConflicts?.length || 0) > 0 ? 'text-yellow-600' : 'text-green-600'
+                      }`}>
+                        {riskData?.resourceConflicts?.length || 0}
+                      </div>
+                    </div>
+                    {(riskData?.resourceConflicts?.length || 0) > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <div className="text-xs text-yellow-600 bg-yellow-100 px-2 py-1 rounded-lg inline-block">
+                          ⚠️ Warning: Team capacity or budget overload
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          Teams handling &gt;2 projects with performance issues
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Overall Risk Score */}
+                  {riskData?.totalRiskScore === 0 ? (
+                    <div className="text-center p-6 bg-gradient-to-r from-green-100 to-emerald-100 rounded-xl border-2 border-green-200">
+                      <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-3" />
+                      <h3 className="text-lg font-bold text-green-800 mb-2">All Systems Green! 🎉</h3>
+                      <p className="text-green-600">No critical risks detected. Great job!</p>
+                    </div>
+                  ) : (
+                    <div className="text-center p-4 bg-gradient-to-r from-red-100 to-orange-100 rounded-xl border-2 border-red-200">
+                      <div className="text-3xl font-bold text-red-600 mb-1">Risk Score: {riskData?.totalRiskScore}</div>
+                      <p className="text-red-600 text-sm">Immediate executive attention required</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
 
-        {/* Recent Activity Section */}
-        <div className="mb-6">
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
-            <CardHeader className="border-b border-slate-200/50 bg-gradient-to-r from-slate-50 to-slate-100/80">
-              <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-gradient-to-r from-slate-500 to-gray-600 rounded-lg">
-                  <Activity className="h-5 w-5 text-white" />
+        {/* 🔥 AMAZING Real Recent Activity Section */}
+        <Card className="relative overflow-hidden border-0 shadow-2xl bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/50 mb-8">
+          {/* Animated background elements */}
+          <div className="absolute inset-0 opacity-5">
+            <div className="absolute top-8 right-8 w-40 h-40 bg-blue-400 rounded-full blur-3xl animate-pulse"></div>
+            <div className="absolute bottom-8 left-8 w-32 h-32 bg-indigo-400 rounded-full blur-2xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+          </div>
+          
+          <CardHeader className="relative bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white rounded-t-lg">
+            <CardTitle className="text-xl font-bold flex items-center justify-between">
+              <div className="flex items-center">
+                <div className="p-3 bg-white/20 rounded-xl mr-3 backdrop-blur-sm">
+                  <Activity className="h-6 w-6 text-white animate-pulse" />
                 </div>
-                Recent Activity
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200/50">
-                  <div className="p-2 bg-green-500 rounded-lg">
-                    <CheckCircle className="h-4 w-4 text-white" />
+                <div>
+                  <div className="flex items-center gap-3">
+                    Live Activity Feed
+                    <Badge className="bg-white/20 text-white border-white/30 animate-pulse">
+                      Real-time
+                    </Badge>
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold text-green-800">Project Completed</p>
-                    <p className="text-xs text-green-600">Academic Portal v2.0 finished successfully</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl border border-orange-200/50">
-                  <div className="p-2 bg-orange-500 rounded-lg">
-                    <AlertTriangle className="h-4 w-4 text-white" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-orange-800">Milestone Overdue</p>
-                    <p className="text-xs text-orange-600">Private Sector CRM - Phase 2 delayed</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200/50">
-                  <div className="p-2 bg-blue-500 rounded-lg">
-                    <DollarSign className="h-4 w-4 text-white" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-blue-800">Payment Received</p>
-                    <p className="text-xs text-blue-600">Parastals Project invoice paid</p>
-                  </div>
+                  <CardDescription className="text-blue-100 text-sm mt-1">
+                    Latest system events and notifications
+                  </CardDescription>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+              <div className="text-sm text-blue-100">
+                {activitiesLoading ? 'Syncing...' : `${recentActivities?.length || 0} events`}
+              </div>
+            </CardTitle>
+          </CardHeader>
+          
+          <CardContent className="relative p-6">
+            {activitiesLoading ? (
+              <div className="space-y-4">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="animate-pulse flex items-center space-x-4 p-4 bg-gray-50 rounded-xl">
+                    <div className="w-12 h-12 bg-gray-200 rounded-xl"></div>
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                    </div>
+                    <div className="w-16 h-3 bg-gray-200 rounded"></div>
+                  </div>
+                ))}
+              </div>
+            ) : recentActivities && (recentActivities.length || 0) > 0 ? (
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {recentActivities.slice(0, 8).map((activity: any, index: number) => {
+                  // Determine activity type and styling
+                  const getActivityStyle = (activity: any) => {
+                    const message = activity.message || activity.title || '';
+                    const type = activity.type || '';
+                    
+                    if (message.toLowerCase().includes('completed') || message.toLowerCase().includes('finished') || type === 'success') {
+                      return {
+                        icon: CheckCircle,
+                        bgColor: 'bg-green-50',
+                        borderColor: 'border-green-200',
+                        iconBg: 'bg-green-100',
+                        iconColor: 'text-green-600',
+                        hoverBorder: 'hover:border-green-300'
+                      };
+                    } else if (message.toLowerCase().includes('overdue') || message.toLowerCase().includes('delayed') || type === 'warning') {
+                      return {
+                        icon: AlertTriangle,
+                        bgColor: 'bg-orange-50',
+                        borderColor: 'border-orange-200',
+                        iconBg: 'bg-orange-100',
+                        iconColor: 'text-orange-600',
+                        hoverBorder: 'hover:border-orange-300'
+                      };
+                    } else if (message.toLowerCase().includes('payment') || message.toLowerCase().includes('invoice') || type === 'financial') {
+                      return {
+                        icon: DollarSign,
+                        bgColor: 'bg-blue-50',
+                        borderColor: 'border-blue-200',
+                        iconBg: 'bg-blue-100',
+                        iconColor: 'text-blue-600',
+                        hoverBorder: 'hover:border-blue-300'
+                      };
+                    } else if (message.toLowerCase().includes('assigned') || message.toLowerCase().includes('team') || type === 'assignment') {
+                      return {
+                        icon: Users,
+                        bgColor: 'bg-purple-50',
+                        borderColor: 'border-purple-200',
+                        iconBg: 'bg-purple-100',
+                        iconColor: 'text-purple-600',
+                        hoverBorder: 'hover:border-purple-300'
+                      };
+                    } else {
+                      return {
+                        icon: Eye,
+                        bgColor: 'bg-gray-50',
+                        borderColor: 'border-gray-200',
+                        iconBg: 'bg-gray-100',
+                        iconColor: 'text-gray-600',
+                        hoverBorder: 'hover:border-gray-300'
+                      };
+                    }
+                  };
+                  
+                  const style = getActivityStyle(activity);
+                  const IconComponent = style.icon;
+                  
+                  return (
+                    <div 
+                      key={activity.id || index} 
+                      className={`group relative p-4 rounded-xl border-2 transition-all duration-300 ${style.bgColor} ${style.borderColor} ${style.hoverBorder} hover:shadow-lg transform hover:-translate-y-1`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3 flex-1">
+                          <div className={`p-3 rounded-xl ${style.iconBg} group-hover:scale-110 transition-transform duration-200`}>
+                            <IconComponent className={`h-5 w-5 ${style.iconColor}`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-gray-900 truncate">
+                              {activity.title || activity.message || 'System Update'}
+                            </h4>
+                            <p className="text-sm text-gray-600 truncate">
+                              {activity.description || activity.message || 'No description available'}
+                            </p>
+                            {activity.projectName && (
+                              <p className="text-xs text-gray-500 mt-1">
+                                Project: {activity.projectName}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right ml-4">
+                          <div className="text-xs text-gray-500">
+                            {activity.createdAt ? new Date(activity.createdAt).toLocaleTimeString() : 'Just now'}
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            {activity.createdAt ? new Date(activity.createdAt).toLocaleDateString() : 'Today'}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Priority indicator */}
+                      {activity.priority === 'high' && (
+                        <div className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <div className="relative">
+                  <div className="w-24 h-24 mx-auto mb-6 bg-gradient-to-br from-blue-100 to-indigo-200 rounded-full flex items-center justify-center">
+                    <Activity className="h-12 w-12 text-blue-600 animate-pulse" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-700 mb-2">No Recent Activity</h3>
+                  <p className="text-gray-500">System events will appear here as they happen</p>
+                </div>
+              </div>
+            )}
+            
+            {/* Real-time indicator */}
+            <div className="flex items-center justify-center mt-6 pt-4 border-t border-gray-200">
+              <div className="flex items-center space-x-2 text-sm text-gray-500">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span>Live updates every 2 minutes</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

@@ -538,10 +538,10 @@ export default function Projects() {
                           <TooltipContent 
                             side="top" 
                             align="start"
-                            className="max-w-md p-4"
+                            className="max-w-lg p-4"
                             sideOffset={5}
                           >
-                            <div className="space-y-3">
+                            <div className="space-y-4">
                               <div>
                                 <h4 className="font-semibold text-gray-900 mb-1">{project.client || project.name}</h4>
                                 {project.description && project.description.trim() !== '' && project.description !== project.client && (
@@ -549,20 +549,71 @@ export default function Projects() {
                                 )}
                               </div>
                               
-                              <div className="space-y-2 text-sm">
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="outline" className="capitalize">
-                                    {project.segment || 'private'}
-                                  </Badge>
-                                  <Badge className={getStatusColor(project.status)}>
-                                    {formatStatus(project.status)}
-                                  </Badge>
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="capitalize">
+                                      {project.segment || 'private'}
+                                    </Badge>
+                                    <Badge className={getStatusColor(project.status)}>
+                                      {formatStatus(project.status)}
+                                    </Badge>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-gray-600">Progress:</span>
+                                    <span className="font-medium">{projectProgressMap[project.id] || 0}%</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-gray-600">Milestones:</span>
+                                    <span className="font-medium">
+                                      {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
+                                    </span>
+                                  </div>
+                                  {overdueCount > 0 && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-red-600">Overdue:</span>
+                                      <span className="font-medium text-red-600">
+                                        {overdueMilestones}M + {overdueSubtasks}S = {overdueCount}
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-gray-600">Progress:</span>
-                                  <span className="font-medium">{project.progress}%</span>
+                                
+                                <div className="space-y-2">
+                                  <div>
+                                    <span className="text-gray-600">Manager:</span>
+                                    <div className="font-medium">
+                                      {project.manager?.firstName && project.manager?.lastName 
+                                        ? `${project.manager.firstName} ${project.manager.lastName}`
+                                        : project.manager?.email || 'Not assigned'}
+                                    </div>
+                                    {project.manager?.email && project.manager?.firstName && (
+                                      <div className="text-xs text-gray-500">{project.manager.email}</div>
+                                    )}
+                                  </div>
+                                  {project.team && (
+                                    <div>
+                                      <span className="text-gray-600">Team:</span>
+                                      <div className="font-medium">{project.team.name}</div>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <span className="text-gray-600">Duration:</span>
+                                    <div className="font-medium">
+                                      {project.startDate && project.endDate ? (() => {
+                                        const start = new Date(project.startDate);
+                                        const end = new Date(project.endDate);
+                                        const diffTime = Math.abs(end.getTime() - start.getTime());
+                                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                        return `${diffDays} days`;
+                                      })() : 'N/A'}
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2">
+                              </div>
+                              
+                              <div className="border-t pt-3 space-y-2 text-sm">
+                                <div className="flex justify-between">
                                   <span className="text-gray-600">Contract Amount:</span>
                                   <span className="font-medium">
                                     {(project.totalFees && Number(project.totalFees) > 0)
@@ -572,10 +623,27 @@ export default function Projects() {
                                           : 'N/A')}
                                   </span>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-gray-600">Milestones:</span>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">Paid Amount:</span>
+                                  <span className="font-medium text-green-600">
+                                    KSh {(project.paidAmount || 0).toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">Outstanding:</span>
+                                  <span className="font-medium text-orange-600">
+                                    KSh {((project.totalFees && Number(project.totalFees) > 0) 
+                                      ? (Number(project.totalFees) - (project.paidAmount || 0))
+                                      : (parseFloat(project.budget || '0') - (project.paidAmount || 0))
+                                    ).toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">Payment Progress:</span>
                                   <span className="font-medium">
-                                    {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
+                                    {Math.round(((project.paidAmount || 0) / ((project.totalFees && Number(project.totalFees) > 0) 
+                                      ? Number(project.totalFees) 
+                                      : parseFloat(project.budget || '1'))) * 100)}%
                                   </span>
                                 </div>
                               </div>

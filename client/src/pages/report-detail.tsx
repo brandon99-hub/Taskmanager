@@ -44,6 +44,8 @@ export default function ReportDetail() {
   // State for data and UI
   const [data, setData] = useState<any[]>([]);
   const [filteredData, setFilteredData] = useState<any[]>([]);
+  const [projectsData, setProjectsData] = useState<any[]>([]);
+  const [milestonesData, setMilestonesData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('');
@@ -143,8 +145,15 @@ export default function ReportDetail() {
       const result = await response.json();
       console.log('API Response:', result);
       
-      // Handle different data structures
-      if (Array.isArray(result)) {
+      // Handle Project Summary specially - keep projects and milestones separate
+      if (config.apiType === 'projects' && typeof result === 'object' && result.projects && result.milestones) {
+        setProjectsData(result.projects || []);
+        setMilestonesData(result.milestones || []);
+        setData([]);
+        setFilteredData([]);
+      }
+      // Handle different data structures for other reports
+      else if (Array.isArray(result)) {
         setData(result);
         setFilteredData(result);
       } else if (result.data && Array.isArray(result.data)) {
@@ -152,7 +161,7 @@ export default function ReportDetail() {
         setFilteredData(result.data);
       } else if (typeof result === 'object') {
         // For complex reports like complete, flatten the data
-        const flattenedData = [];
+        const flattenedData: any[] = [];
         Object.values(result).forEach((section: any) => {
           if (Array.isArray(section)) {
             flattenedData.push(...section);
@@ -234,11 +243,15 @@ export default function ReportDetail() {
     if (currentData.length === 0) return [];
     
     const firstItem = currentData[0];
-    return Object.keys(firstItem).map(key => ({
-      key,
-      label: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1'),
-      sortable: true
-    }));
+    const excludeColumns = ['Project Name', 'Project', 'projectName', 'project'];
+    
+    return Object.keys(firstItem)
+      .filter(key => !excludeColumns.includes(key) && !key.startsWith('_'))
+      .map(key => ({
+        key,
+        label: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1'),
+        sortable: true
+      }));
   };
 
   const columns = getTableColumns();
@@ -257,7 +270,7 @@ export default function ReportDetail() {
         credentials: 'include',
         body: JSON.stringify({
           reportType: config.apiType,
-          format: 'excel',
+          format: config.apiType === 'gantt' ? 'excel' : 'pdf',
           filters: {}
         })
       });
@@ -271,7 +284,8 @@ export default function ReportDetail() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${config.title} - ${format(new Date(), 'yyyy-MM-dd')}.xlsx`;
+      const fileExtension = config.apiType === 'gantt' ? 'xlsx' : 'pdf';
+      link.download = `${config.title} - ${format(new Date(), 'yyyy-MM-dd')}.${fileExtension}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -369,7 +383,7 @@ export default function ReportDetail() {
               ) : (
                 <Download className="h-4 w-4 mr-2" />
               )}
-              {exporting ? 'Exporting...' : 'Export Excel'}
+              {exporting ? 'Exporting...' : (config.apiType === 'gantt' ? 'Export Excel' : 'Export PDF')}
             </Button>
           </div>
         </div>
@@ -439,18 +453,22 @@ export default function ReportDetail() {
               <div>
                 <CardTitle className="text-lg font-semibold text-gray-900">Report Data</CardTitle>
                 <CardDescription className="text-gray-600 mt-1">
-                  {filteredData.length} records found
-                  {searchTerm && ` (filtered from ${data.length} total)`}
+                  {config.apiType === 'projects' && projectsData.length > 0
+                    ? `${projectsData.length} projects with ${milestonesData.length} milestones`
+                    : `${filteredData.length} records found`}
+                  {searchTerm && config.apiType !== 'projects' && ` (filtered from ${data.length} total)`}
                 </CardDescription>
               </div>
-              <div className="flex items-center space-x-3">
-                <Badge variant="secondary" className="px-3 py-1">
-                  Page {currentPage} of {totalPages}
-                </Badge>
-                <div className="text-sm text-gray-500">
-                  {itemsPerPage} per page
+              {config.apiType !== 'projects' && (
+                <div className="flex items-center space-x-3">
+                  <Badge variant="secondary" className="px-3 py-1">
+                    Page {currentPage} of {totalPages}
+                  </Badge>
+                  <div className="text-sm text-gray-500">
+                    {itemsPerPage} per page
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </CardHeader>
           <CardContent>
@@ -464,6 +482,64 @@ export default function ReportDetail() {
                   <p className="text-gray-600 font-medium">Loading report data...</p>
                   <p className="text-sm text-gray-500 mt-1">Please wait while we fetch the latest information</p>
                 </div>
+              </div>
+            ) : config.apiType === 'projects' && projectsData.length > 0 ? (
+              <div className="space-y-4 py-4">
+                {projectsData.map((project: any, index: number) => {
+                  const projectMilestones = milestonesData.filter((m: any) => 
+                    m.Client === project.Client && m._projectName === project['Project Name']
+                  );
+                  
+                  return (
+                    <div key={index} className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <h3 className="text-base font-semibold text-gray-900">{project['Project Name']}</h3>
+                            <div className="flex items-center gap-4 mt-2 text-sm text-gray-600">
+                              <span><span className="font-medium">Client:</span> {project.Client}</span>
+                              <span><span className="font-medium">Status:</span> {project.Status}</span>
+                              <span><span className="font-medium">Progress:</span> {project['Progress (%)']}%</span>
+                              <span><span className="font-medium">Budget:</span> KSh {project['Budget (KSh)']}</span>
+                            </div>
+                          </div>
+                          <Badge variant="secondary">{projectMilestones.length} Milestones</Badge>
+                        </div>
+                      </div>
+                      
+                      {projectMilestones.length > 0 ? (
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-white">
+                              <TableHead className="px-6 py-3 text-xs font-bold text-gray-700">Milestone Name</TableHead>
+                              <TableHead className="px-6 py-3 text-xs font-bold text-gray-700">Manager</TableHead>
+                              <TableHead className="px-6 py-3 text-xs font-bold text-gray-700">Progress</TableHead>
+                              <TableHead className="px-6 py-3 text-xs font-bold text-gray-700">Billing Status</TableHead>
+                              <TableHead className="px-6 py-3 text-xs font-bold text-gray-700">Fee (KSh)</TableHead>
+                              <TableHead className="px-6 py-3 text-xs font-bold text-gray-700">Start Date</TableHead>
+                              <TableHead className="px-6 py-3 text-xs font-bold text-gray-700">Due Date</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {projectMilestones.map((milestone: any, mIndex: number) => (
+                              <TableRow key={mIndex} className={mIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                                <TableCell className="px-6 py-3 text-sm text-gray-900">{milestone['Milestone Name']}</TableCell>
+                                <TableCell className="px-6 py-3 text-sm text-gray-700">{milestone['Manager'] || 'Not assigned'}</TableCell>
+                                <TableCell className="px-6 py-3 text-sm text-gray-700">{milestone['Progress (%)']}%</TableCell>
+                                <TableCell className="px-6 py-3 text-sm text-gray-700">{milestone['Billing Status'] || 'none'}</TableCell>
+                                <TableCell className="px-6 py-3 text-sm text-gray-700">{milestone['Fee Amount (KSh)']}</TableCell>
+                                <TableCell className="px-6 py-3 text-sm text-gray-700">{milestone['Start Date']}</TableCell>
+                                <TableCell className="px-6 py-3 text-sm text-gray-700">{milestone['Due Date']}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      ) : (
+                        <div className="px-6 py-4 text-sm text-gray-500 italic">No milestones for this project</div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : filteredData.length === 0 ? (
               <div className="text-center py-12 text-gray-500">
@@ -567,7 +643,7 @@ export default function ReportDetail() {
             )}
 
             {/* Pagination */}
-            {totalPages > 1 && (
+            {config.apiType !== 'projects' && totalPages > 1 && (
               <div className="bg-white px-6 py-4 border-t border-gray-200 rounded-b-lg">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center text-sm text-gray-700">

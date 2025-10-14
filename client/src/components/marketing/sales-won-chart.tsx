@@ -6,9 +6,6 @@ import {
   LinearScale,
   BarElement,
   BarController,
-  LineElement,
-  LineController,
-  PointElement,
   Title,
   Tooltip,
   Legend,
@@ -20,9 +17,6 @@ ChartJS.register(
   LinearScale,
   BarElement,
   BarController,
-  LineElement,
-  LineController,
-  PointElement,
   Title,
   Tooltip,
   Legend
@@ -49,9 +43,6 @@ export function SalesWonChart({
 }: SalesWonChartProps) {
   const safeData = Array.isArray(data) ? data : [];
   
-  const maxValue = safeData.length
-    ? Math.max(...safeData.map(d => Math.max(d.salesWon || 0, d.target || 0)))
-    : 0;
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-KE', {
       style: 'currency',
@@ -59,15 +50,6 @@ export function SalesWonChart({
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);
-  };
-
-  const formatNumber = (num: number) => {
-    if (num >= 1000000) {
-      return (num / 1000000).toFixed(1) + 'M';
-    } else if (num >= 1000) {
-      return (num / 1000).toFixed(1) + 'K';
-    }
-    return num.toString();
   };
 
   return (
@@ -94,7 +76,6 @@ export function SalesWonChart({
             labels: safeData.map(item => item.marketerName),
             datasets: [
               {
-                type: 'bar' as const,
                 label: 'Target',
                 data: safeData.map(item => item.target),
                 backgroundColor: 'rgba(239, 68, 68, 0.6)',
@@ -105,21 +86,13 @@ export function SalesWonChart({
                 order: 2,
               },
               {
-                type: 'line' as const,
                 label: 'Sales Won',
                 data: safeData.map(item => item.salesWon),
+                backgroundColor: 'rgba(34, 197, 94, 0.6)',
                 borderColor: 'rgba(34, 197, 94, 1)',
-                backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                borderWidth: 3,
-                fill: false,
-                tension: 0.4,
-                pointBackgroundColor: 'rgba(34, 197, 94, 1)',
-                pointBorderColor: '#ffffff',
-                pointBorderWidth: 2,
-                pointRadius: 6,
-                pointHoverRadius: 8,
-                pointHoverBackgroundColor: 'rgba(34, 197, 94, 1)',
-                pointHoverBorderColor: '#ffffff',
+                borderWidth: 2,
+                borderRadius: 6,
+                borderSkipped: false,
                 order: 1,
               },
             ],
@@ -135,11 +108,11 @@ export function SalesWonChart({
               legend: {
                 position: 'top' as const,
                 labels: {
-                  usePointStyle: true,
+                  usePointStyle: false,
                   padding: 20,
                   font: {
                     size: 12,
-                    weight: '500'
+                    weight: 500
                   }
                 }
               },
@@ -170,7 +143,7 @@ export function SalesWonChart({
                 ticks: {
                   font: {
                     size: 11,
-                    weight: '500'
+                    weight: 500
                   }
                 }
               },
@@ -185,7 +158,7 @@ export function SalesWonChart({
                   },
                   font: {
                     size: 11,
-                    weight: '500'
+                    weight: 500
                   }
                 }
               }
@@ -194,13 +167,6 @@ export function SalesWonChart({
               bar: {
                 borderRadius: 6,
                 borderSkipped: false,
-              },
-              line: {
-                tension: 0.4,
-              },
-              point: {
-                radius: 6,
-                hoverRadius: 8,
               }
             }
           }} />

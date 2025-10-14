@@ -1003,6 +1003,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateProject(id: string, project: Partial<InsertProject>): Promise<Project> {
+    // Get existing project to detect changes
+    const existingProject = await this.getProject(id);
+    
     // Remove budget from update if it exists - budget is auto-calculated from milestones
     const { budget, ...projectData } = project;
     
@@ -1014,6 +1017,18 @@ export class DatabaseStorage implements IStorage {
     
     // Recalculate budget from milestone fees
     await this.recalculateProjectBudget(id);
+    
+    // Check if manager changed and invalidate performance cache
+    if (existingProject && project.managerId && existingProject.managerId !== project.managerId) {
+      console.log(`Manager changed for project ${id}: ${existingProject.managerId} -> ${project.managerId}`);
+      await this.invalidateTeamPerformanceCache();
+    }
+    
+    // Check if team changed and invalidate workload cache
+    if (existingProject && project.teamId && existingProject.teamId !== project.teamId) {
+      console.log(`Team changed for project ${id}: ${existingProject.teamId} -> ${project.teamId}`);
+      await this.invalidateTeamPerformanceCache();
+    }
     
     return updatedProject;
   }
@@ -1775,12 +1790,33 @@ export class DatabaseStorage implements IStorage {
 
   // Recompute project budget as sum of milestone fees
   async recalculateProjectBudget(projectId: string): Promise<void> {
-    const feeRows = await db
-      .select({ sum: sql`COALESCE(SUM(${milestones.feeAmount}), 0)` })
+    // Get all milestones for this project
+    const projectMilestones = await db
+      .select()
       .from(milestones)
       .where(eq(milestones.projectId, projectId));
-    const total = (feeRows?.[0] as any)?.sum ?? 0;
+
+    // Calculate total from milestone fees
+    const total = projectMilestones.reduce((sum, milestone) => {
+      return sum + parseFloat(milestone.feeAmount || '0');
+    }, 0);
+
+    // Update project budget
     await db.update(projects).set({ budget: String(total) } as any).where(eq(projects.id, projectId));
+  }
+
+  async invalidateTeamPerformanceCache(): Promise<void> {
+    // This method will be called when assignments change to ensure fresh data
+    // For now, we'll add logging to track when cache invalidation is needed
+    console.log('Team performance cache invalidated - fresh data will be calculated on next request');
+    
+    // In a production system, this would:
+    // 1. Clear Redis cache keys for team performance
+    // 2. Mark cached data as stale
+    // 3. Trigger background recalculation
+    
+    // For immediate effect, we could recalculate metrics here
+    // but that might be expensive for large datasets
   }
 
   async updateProjectStatusBasedOnMilestones(projectId: string): Promise<void> {
@@ -5131,6 +5167,9 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
   }
 
   async updateSubtask(id: string, subtask: any): Promise<any> {
+    // Get existing subtask to detect assignment changes
+    const existingSubtask = await this.getSubtask(id);
+    
     const updateData: any = { updatedAt: new Date() };
     
     if (subtask.name !== undefined) updateData.name = subtask.name;
@@ -5154,6 +5193,26 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       .set(updateData)
       .where(eq(subtasks.id, id))
       .returning();
+      
+    // Check for assignment changes and invalidate cache
+    if (existingSubtask) {
+      const assignmentChanged = 
+        (subtask.assignedUserId !== undefined && existingSubtask.assignedUserId !== subtask.assignedUserId) ||
+        (subtask.assignedDevId !== undefined && existingSubtask.assignedDevId !== subtask.assignedDevId) ||
+        (subtask.assignedConsultantId !== undefined && existingSubtask.assignedConsultantId !== subtask.assignedConsultantId);
+        
+      if (assignmentChanged) {
+        console.log(`Subtask assignment changed for subtask ${id}:`, {
+          oldAssignedUserId: existingSubtask.assignedUserId,
+          newAssignedUserId: subtask.assignedUserId,
+          oldAssignedDevId: existingSubtask.assignedDevId,
+          newAssignedDevId: subtask.assignedDevId,
+          oldAssignedConsultantId: existingSubtask.assignedConsultantId,
+          newAssignedConsultantId: subtask.assignedConsultantId
+        });
+        await this.invalidateTeamPerformanceCache();
+      }
+    }
       
     // Update module progress after subtask update
     if (updatedSubtask && updatedSubtask.moduleId) {
@@ -5525,13 +5584,26 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           })
         );
 
+        // Calculate progress based on all subtasks in nested modules
+        const allSubtasks = modulesWithSubtasks.flatMap(module => module.subtasks);
+        const completedSubtasks = allSubtasks.filter(subtask => subtask.status === 'done');
+        const calculatedProgress = allSubtasks.length > 0 ? Math.round((completedSubtasks.length / allSubtasks.length) * 100) : 0;
+        
+        // Determine status based on progress
+        let milestoneStatus = 'not_started';
+        if (calculatedProgress === 100) {
+          milestoneStatus = 'done';
+        } else if (calculatedProgress > 0) {
+          milestoneStatus = 'in_progress';
+        }
+
         // Convert milestone to module-like object with nested modules
         return {
           id: milestone.id,
           name: milestone.name,
           description: milestone.description,
           priority: milestone.priority,
-          status: 'not_started', // Default status for milestones
+          status: milestoneStatus,
           billingStatus: milestone.billingStatus,
           startDate: milestone.startDate,
           dueDate: milestone.endDate,
@@ -5543,7 +5615,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
           projectId: milestone.projectId,
           phaseNumber: phaseNumber,
           phaseName: phaseName,
-          progressPercent: 0,
+          progressPercent: calculatedProgress,
           createdAt: milestone.createdAt,
           updatedAt: milestone.updatedAt,
           subtasks: [],
@@ -5588,13 +5660,25 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
             completedAt: row.subtask.completedAt
             }));
 
+          // Calculate progress based on direct subtasks
+          const completedSubtasks = milestoneSubtasks.filter(subtask => subtask.status === 'done');
+          const calculatedProgress = milestoneSubtasks.length > 0 ? Math.round((completedSubtasks.length / milestoneSubtasks.length) * 100) : 0;
+          
+          // Determine status based on progress
+          let milestoneStatus = 'not_started';
+          if (calculatedProgress === 100) {
+            milestoneStatus = 'done';
+          } else if (calculatedProgress > 0) {
+            milestoneStatus = 'in_progress';
+          }
+
           // Convert milestone to module-like object with direct subtasks
           return {
             id: milestone.id,
             name: milestone.name,
             description: milestone.description,
             priority: milestone.priority,
-            status: 'not_started', // Default status for milestones
+            status: milestoneStatus,
             billingStatus: milestone.billingStatus,
             startDate: milestone.startDate,
             dueDate: milestone.endDate,
@@ -5607,7 +5691,7 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
             phaseNumber: phaseNumber,
             phaseName: phaseName,
             milestoneId: milestone.id,
-            progressPercent: 0,
+            progressPercent: calculatedProgress,
             createdAt: milestone.createdAt,
             updatedAt: milestone.updatedAt,
             subtasks: milestoneSubtasks, // Direct subtasks
@@ -5921,6 +6005,35 @@ Dear Finance Team,\n\nThe following ${totalModules} module(s) from ${projectCoun
       if (existingRole.length > 0) {
         // Idempotent: return the existing active role instead of erroring
         return existingRole[0] as unknown as AdminRole;
+      }
+
+      // Enforce uniqueness for segment leaders per segment by deactivating any existing active holder
+      if (typedRoleData.roleType === 'segment_leader' && typedRoleData.segment) {
+        const currentHolder = await db
+          .select({ id: adminRoles.id, userId: adminRoles.userId })
+          .from(adminRoles)
+          .where(
+            and(
+              eq(adminRoles.roleType, 'segment_leader'),
+              eq(adminRoles.segment, typedRoleData.segment),
+              eq(adminRoles.isActive, true)
+            )
+          )
+          .limit(1);
+
+        if (currentHolder.length > 0 && currentHolder[0].userId !== typedRoleData.userId) {
+          // Deactivate previous role assignment
+          await db
+            .update(adminRoles)
+            .set({ isActive: false, updatedAt: new Date() } as any)
+            .where(eq(adminRoles.id, currentHolder[0].id));
+
+          // Clear previous user's assignedSegment flag
+          await db
+            .update(users)
+            .set({ assignedSegment: null, updatedAt: new Date() } as any)
+            .where(eq(users.id, currentHolder[0].userId));
+        }
       }
 
       // Create the admin role assignment

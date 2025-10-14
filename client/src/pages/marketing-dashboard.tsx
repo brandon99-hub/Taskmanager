@@ -70,6 +70,7 @@ interface AdminDashboardStats {
   totalExpectedOrdersCount: number;
   totalSalesWonCount: number;
   totalRevenue: number;
+  totalExpectedOrdersRevenue: number;
   bdStats: Array<{
     bdId: string;
     bdName: string;
@@ -238,6 +239,7 @@ export default function MarketingDashboard() {
             totalExpectedOrdersCount: adminData.totalExpectedOrdersCount || 0,
             totalSalesWonCount: adminData.totalSalesWonCount || 0,
             totalRevenue: adminData.totalRevenue || 0,
+            totalExpectedOrdersRevenue: adminData.totalExpectedOrdersRevenue || 0,
             bdStats: adminData.bdStats || [],
           });
         } else {
@@ -557,12 +559,12 @@ export default function MarketingDashboard() {
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
                     {user?.role === 'admin' 
-                      ? (adminStats?.totalSalesWonCount || 0)
-                      : (stats?.salesWonCount || 0)
+                      ? formatCurrency(adminStats?.totalRevenue || 0)
+                      : formatCurrency(stats?.totalRevenue || 0)
                     }
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {user?.role === 'admin' ? 'All marketers combined' : 'Contract value secured'}
+                  <p className="text-xs text-green-600 font-medium mt-1">
+                    <span className="text-green-600">{user?.role === 'admin' ? (adminStats?.totalSalesWonCount || 0) : (stats?.salesWonCount || 0)} contracts</span> • {user?.role === 'admin' ? 'All marketers combined' : 'Contract value secured'}
                   </p>
                 </CardContent>
               </Card>
@@ -579,12 +581,12 @@ export default function MarketingDashboard() {
                 <CardContent>
                   <div className="text-3xl font-bold text-gray-900">
                     {user?.role === 'admin' 
-                      ? (adminStats?.totalExpectedOrdersCount || 0)
-                      : (stats?.expectedOrdersCount || 0)
+                      ? formatCurrency(adminStats?.totalExpectedOrdersRevenue || 0)
+                      : formatCurrency(stats?.expectedTarget || 0)
                     }
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {user?.role === 'admin' ? 'All marketers combined' : 'Expected revenue'}
+                  <p className="text-xs text-yellow-600 font-medium mt-1">
+                    <span className="text-yellow-600">{user?.role === 'admin' ? (adminStats?.totalExpectedOrdersCount || 0) : (stats?.expectedOrdersCount || 0)} orders</span> • {user?.role === 'admin' ? 'All marketers combined' : 'Expected revenue'}
                   </p>
                 </CardContent>
               </Card>

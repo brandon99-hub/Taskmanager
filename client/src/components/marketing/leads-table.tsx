@@ -452,6 +452,7 @@ export function MarketingLeadsTable({
                 <TableHead className="font-semibold text-gray-700">Client</TableHead>
                 <TableHead className="font-semibold text-gray-700">Contact Details</TableHead>
                 <TableHead className="font-semibold text-gray-700">Revenue</TableHead>
+                <TableHead className="font-semibold text-gray-700">Remarks</TableHead>
                 <TableHead className="font-semibold text-gray-700">Stage</TableHead>
                 <TableHead className="font-semibold text-gray-700">Actions</TableHead>
               </TableRow>
@@ -459,7 +460,7 @@ export function MarketingLeadsTable({
             <TableBody>
               {leads.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={user?.role === 'admin' && showMarketerInfo ? 7 : 6} className="text-center py-12">
+                  <TableCell colSpan={user?.role === 'admin' && showMarketerInfo ? 8 : 7} className="text-center py-12">
                     <div className="flex flex-col items-center space-y-2">
                       <div className="h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center">
                         <Users className="h-6 w-6 text-gray-400" />
@@ -490,6 +491,13 @@ export function MarketingLeadsTable({
                       </div>
                     </TableCell>
                     <TableCell className="font-medium text-gray-900">{formatCurrency(lead.revenue)}</TableCell>
+                    <TableCell>
+                      <div className="max-w-xs">
+                        <p className="text-sm text-gray-700 truncate" title={lead.remarks || ''}>
+                          {lead.remarks || 'No remarks'}
+                        </p>
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge className={`${stageColors[lead.stage]} font-medium`}>
                         {lead.stage.replace("_", " ").toUpperCase()}

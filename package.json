@@ -25,7 +25,11 @@
     "remove:users": "node scripts/remove-users.js",
     "test:excel:reading": "node scripts/test-excel-reading.js",
     "test:single:user": "node scripts/test-single-user-import.js",
-    "send:test:email": "node scripts/send-test-email.js"
+    "send:test:email": "node scripts/send-test-email.js",
+    "update:segment:private": "node scripts/update-private-segment-leader.js",
+    "update:segment:private:custom": "cross-env NEW_PRIVATE_LEADER_NAME=\"G Musyoka\" NEW_PRIVATE_LEADER_EMAIL=\"gmusyoka@appkings.co.ke\" node scripts/update-private-segment-leader.js",
+    "check:seg:private": "node scripts/check-private-segment-leader.js",
+    "set:seg:private": "node scripts/set-private-segment-leader.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -64,6 +68,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/memoizee": "^0.4.12",
     "@types/nodemailer": "^7.0.1",
+    "@types/pdfkit": "^0.17.3",
     "@types/pg": "^8.15.5",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^2.4.3",
@@ -100,6 +105,7 @@
     "nodemailer": "^7.0.5",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
+    "pdfkit": "^0.17.2",
     "pg": "^8.16.3",
     "postgres": "^3.4.7",
     "react": "^18.3.1",

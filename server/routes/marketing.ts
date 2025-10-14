@@ -1404,7 +1404,7 @@ export function registerMarketingRoutes(app: Express) {
         .select({
           id: marketingSalesWon.id,
           organisationName: marketingSalesWon.organisationName,
-          sector: marketingSalesWon.sector,
+          sector: sql<string>`COALESCE(${marketingSectors.name}, ${marketingSalesWon.sector})`,
           product: marketingSalesWon.product,
           contractAmount: marketingSalesWon.contractAmount,
           expectedQuarter: marketingSalesWon.expectedQuarter,
@@ -1420,7 +1420,8 @@ export function registerMarketingRoutes(app: Express) {
           marketerEmail: marketingUsers.email,
         })
         .from(marketingSalesWon)
-        .leftJoin(marketingUsers, eq(marketingSalesWon.marketerId, marketingUsers.id));
+        .leftJoin(marketingUsers, eq(marketingSalesWon.marketerId, marketingUsers.id))
+        .leftJoin(marketingSectors, eq(marketingSalesWon.sector, marketingSectors.id));
 
       const countQuery = db
         .select({ count: count() })
@@ -1582,7 +1583,7 @@ export function registerMarketingRoutes(app: Express) {
           .select({
             id: marketingExpectedOrders.id,
             organisationName: marketingExpectedOrders.organisationName,
-            sector: marketingExpectedOrders.sector,
+            sector: sql<string>`COALESCE(${marketingSectors.name}, ${marketingExpectedOrders.sector})`,
             product: marketingExpectedOrders.product,
             revenue: marketingExpectedOrders.revenue,
             expectedQuarter: marketingExpectedOrders.expectedQuarter,
@@ -1599,6 +1600,7 @@ export function registerMarketingRoutes(app: Express) {
           })
           .from(marketingExpectedOrders)
           .leftJoin(marketingUsers, eq(marketingExpectedOrders.marketerId, marketingUsers.id))
+          .leftJoin(marketingSectors, eq(marketingExpectedOrders.sector, marketingSectors.id))
           .where(whereCondition)
           .orderBy(desc(marketingExpectedOrders.createdAt))
           .limit(limit)
@@ -2286,7 +2288,7 @@ export function registerMarketingRoutes(app: Express) {
       const currentYear = year || new Date().getFullYear();
 
       // Get aggregated stats across all BD members using the new prospects table
-      const [prospectsCount, leadsCount, expectedOrdersCount, salesWonCount, totalRevenue, bdStats] = await Promise.all([
+      const [prospectsCount, leadsCount, expectedOrdersCount, salesWonCount, totalRevenue, totalExpectedOrdersRevenue, bdStats] = await Promise.all([
         // Total prospects count
         db
           .select({ count: count() })
@@ -2326,6 +2328,11 @@ export function registerMarketingRoutes(app: Express) {
           .select({ total: sql<number>`COALESCE(SUM(${marketingSalesWon.contractAmount}), 0)` })
           .from(marketingSalesWon)
           .where(sql`EXTRACT(YEAR FROM ${marketingSalesWon.createdAt}) = ${currentYear}`),
+        // Total expected orders revenue - from expected orders table
+        db
+          .select({ total: sql<number>`COALESCE(SUM(${marketingExpectedOrders.revenue}), 0)` })
+          .from(marketingExpectedOrders)
+          .where(sql`EXTRACT(YEAR FROM ${marketingExpectedOrders.createdAt}) = ${currentYear}`),
         // Get individual BD member performance (simplified without targets for now)
         db
           .select({
@@ -2355,6 +2362,7 @@ export function registerMarketingRoutes(app: Express) {
         totalExpectedOrdersCount: expectedOrdersCount[0].count,
         totalSalesWonCount: salesWonCount[0].count,
         totalRevenue: Number(totalRevenue[0].total),
+        totalExpectedOrdersRevenue: Number(totalExpectedOrdersRevenue[0].total),
         bdStats: bdStats.map(stat => ({
           ...stat,
           totalRevenue: Number(stat.totalRevenue),

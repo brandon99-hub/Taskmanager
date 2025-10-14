@@ -795,6 +795,8 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         teamId: project.teamId || "none",
 
+        managerId: project.managerId || project.manager?.id || "",
+
         budget: project.budget ? String(project.budget) : "",
 
         status: project.status || "planning",

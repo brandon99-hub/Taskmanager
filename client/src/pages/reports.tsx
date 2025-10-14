@@ -121,6 +121,10 @@ export default function Reports() {
       };
 
       const apiReportType = reportTypeMap[reportType] || reportType.toLowerCase();
+      
+      // Use PDF format for all reports except Gantt Chart
+      const exportFormat = reportType === 'Gantt Chart' ? 'excel' : 'pdf';
+      const fileExtension = exportFormat === 'pdf' ? 'pdf' : 'xlsx';
 
       // Make API request to generate export
       const response = await fetch('/api/reports/export', {
@@ -131,7 +135,7 @@ export default function Reports() {
         credentials: 'include',
         body: JSON.stringify({
           reportType: apiReportType,
-          format: 'excel',
+          format: exportFormat,
           filters: {}
         })
       });
@@ -144,7 +148,7 @@ export default function Reports() {
       // Get the filename from response headers
       const contentDisposition = response.headers.get('Content-Disposition');
       const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
-      const filename = filenameMatch?.[1] || `AppKings-Solutions-${apiReportType}-${new Date().toISOString().split('T')[0]}.xlsx`;
+      const filename = filenameMatch?.[1] || `AppKings-Solutions-${apiReportType}-${new Date().toISOString().split('T')[0]}.${fileExtension}`;
 
       // Convert response to blob and trigger download
       const blob = await response.blob();
@@ -281,7 +285,7 @@ export default function Reports() {
                   Report Generation Center
                 </CardTitle>
                 <CardDescription className="text-gray-600 text-base mt-2">
-                  Choose a report type to view detailed data or export to Excel format
+                  Choose a report type to view detailed data or export to professional PDF format
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-8">
@@ -317,7 +321,7 @@ export default function Reports() {
                     ) : (
                             <Download className="h-4 w-4 mr-2" />
                     )}
-                          {exportingStates.project_summary ? 'Exporting...' : 'Export Excel'}
+                          {exportingStates.project_summary ? 'Exporting...' : 'Export PDF'}
                   </Button>
                       </div>
                     </div>
@@ -354,7 +358,7 @@ export default function Reports() {
                     ) : (
                             <Download className="h-4 w-4 mr-2" />
                     )}
-                          {exportingStates.task_list ? 'Exporting...' : 'Export Excel'}
+                          {exportingStates.task_list ? 'Exporting...' : 'Export PDF'}
                   </Button>
                       </div>
                     </div>
@@ -391,7 +395,7 @@ export default function Reports() {
                     ) : (
                             <Download className="h-4 w-4 mr-2" />
                     )}
-                          {exportingStates.team_performance ? 'Exporting...' : 'Export Excel'}
+                          {exportingStates.team_performance ? 'Exporting...' : 'Export PDF'}
                   </Button>
                       </div>
                     </div>
@@ -428,7 +432,7 @@ export default function Reports() {
                     ) : (
                             <Download className="h-4 w-4 mr-2" />
                     )}
-                          {exportingStates.workload_analysis ? 'Exporting...' : 'Export Excel'}
+                          {exportingStates.workload_analysis ? 'Exporting...' : 'Export PDF'}
                   </Button>
                       </div>
                     </div>
@@ -468,7 +472,7 @@ export default function Reports() {
                     ) : (
                             <Download className="h-4 w-4 mr-2" />
                     )}
-                          {exportingStates.financial_report ? 'Exporting...' : 'Export Excel'}
+                          {exportingStates.financial_report ? 'Exporting...' : 'Export PDF'}
                   </Button>
                       </div>
                     </div>
