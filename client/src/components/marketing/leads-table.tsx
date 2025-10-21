@@ -89,23 +89,36 @@ const leadUpdateSchema = z.object({
   contactEmail: z.string().email("Valid email is required"),
   remarks: z.string().optional(),
   revenue: z.number().positive("Revenue must be positive").optional(),
+  bdId: z.string().optional(),
 });
 
 type LeadUpdateData = z.infer<typeof leadUpdateSchema>;
+
+interface MarketingUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: 'admin' | 'marketer';
+}
 
 interface MarketingLeadsTableProps {
   showMarketerInfo?: boolean;
   selectedMarketer?: string;
   onMarketerChange?: (marketerId: string) => void;
+  currentUser?: MarketingUser;
 }
 
 export function MarketingLeadsTable({ 
   showMarketerInfo = false, 
   selectedMarketer = "",
-  onMarketerChange 
+  onMarketerChange,
+  currentUser
 }: MarketingLeadsTableProps) {
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [marketingUsers, setMarketingUsers] = useState<MarketingUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({
@@ -201,8 +214,30 @@ export function MarketingLeadsTable({
     }
   };
 
+  const loadMarketingUsers = async () => {
+    if (currentUser?.role !== 'admin') return;
+    
+    try {
+      setUsersLoading(true);
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch("/api/marketing/users?limit=100", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMarketingUsers(data.users || []);
+      }
+    } catch (error) {
+      console.error("Failed to load marketing users:", error);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadLeads();
+    loadMarketingUsers();
   }, [page, search, selectedMarketer, memoizedFilters]);
 
   const handleDelete = async (id: string) => {
@@ -387,6 +422,7 @@ export function MarketingLeadsTable({
     setValue("contactEmail", lead.contactEmail);
     setValue("remarks", lead.remarks || "");
     setValue("revenue", typeof lead.revenue === 'string' ? parseFloat(lead.revenue) : lead.revenue || 0);
+    setValue("bdId", lead.bdId || "");
     setIsEditOpen(true);
   };
 
@@ -755,6 +791,54 @@ export function MarketingLeadsTable({
               )}
             </div>
           </div>
+
+          {/* User Assignment Section (Admin Only) */}
+          {currentUser?.role === 'admin' && (
+            <div className="bg-red-50 rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <div className="w-1 h-6 bg-red-500 rounded-full"></div>
+                User Assignment
+                <Badge variant="secondary" className="text-xs">Admin Only</Badge>
+              </h3>
+              <div className="space-y-3">
+                <Label htmlFor="bdId" className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                  <User className="h-4 w-4" />
+                  Assigned User
+                </Label>
+                <Select
+                  value={editingLead?.bdId || ""}
+                  onValueChange={(value) => setValue("bdId", value || "")}
+                  disabled={usersLoading}
+                >
+                  <SelectTrigger className="h-11 focus:border-red-500 focus:ring-red-500">
+                    <SelectValue placeholder={usersLoading ? "Loading users..." : "Select assigned user (optional)"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {marketingUsers.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4" />
+                          <div>
+                            <div className="font-medium">{user.firstName} {user.lastName}</div>
+                            <div className="text-xs text-gray-500">{user.email}</div>
+                          </div>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.bdId && (
+                  <p className="text-sm text-red-500 flex items-center gap-1">
+                    <span className="w-1 h-1 bg-red-500 rounded-full"></span>
+                    {errors.bdId.message}
+                  </p>
+                )}
+                <p className="text-xs text-gray-500">
+                  Change the user assigned to this lead. Leave empty to keep current assignment.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Additional Information Section */}
           <div className="bg-gray-50 rounded-lg p-6">

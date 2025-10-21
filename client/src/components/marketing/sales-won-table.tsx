@@ -79,22 +79,35 @@ const salesWonUpdateSchema = z.object({
   contractAmount: z.number().positive("Contract amount must be positive"),
   expectedQuarter: z.enum(['Q1', 'Q2', 'Q3', 'Q4']),
   comments: z.string().optional(),
+  marketerId: z.string().optional(),
 });
 
 type SalesWonUpdateData = z.infer<typeof salesWonUpdateSchema>;
+
+interface MarketingUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: 'admin' | 'marketer';
+}
 
 interface MarketingSalesWonTableProps {
   showMarketerInfo?: boolean;
   selectedMarketer?: string;
   onMarketerChange?: (marketerId: string) => void;
+  currentUser?: MarketingUser;
 }
 
 export function MarketingSalesWonTable({ 
   showMarketerInfo = false, 
   selectedMarketer = "",
-  onMarketerChange 
+  onMarketerChange,
+  currentUser
 }: MarketingSalesWonTableProps) {
   const [salesWon, setSalesWon] = useState<SalesWon[]>([]);
+  const [marketingUsers, setMarketingUsers] = useState<MarketingUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -182,8 +195,30 @@ export function MarketingSalesWonTable({
     }
   };
 
+  const loadMarketingUsers = async () => {
+    if (currentUser?.role !== 'admin') return;
+    
+    try {
+      setUsersLoading(true);
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch("/api/marketing/users?limit=100", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMarketingUsers(data.users || []);
+      }
+    } catch (error) {
+      console.error("Failed to load marketing users:", error);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadSalesWon();
+    loadMarketingUsers();
   }, [page, search, selectedMarketer, memoizedFilters]);
 
   const handleDelete = async (id: string) => {
@@ -258,6 +293,7 @@ export function MarketingSalesWonTable({
     setValue("contractAmount", salesWon.contractAmount);
     setValue("expectedQuarter", salesWon.expectedQuarter);
     setValue("comments", salesWon.comments || "");
+    setValue("marketerId", salesWon.marketerId || "");
     setIsEditOpen(true);
   };
 
@@ -582,6 +618,48 @@ export function MarketingSalesWonTable({
               )}
             </div>
           </div>
+
+          {/* User Assignment Section (Admin Only) */}
+          {currentUser?.role === 'admin' && (
+            <div className="bg-red-50 rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <div className="w-1 h-6 bg-red-500 rounded-full"></div>
+                User Assignment
+                <Badge variant="secondary" className="text-xs">Admin Only</Badge>
+              </h3>
+              <div className="space-y-3">
+                <Label htmlFor="marketerId" className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                  <User className="h-4 w-4" />
+                  Assigned User
+                </Label>
+                <Select
+                  value={editingSalesWon?.marketerId || ""}
+                  onValueChange={(value) => setValue("marketerId", value || "")}
+                  disabled={usersLoading}
+                >
+                  <SelectTrigger className="h-11 focus:border-red-500 focus:ring-red-500">
+                    <SelectValue placeholder={usersLoading ? "Loading users..." : "Select assigned user (optional)"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {marketingUsers.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4" />
+                          <div>
+                            <div className="font-medium">{user.firstName} {user.lastName}</div>
+                            <div className="text-xs text-gray-500">{user.email}</div>
+                          </div>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-gray-500">
+                  Change the user assigned to this sales won record. Leave empty to keep current assignment.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Additional Information Section */}
           <div className="bg-gray-50 rounded-lg p-6">

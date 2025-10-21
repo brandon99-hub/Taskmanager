@@ -23,7 +23,7 @@ async function createMarketingAdmin() {
     // Check if admin user already exists
     const existingAdmin = await pool.query(
       'SELECT id FROM marketing_users WHERE email = $1',
-      ['admin@marketing.com']
+      ['smartin@appkings.co.ke']
     );
 
     let result;
@@ -35,10 +35,10 @@ async function createMarketingAdmin() {
         WHERE email = $1
         RETURNING id, email, first_name, last_name, role
       `, [
-        'admin@marketing.com',
+        'smartin@appkings.co.ke',
         hashedPassword,
-        'Marketing',
-        'Admin',
+        'Smart',
+        'Martin',
         'admin',
         true
       ]);
@@ -49,17 +49,17 @@ async function createMarketingAdmin() {
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id, email, first_name, last_name, role
       `, [
-        'admin@marketing.com',
+        'smartin@appkings.co.ke',
         hashedPassword,
-        'Marketing',
-        'Admin',
+        'Smart',
+        'Martin',
         'admin',
         true
       ]);
     }
     
     console.log('Marketing admin user created successfully:');
-    console.log('Email: admin@marketing.com');
+    console.log('Email: smartin@appkings.co.ke');
     console.log('Password: admin123');
     console.log('Role: admin');
     console.log('User ID:', result.rows[0].id);

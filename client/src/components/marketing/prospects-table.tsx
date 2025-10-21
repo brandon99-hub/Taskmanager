@@ -61,6 +61,7 @@ interface Prospect {
   updatedAt: string;
   sectorName?: string;
   bdName?: string;
+  bdEmail?: string;
 }
 
 interface Sector {
@@ -92,6 +93,7 @@ const prospectUpdateSchema = z.object({
   revenue: z.number().positive("Revenue must be positive").optional(),
   stage: z.enum(['prospect', 'lead', 'expected_order', 'sales_won', 'lost']),
   sectorId: z.string().min(1, "Sector is required"),
+  bdId: z.string().optional(),
 });
 
 type ProspectUpdateData = z.infer<typeof prospectUpdateSchema>;
@@ -112,16 +114,27 @@ const stageLabels = {
   lost: "Lost",
 };
 
+interface MarketingUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: 'admin' | 'marketer';
+}
+
 interface MarketingProspectsTableProps {
   showMarketerInfo?: boolean;
   selectedMarketer?: string;
   onMarketerChange?: (marketerId: string) => void;
+  currentUser?: MarketingUser;
 }
 
-export function MarketingProspectsTable({ showMarketerInfo = false, selectedMarketer, onMarketerChange }: MarketingProspectsTableProps) {
+export function MarketingProspectsTable({ showMarketerInfo = false, selectedMarketer, onMarketerChange, currentUser }: MarketingProspectsTableProps) {
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
+  const [marketingUsers, setMarketingUsers] = useState<MarketingUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -167,6 +180,7 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
   useEffect(() => {
     loadProspects();
     loadSectors();
+    loadMarketingUsers();
   }, [currentPage, filters, selectedMarketer]);
 
   const loadProspects = async () => {
@@ -224,6 +238,27 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
       }
     } catch (error) {
       console.error("Failed to load sectors:", error);
+    }
+  };
+
+  const loadMarketingUsers = async () => {
+    if (currentUser?.role !== 'admin') return;
+    
+    try {
+      setUsersLoading(true);
+      const token = localStorage.getItem("marketingToken");
+      const response = await fetch("/api/marketing/users?limit=100", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMarketingUsers(data.users || []);
+      }
+    } catch (error) {
+      console.error("Failed to load marketing users:", error);
+    } finally {
+      setUsersLoading(false);
     }
   };
 
@@ -364,7 +399,8 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
     setValue("remarks", prospect.remarks || "");
     setValue("revenue", prospect.revenue || 0);
     setValue("stage", prospect.stage);
-    setValue("sectorId", prospect.sectorId || undefined);
+    setValue("sectorId", prospect.sectorId || "");
+    setValue("bdId", prospect.bdId || "");
     setIsEditOpen(true);
   };
 
@@ -869,8 +905,8 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
                       Sector <span className="text-gray-400 ml-1">(Optional)</span>
                     </Label>
                     <Select
-                      value={watch("sectorId") || undefined}
-                      onValueChange={(value) => setValue("sectorId", value || undefined)}
+                      value={watch("sectorId") || ""}
+                      onValueChange={(value) => setValue("sectorId", value || "")}
                     >
                       <SelectTrigger className="h-11 focus:border-blue-500 focus:ring-blue-500">
                         <SelectValue placeholder="Select sector (optional)" />
@@ -913,6 +949,54 @@ export function MarketingProspectsTable({ showMarketerInfo = false, selectedMark
                 </div>
               </div>
             </div>
+
+            {/* User Assignment Section (Admin Only) */}
+            {currentUser?.role === 'admin' && (
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2 pb-2 border-b border-gray-200">
+                  <div className="w-1 h-6 bg-red-500 rounded-full"></div>
+                  <h3 className="text-lg font-medium text-gray-900">User Assignment</h3>
+                  <Badge variant="secondary" className="text-xs">Admin Only</Badge>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-bdId" className="text-sm font-medium text-gray-700 flex items-center">
+                    <User className="h-4 w-4 mr-2 text-gray-500" />
+                    Assigned User <span className="text-gray-400 ml-1">(Optional)</span>
+                  </Label>
+                  <Select
+                    value={watch("bdId") || ""}
+                    onValueChange={(value) => setValue("bdId", value || "")}
+                    disabled={usersLoading}
+                  >
+                    <SelectTrigger className="h-11 focus:border-blue-500 focus:ring-blue-500">
+                      <SelectValue placeholder={usersLoading ? "Loading users..." : "Select assigned user (optional)"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {marketingUsers.map((user) => (
+                        <SelectItem key={user.id} value={user.id}>
+                          <div className="flex items-center space-x-2">
+                            <User className="h-4 w-4" />
+                            <div>
+                              <div className="font-medium">{user.firstName} {user.lastName}</div>
+                              <div className="text-xs text-gray-500">{user.email}</div>
+                            </div>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {errors.bdId && (
+                    <p className="text-sm text-red-500 flex items-center">
+                      <AlertCircle className="h-4 w-4 mr-1" />
+                      {errors.bdId.message}
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-500">
+                    Change the user who entered this prospect. Leave empty to keep current assignment.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Additional Information Section */}
             <div className="space-y-4">

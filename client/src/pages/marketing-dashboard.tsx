@@ -1171,6 +1171,7 @@ export default function MarketingDashboard() {
               showMarketerInfo={user?.role === 'admin'} 
               selectedMarketer={selectedMarketer}
               onMarketerChange={setSelectedMarketer}
+              currentUser={user}
             />
             </div>
           )}
@@ -1187,6 +1188,7 @@ export default function MarketingDashboard() {
               showMarketerInfo={user?.role === 'admin'} 
               selectedMarketer={selectedMarketer}
               onMarketerChange={setSelectedMarketer}
+              currentUser={user}
             />
             </div>
           )}
@@ -1219,6 +1221,7 @@ export default function MarketingDashboard() {
               showMarketerInfo={user?.role === 'admin'} 
               selectedMarketer={selectedMarketer}
               onMarketerChange={setSelectedMarketer}
+              currentUser={user}
             />
             </div>
           )}
@@ -1242,6 +1245,7 @@ export default function MarketingDashboard() {
               showMarketerInfo={user?.role === 'admin'} 
               selectedMarketer={selectedMarketer}
               onMarketerChange={setSelectedMarketer}
+              currentUser={user}
             />
             </div>
           )}
