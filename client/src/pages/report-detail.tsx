@@ -3,7 +3,6 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import Navigation from "@/components/layout/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -329,7 +328,6 @@ export default function ReportDetail() {
   if (!config) {
     return (
       <div className="min-h-screen bg-background-page">
-        <Navigation />
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
           <Card>
             <CardContent className="text-center py-12">
@@ -350,7 +348,6 @@ export default function ReportDetail() {
 
   return (
     <div className="min-h-screen bg-background-page">
-      <Navigation />
       
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         
@@ -592,7 +589,7 @@ export default function ReportDetail() {
                     {currentData.map((item, index) => (
                       <TableRow 
                         key={index} 
-                        className={`hover:bg-blue-50/50 transition-all duration-200 border-b border-gray-100 ${
+                        className={`hover:bg-gray-50 transition-all duration-200 border-b border-gray-100 ${
                           index % 2 === 0 ? 'bg-white' : 'bg-gray-50/20'
                         }`}
                       >

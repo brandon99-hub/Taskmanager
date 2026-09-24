@@ -93,7 +93,9 @@ export const marketingProspectCreateSchema = z.object({
   sectorId: z.string().optional(),
 });
 
-export const marketingProspectUpdateSchema = marketingProspectCreateSchema.partial();
+export const marketingProspectUpdateSchema = marketingProspectCreateSchema.partial().extend({
+  bdId: z.string().optional(),
+});
 
 // Shared Account Schemas
 export const marketingSharedAccountSchema = z.object({
@@ -112,7 +114,9 @@ export const marketingSalesWonCreateSchema = z.object({
   comments: z.string().optional(),
 });
 
-export const marketingSalesWonUpdateSchema = marketingSalesWonCreateSchema.partial();
+export const marketingSalesWonUpdateSchema = marketingSalesWonCreateSchema.partial().extend({
+  marketerId: z.string().optional(),
+});
 
 // Expected Orders Schemas
 export const marketingExpectedOrdersCreateSchema = z.object({
@@ -124,7 +128,9 @@ export const marketingExpectedOrdersCreateSchema = z.object({
   comments: z.string().optional(),
 });
 
-export const marketingExpectedOrdersUpdateSchema = marketingExpectedOrdersCreateSchema.partial();
+export const marketingExpectedOrdersUpdateSchema = marketingExpectedOrdersCreateSchema.partial().extend({
+  marketerId: z.string().optional(),
+});
 
 
 // Annual Summary Schemas

@@ -2,9 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useScreenSize } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
-import { BarChart3, CheckCircle, AlertTriangle, Eye, DollarSign, Building, GraduationCap, Clock, ClipboardList } from "lucide-react";
-import MilestoneDetailModal from "./milestone-detail-modal";
-import React from "react"; // Added missing import
+import { BarChart3, CheckCircle, AlertTriangle, Eye, DollarSign, Building, GraduationCap, Clock, ClipboardList, Ticket } from "lucide-react";
 
 // Define the metrics interface for better type safety
 interface DashboardMetrics {
@@ -13,17 +11,12 @@ interface DashboardMetrics {
   activeTeamProjects?: number;
   assignedSubtasks?: number;
   completedSubtasks?: number;
-  completedModules?: number;
-  completedMilestonesCount?: number;
-  overdueMilestonesCount?: number;
-  overdueSubtasksCount?: number;
-  totalModules?: number;
-  overdueModules?: number;
+  openTicketsCount?: number;
+  resolvedTicketsCount?: number;
   overdueSubtasks?: number;
   totalOverdue?: number;
   activeProjects?: number;
   projectsOnSupport?: number;
-  milestonesCount?: number;
   totalBudget?: number;
   collectedAmount?: number;
   pendingAmount?: number;
@@ -40,16 +33,8 @@ export default function MetricsCards() {
 
   const { data: metrics, isLoading } = useQuery<DashboardMetrics>({
     queryKey: ['/api/dashboard/metrics'],
+    staleTime: 30 * 1000,
   });
-
-  // Debug logging disabled for production
-  React.useEffect(() => {
-    if (metrics) {
-      // console.debug('Dashboard metrics loaded:', metrics);
-      // console.debug('Completed modules count:', metrics.completedModules);
-      // console.debug('Dashboard type:', dashboardType);
-    }
-  }, [metrics, dashboardType]);
 
   // Additional data needed for some calculations
   const { data: upcoming = [] } = useQuery<any[]>({
@@ -59,6 +44,14 @@ export default function MetricsCards() {
   // Get projects data for segment leaders to calculate segment-specific details
   const { data: projects = [] } = useQuery<any[]>({
     queryKey: ['/api/projects'],
+    enabled: dashboardType?.startsWith('segment_leader'),
+  });
+
+  // Segment leader dashboards are still keyed by the legacy academic/parastals/private name
+  // (out of scope for the dynamic-segments migration), so resolve that name to the matching
+  // dynamic segment's id to filter projects.segmentId.
+  const { data: segmentsList = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ['/api/segments'],
     enabled: dashboardType?.startsWith('segment_leader'),
   });
 
@@ -100,18 +93,18 @@ export default function MetricsCards() {
         change: "",
         changeLabel: "",
         detail: `${metrics?.activeTeamProjects || 0} active projects`,
-        detailColor: "text-blue-600",
+        detailColor: "text-primary",
         testId: "card-total-projects"
       },
       subtasksSummary: {
         title: "Subtasks",
         value: metrics?.assignedSubtasks || 0,
         icon: ClipboardList,
-        color: "bg-blue-500",
+        color: "bg-primary",
         change: "",
         changeLabel: "",
         detail: `${metrics?.completedSubtasks || 0} completed`,
-        detailColor: "text-blue-600",
+        detailColor: "text-primary",
         testId: "card-subtasks-summary"
       },
       activeProjects: {
@@ -122,41 +115,30 @@ export default function MetricsCards() {
         change: "",
         changeLabel: "",
         detail: `${metrics?.totalProjects ?? ((metrics?.activeProjects || 0) + (metrics?.projectsOnSupport || 0))} total projects`,
-        detailColor: "text-blue-600",
+        detailColor: "text-primary",
         testId: "card-active-projects"
       },
-      completedModules: {
-        title: dashboardType === 'employee' ? "Modules Completed" : (dashboardType === 'project_manager' ? "Modules Completed" : "Milestones Completed"),
-        value: dashboardType === 'employee' || dashboardType === 'project_manager' 
-          ? (metrics?.completedModules || 0)
-          : (metrics?.completedMilestonesCount || 0),
+      openTickets: {
+        title: "Open Tickets",
+        value: metrics?.openTicketsCount || 0,
+        icon: Ticket,
+        color: "bg-warning",
+        change: "",
+        changeLabel: "",
+        detail: "Needs attention",
+        detailColor: "text-orange-600",
+        testId: "card-open-tickets"
+      },
+      resolvedTickets: {
+        title: "Resolved Tickets",
+        value: metrics?.resolvedTicketsCount || 0,
         icon: CheckCircle,
         color: "bg-success",
         change: "",
         changeLabel: "",
-        detail: dashboardType === 'employee' 
-          ? `${metrics?.totalModules || 0} total modules`
-          : dashboardType === 'project_manager' 
-          ? `${metrics?.totalModules || 0} total modules` 
-          : `${metrics?.milestonesCount || 0} total milestones`,
+        detail: "Closed out",
         detailColor: "text-green-600",
-        testId: "card-completed-tasks",
-        hasModal: true,
-        modalType: "completed"
-      },
-      overdueModules: {
-        title: dashboardType === 'employee' ? "Overdue Subtasks" : (dashboardType === 'project_manager' ? "Overdue Modules" : "Overdue Milestones"),
-        value: dashboardType === 'employee' ? (metrics?.overdueSubtasksCount || 0) : (dashboardType === 'project_manager' ? (metrics?.overdueModules || 0) : (metrics?.overdueMilestonesCount || 0)),
-        icon: AlertTriangle,
-        color: "bg-error",
-        change: "",
-        changeLabel: "",
-        detail: dashboardType === 'employee' ? "Subtasks" : (dashboardType === 'project_manager' ? "Modules" : `${metrics?.overdueSubtasksCount || 0} overdue subtasks`),
-        detailColor: "text-red-600",
-        isNegative: true,
-        testId: "card-overdue-tasks",
-        hasModal: true,
-        modalType: "overdue"
+        testId: "card-resolved-tickets"
       },
       projectsOnSupport: {
         title: "Projects on SLA",
@@ -188,7 +170,7 @@ export default function MetricsCards() {
         change: "",
         changeLabel: "",
         detail: `${metrics?.totalSubtasks || 0} total subtasks`,
-        detailColor: "text-blue-600",
+        detailColor: "text-primary",
         testId: "card-assigned-subtasks"
       },
       completedSubtasks: {
@@ -239,22 +221,6 @@ export default function MetricsCards() {
 
     // Role-specific card combinations
     switch (dashboardType) {
-      case 'project_manager':
-        return [
-          baseCards.activeProjects,
-          baseCards.completedModules,
-          baseCards.overdueModules,
-          baseCards.projectsOnSupport
-        ];
-
-      case 'finance_head':
-        return [
-          baseCards.activeProjects,
-          baseCards.completedModules,
-          baseCards.overdueModules,
-          baseCards.onSupportProjects
-        ];
-
       case 'segment_leader_academic':
       case 'segment_leader_parastals':
       case 'segment_leader_private':
@@ -263,7 +229,8 @@ export default function MetricsCards() {
                            segmentName === 'parastals' ? Building : 
                            DollarSign;
         
-        const segmentProjects = projects.filter((p: any) => p.segment === segmentName);
+        const matchingSegmentId = segmentsList.find((s) => s.name.trim().toLowerCase() === segmentName)?.id;
+        const segmentProjects = projects.filter((p: any) => p.segmentId === matchingSegmentId);
         
         return [
           {
@@ -272,8 +239,8 @@ export default function MetricsCards() {
             icon: segmentIcon,
             detail: `${segmentProjects.length} total in ${segmentName}`,
           },
-          baseCards.completedModules,
-          baseCards.overdueModules,
+          baseCards.openTickets,
+          baseCards.resolvedTickets,
           {
             ...baseCards.totalBudget,
             title: "Segment Budget",
@@ -284,15 +251,15 @@ export default function MetricsCards() {
         return [
           baseCards.totalTeamProjects,
           baseCards.subtasksSummary,
-          baseCards.completedModules,
-          baseCards.overdueModules
+          baseCards.openTickets,
+          baseCards.resolvedTickets
         ];
 
       default:
         return [
           baseCards.activeProjects,
-          baseCards.completedModules,
-          baseCards.overdueModules,
+          baseCards.openTickets,
+          baseCards.resolvedTickets,
           baseCards.onSupportProjects
         ];
     }
@@ -310,41 +277,11 @@ export default function MetricsCards() {
     if (icon === GraduationCap) return <GraduationCap className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === Clock) return <Clock className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     if (icon === ClipboardList) return <ClipboardList className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
+    if (icon === Ticket) return <Ticket className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 sm:h-6'} text-white`} />;
     return null;
   };
 
   const renderCard = (card: any) => {
-    if (card.hasModal) {
-      return (
-        <MilestoneDetailModal
-          type={card.modalType}
-          trigger={
-            <Card className="cursor-pointer hover:shadow-md transition-shadow">
-              <CardContent className={`${isMobile ? 'p-4' : 'p-6'}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-600">{card.title}</p>
-                    <p className="text-2xl font-bold text-gray-900">{card.value}</p>
-                    <p className={`text-sm ${card.isNegative ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
-                      {card.change}
-                    </p>
-                    {card.detail && (
-                      <p className={`text-xs font-medium ${card.detailColor} mt-1`}>
-                        {card.detail}
-                      </p>
-                    )}
-                  </div>
-                  <div className={`${isMobile ? 'w-8 h-8' : 'w-10 h-10 sm:w-12 sm:h-12'} ${card.color} rounded-lg flex items-center justify-center`}>
-                    {renderIcon(card.icon, card.color)}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          }
-        />
-      );
-    }
-
     return (
       <Card>
         <CardContent className={`${isMobile ? 'p-4' : 'p-6'}`}>

@@ -63,7 +63,7 @@ export default function MilestonesTable({
     switch (status) {
       case 'none': return 'bg-gray-100 text-gray-800';
       case 'to_send': return 'bg-yellow-100 text-yellow-800';
-      case 'sent': return 'bg-blue-100 text-blue-800';
+      case 'sent': return 'bg-gray-100 text-primary';
       case 'paid': return 'bg-green-100 text-green-800';
       case 'overdue': return 'bg-red-100 text-red-800';
       case 'processing': return 'bg-purple-100 text-purple-800';
@@ -185,7 +185,7 @@ export default function MilestonesTable({
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <DollarSign className="h-8 w-8 text-blue-600" />
+              <DollarSign className="h-8 w-8 text-primary" />
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Value</p>
                 <p className="text-xl font-bold text-gray-900">

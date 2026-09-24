@@ -24,7 +24,6 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { RevenueSharingModal } from "./revenue-sharing-modal";
 
 const prospectsSchema = z.object({
   date: z.string().min(1, "Date is required"),
@@ -60,10 +59,7 @@ export function MarketingProspectsForm({ onSuccess, isOpen, onClose, hideTrigger
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sectors, setSectors] = useState<Sector[]>([]);
-  const [showRevenueModal, setShowRevenueModal] = useState(false);
-  const [existingProspect, setExistingProspect] = useState<any>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [preservedFormData, setPreservedFormData] = useState<any>(null);
   const { toast } = useToast();
 
   // Use external open state if provided
@@ -75,7 +71,6 @@ export function MarketingProspectsForm({ onSuccess, isOpen, onClose, hideTrigger
       setOpen(false);
     }
     reset();
-    setPreservedFormData(null); // Clear preserved data when closing
   };
 
   const {
@@ -102,15 +97,6 @@ export function MarketingProspectsForm({ onSuccess, isOpen, onClose, hideTrigger
     const userData = localStorage.getItem("marketingUser");
     if (userData) {
       setCurrentUser(JSON.parse(userData));
-    }
-  };
-
-  const restoreFormData = () => {
-    if (preservedFormData) {
-      // Restore all the form fields
-      Object.keys(preservedFormData).forEach(key => {
-        setValue(key as any, preservedFormData[key]);
-      });
     }
   };
 
@@ -156,47 +142,6 @@ export function MarketingProspectsForm({ onSuccess, isOpen, onClose, hideTrigger
     return null;
   };
 
-  const handleRevenueSplit = async (splitData: any) => {
-    try {
-      const token = localStorage.getItem("marketingToken");
-      const response = await fetch(`/api/marketing/prospects/${existingProspect.id}/split-account`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          sharedWithBdId: currentUser.id,
-          revenueSplit: splitData.newPercentage, // The percentage for the new marketer
-        }),
-      });
-
-      if (response.ok) {
-        toast({
-          title: "Success",
-          description: "Revenue sharing arrangement created successfully",
-        });
-        setPreservedFormData(null); // Clear preserved data
-        handleClose();
-        onSuccess?.();
-      } else {
-        const error = await response.json();
-        toast({
-          title: "Error",
-          description: error.message || "Failed to create revenue sharing",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error("Error creating revenue split:", error);
-      toast({
-        title: "Error",
-        description: "Failed to create revenue sharing",
-        variant: "destructive",
-      });
-    }
-  };
-
   const onSubmit = async (data: ProspectsFormData) => {
     setLoading(true);
     try {
@@ -204,12 +149,11 @@ export function MarketingProspectsForm({ onSuccess, isOpen, onClose, hideTrigger
       const duplicate = await checkForDuplicate(data.client, data.contactEmail, data.contactNumber);
       
       if (duplicate) {
-        setExistingProspect(duplicate);
-        // Preserve the form data before closing
-        setPreservedFormData(data);
-        // Close the main modal and open revenue sharing modal
-        handleClose();
-        setShowRevenueModal(true);
+        toast({
+          title: "Duplicate Prospect Found",
+          description: `A prospect with similar client details already exists (${duplicate.client || duplicate.name || 'Existing'}).`,
+          variant: "destructive",
+        });
         setLoading(false);
         return;
       }
@@ -237,7 +181,6 @@ export function MarketingProspectsForm({ onSuccess, isOpen, onClose, hideTrigger
           title: "Success",
           description: "Prospect created successfully!",
         });
-        setPreservedFormData(null); // Clear preserved data
         handleClose();
         onSuccess?.();
       } else {
@@ -575,30 +518,6 @@ export function MarketingProspectsForm({ onSuccess, isOpen, onClose, hideTrigger
         </form>
       </DialogContent>
       
-      {/* Revenue Sharing Modal - Rendered outside main modal */}
-      <RevenueSharingModal
-        isOpen={showRevenueModal}
-        onClose={() => setShowRevenueModal(false)}
-        onBack={() => {
-          setShowRevenueModal(false);
-          // Restore the preserved form data
-          restoreFormData();
-          // Re-open the main modal
-          if (isOpen !== undefined) {
-            // If using external open state, we need to trigger it
-            // This will be handled by the parent component
-          } else {
-            setOpen(true);
-          }
-        }}
-        onConfirm={handleRevenueSplit}
-        existingProspect={existingProspect}
-        newMarketer={{
-          id: currentUser?.id || '',
-          name: currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : '',
-          email: currentUser?.email || ''
-        }}
-      />
     </Dialog>
   );
 }

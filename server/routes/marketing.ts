@@ -238,7 +238,15 @@ export function registerMarketingRoutes(app: Express) {
                 <p>Regards,<br/>TaskFlow Team</p>
               </div>
             `.trim(),
-            text: `Welcome to TaskFlow Marketing\n\nEmail: ${newUser[0].email}\nPassword: ${userData.password}\nRole: ${newUser[0].role}\n\nLogin: ${loginUrl}\n\nPlease change your password after first login.`
+            text: `Welcome to TaskFlow Marketing
+
+Email: ${newUser[0].email}
+Password: ${userData.password}
+Role: ${newUser[0].role}
+
+Login: ${loginUrl}
+
+Please change your password after first login.`
           });
         } catch (e) {
           console.error("Failed to send marketing user welcome email:", e);
@@ -517,7 +525,15 @@ export function registerMarketingRoutes(app: Express) {
               <p><strong>Sector:</strong> ${sector[0]?.name || 'Unknown'}</p>
               <p>Please log in to view details and start working on this project.</p>
             `,
-            text: `New Project Assignment\n\nHello ${bdUser[0].firstName},\n\nA new project has been assigned to you:\nProject: ${projectData.institution}\nSector: ${sector[0]?.name || 'Unknown'}\n\nPlease log in to view details.`
+            text: `New Project Assignment
+
+Hello ${bdUser[0].firstName},
+
+A new project has been assigned to you:
+Project: ${projectData.institution}
+Sector: ${sector[0]?.name || 'Unknown'}
+
+Please log in to view details.`
           });
         }
         } catch (emailError) {
@@ -795,7 +811,24 @@ export function registerMarketingRoutes(app: Express) {
               </div>
             </div>
           `,
-          text: `Project Assignment Notification\n\nHello ${bdUser[0].firstName},\n\nA new project has been assigned to you:\n\nInstitution: ${project.institution}\nProspect ID: ${newProspect[0].id}\nContact Person: ${project.contactPerson || 'To be determined'}\nContact Number: ${project.contactNumber || 'To be determined'}\n\nNext Steps:\n- Log in to your marketing dashboard\n- Review the prospect details\n- Update contact email if available\n- Begin your outreach process\n\nDashboard: ${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5000'}/marketing/dashboard`
+          text: `Project Assignment Notification
+
+Hello ${bdUser[0].firstName},
+
+A new project has been assigned to you:
+
+Institution: ${project.institution}
+Prospect ID: ${newProspect[0].id}
+Contact Person: ${project.contactPerson || 'To be determined'}
+Contact Number: ${project.contactNumber || 'To be determined'}
+
+Next Steps:
+- Log in to your marketing dashboard
+- Review the prospect details
+- Update contact email if available
+- Begin your outreach process
+
+Dashboard: ${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5000'}/marketing/dashboard`
         });
       } catch (emailError) {
         console.error("Failed to send assignment email:", emailError);
@@ -1057,6 +1090,56 @@ export function registerMarketingRoutes(app: Express) {
     }
   });
 
+  // Update Prospect Route
+  app.put("/api/marketing/prospects/:id", marketingAuth, marketingUserAuth, logProjectAction('update'), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updateData = marketingProspectUpdateSchema.parse(req.body);
+
+      // Check if prospect belongs to user (unless admin)
+      if (req.marketingUser!.role !== 'admin') {
+        const existingProspect = await db
+          .select()
+          .from(marketingProspects)
+          .where(and(eq(marketingProspects.id, id), eq(marketingProspects.bdId, req.marketingUser!.id)))
+          .limit(1);
+
+        if (existingProspect.length === 0) {
+          return res.status(404).json({ error: "Prospect not found" });
+        }
+      }
+
+      // Convert numeric fields to strings for decimal columns
+      const processedUpdateData: any = {
+        ...updateData,
+        revenue: updateData.revenue?.toString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      // Handle bdId assignment for admin users
+      if (req.marketingUser!.role === 'admin' && updateData.bdId) {
+        processedUpdateData.bdId = updateData.bdId;
+      }
+
+      const updatedProspect = await db
+        .update(marketingProspects)
+        .set(processedUpdateData)
+        .where(eq(marketingProspects.id, id))
+        .returning();
+
+      if (updatedProspect.length === 0) {
+        return res.status(404).json({ error: "Prospect not found" });
+      }
+
+      res.json({ prospect: updatedProspect[0] });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.put("/api/marketing/leads/:id", marketingAuth, marketingUserAuth, logProjectAction('update'), async (req, res) => {
     try {
       const { id } = req.params;
@@ -1076,11 +1159,16 @@ export function registerMarketingRoutes(app: Express) {
       }
 
       // Convert numeric fields to strings for decimal columns
-      const processedUpdateData = {
+      const processedUpdateData: any = {
         ...updateData,
         revenue: updateData.revenue?.toString(),
         updatedAt: new Date().toISOString()
       };
+
+      // Handle bdId assignment for admin users
+      if (req.marketingUser!.role === 'admin' && updateData.bdId) {
+        processedUpdateData.bdId = updateData.bdId;
+      }
 
       const updatedLead = await db
         .update(marketingProspects)
@@ -1209,7 +1297,14 @@ export function registerMarketingRoutes(app: Express) {
               <p><strong>Revenue Split:</strong> ${100 - revenueSplit}% (you) / ${revenueSplit}% (${sharedBd[0]?.firstName})</p>
               <p>Both of you will now work together on this account.</p>
             `,
-            text: `Account Shared - Revenue Split Confirmed\n\nHello ${originalBd[0].firstName},\n\nYour prospect "${originalProspect[0].client}" has been shared with ${sharedBd[0]?.firstName} ${sharedBd[0]?.lastName}.\nRevenue Split: ${100 - revenueSplit}% (you) / ${revenueSplit}% (${sharedBd[0]?.firstName})\n\nBoth of you will now work together on this account.`
+            text: `Account Shared - Revenue Split Confirmed
+
+Hello ${originalBd[0].firstName},
+
+Your prospect "${originalProspect[0].client}" has been shared with ${sharedBd[0]?.firstName} ${sharedBd[0]?.lastName}.
+Revenue Split: ${100 - revenueSplit}% (you) / ${revenueSplit}% (${sharedBd[0]?.firstName})
+
+Both of you will now work together on this account.`
           });
         }
 
@@ -1498,11 +1593,16 @@ export function registerMarketingRoutes(app: Express) {
       }
 
       // Convert numeric fields to strings for decimal columns
-      const processedUpdateData = {
+      const processedUpdateData: any = {
         ...updateData,
         contractAmount: updateData.contractAmount?.toString(),
         updatedAt: new Date().toISOString()
       };
+
+      // Handle marketerId assignment for admin users
+      if (req.marketingUser!.role === 'admin' && updateData.marketerId) {
+        processedUpdateData.marketerId = updateData.marketerId;
+      }
 
       const updatedSalesWon = await db
         .update(marketingSalesWon)
@@ -1670,11 +1770,16 @@ export function registerMarketingRoutes(app: Express) {
       }
 
       // Convert numeric fields to strings for decimal columns
-      const processedUpdateData = {
+      const processedUpdateData: any = {
         ...updateData,
         revenue: updateData.revenue?.toString(),
         updatedAt: new Date().toISOString()
       };
+
+      // Handle marketerId assignment for admin users
+      if (req.marketingUser!.role === 'admin' && updateData.marketerId) {
+        processedUpdateData.marketerId = updateData.marketerId;
+      }
 
       const updatedExpectedOrders = await db
         .update(marketingExpectedOrders)

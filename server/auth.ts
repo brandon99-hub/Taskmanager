@@ -12,6 +12,7 @@ import { trackFailedLogin, isAccountLocked, clearFailedAttempts } from "./middle
 import { logAuthSuccess, logAuthFailure, logAccountLockout } from "./utils/logger";
 import { z } from "zod";
 import * as crypto from "crypto";
+import { getRolePermissionKeys } from "./utils/permissions";
 
 export function getSession() {
   if (!process.env.SESSION_SECRET) {
@@ -380,7 +381,9 @@ export async function setupAuth(app: Express) {
       const user = req.user;
       // Remove password from response
       const { password, ...userWithoutPassword } = user;
-      res.json(userWithoutPassword);
+      const permissionKeys = await getRolePermissionKeys(user.roleId);
+      const dynamicRole = user.roleId ? await storage.getRole(user.roleId) : undefined;
+      res.json({ ...userWithoutPassword, roleName: dynamicRole?.name, permissions: Array.from(permissionKeys) });
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch user" });
     }

@@ -39,13 +39,12 @@ import { MarketingSalesWonTable } from "@/components/marketing/sales-won-table";
 import { MarketingExpectedOrdersTable } from "@/components/marketing/expected-orders-table";
 import { MarketingProspectsTable } from "@/components/marketing/prospects-table";
 import { MarketingProspectsForm } from "@/components/marketing/prospects-form";
+import { MarketingSalesWonForm } from "@/components/marketing/sales-won-form";
 import { LostProjectsTable } from "@/components/marketing/lost-projects-table";
 import { SectorsManagement } from "@/components/marketing/sectors-management";
 import { UserManagement } from "@/components/marketing/user-management";
 import { SalesWonChart } from "@/components/marketing/sales-won-chart";
-import { ExpectedOrdersPieChart } from "@/components/marketing/expected-orders-pie-chart";
-import { MonthlyTrendsChart } from "@/components/marketing/monthly-trends-chart";
-import { SalesWonChartSkeleton, PieChartSkeleton, LineChartSkeleton, TableSkeleton } from "@/components/marketing/chart-skeletons";
+import { SalesWonChartSkeleton, TableSkeleton } from "@/components/marketing/chart-skeletons";
 import MarketingPasswordChangeModal from "@/components/marketing/marketing-password-change-modal";
 import { useScreenSize } from "@/hooks/use-mobile";
 
@@ -160,6 +159,7 @@ export default function MarketingDashboard() {
   const [showUserManagement, setShowUserManagement] = useState(false);
   const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
   const [showProspectModal, setShowProspectModal] = useState(false);
+  const [showSalesWonModal, setShowSalesWonModal] = useState(false);
   const [viewMode, setViewMode] = useState<'table' | 'chart'>('chart');
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
@@ -364,9 +364,9 @@ export default function MarketingDashboard() {
           {/* Logo */}
           <div className="flex items-center space-x-3 p-6 border-b border-gray-200">
             <img 
-              src="/Appkings.png" 
-              alt="AppKings Logo" 
-              className="h-10 w-auto"
+              src="/logo.png" 
+              alt="Ecorenet Logo" 
+              className="h-9 w-auto max-w-[130px] object-contain"
             />
             <div>
               <h1 className="text-lg font-bold text-gray-900">Marketing</h1>
@@ -489,10 +489,10 @@ export default function MarketingDashboard() {
                   </div>
                 </DropdownMenuContent>
               </DropdownMenu>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
         {/* Main Content Area */}
         <div className="flex-1 p-6">
@@ -720,31 +720,14 @@ export default function MarketingDashboard() {
                   <div className="space-y-6">
                     {analyticsLoading ? (
                       <Fragment key="loading-charts">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                          <SalesWonChartSkeleton />
-                          <PieChartSkeleton />
-                        </div>
-                        <LineChartSkeleton />
+                        <SalesWonChartSkeleton />
                       </Fragment>
                     ) : analytics ? (
                       <Fragment key="analytics-charts">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                          <SalesWonChart 
-                            data={analytics.salesWonPerMarketer}
-                            title="Sales Won vs Target"
-                            description="Individual marketer performance against targets"
-                          />
-                          <ExpectedOrdersPieChart 
-                            data={analytics.expectedOrdersShare}
-                            title="Expected Orders Share"
-                            description="Distribution of expected orders by marketer"
-                          />
-                        </div>
-                        
-                        <MonthlyTrendsChart 
-                          data={analytics.monthlyTrends}
-                          title="Monthly Performance Trends"
-                          description="Performance trends over the past months"
+                        <SalesWonChart 
+                          data={analytics.salesWonPerMarketer}
+                          title="Sales Won vs Target"
+                          description="Individual marketer performance against targets"
                         />
                       </Fragment>
                     ) : (
@@ -1183,6 +1166,13 @@ export default function MarketingDashboard() {
                 <h2 className="text-2xl font-bold text-gray-900">Sales Won</h2>
                 <p className="text-gray-600 mt-1">Track your successful sales and contract wins. Edit prospects to change their stage to sales won.</p>
               </div>
+              <Button 
+                onClick={() => setShowSalesWonModal(true)}
+                className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 shadow-lg"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Sales Won
+              </Button>
             </div>
             <MarketingSalesWonTable 
               showMarketerInfo={user?.role === 'admin'} 
@@ -1299,6 +1289,15 @@ export default function MarketingDashboard() {
         hideTrigger={true}
         onSuccess={() => {
           setShowProspectModal(false);
+          loadDashboardStats();
+        }}
+      />
+      <MarketingSalesWonForm 
+        isOpen={showSalesWonModal}
+        onClose={() => setShowSalesWonModal(false)}
+        hideTrigger={true}
+        onSuccess={() => {
+          setShowSalesWonModal(false);
           loadDashboardStats();
         }}
       />

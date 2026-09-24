@@ -3,11 +3,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useParams, useSearch } from "wouter";
-import Navigation from "@/components/layout/navigation";
 import CreateProjectModal from "@/components/projects/create-project-modal";
-import ModuleTable from "@/components/projects/module-table";
 import MilestonesTable from "@/components/projects/milestones-table";
-import PhaseOverview from "@/components/projects/phase-overview";
 import GanttChart from "@/components/projects/gantt-chart";
 import ProjectCharter from "@/components/projects/project-charter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,15 +13,24 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import TicketDetailDialog from "@/components/tickets/ticket-detail-dialog";
+import { STATUS_LABELS, STATUS_VARIANTS, PRIORITY_VARIANTS, TYPE_LABELS, TYPE_VARIANTS } from "@/lib/ticket-constants";
 import { 
   Calendar, 
   Users, 
   DollarSign, 
   ArrowLeft, 
-  Edit,
-  Trash2,
-  CheckCircle,
-  Clock
+  Edit, 
+  Trash2, 
+  CheckCircle, 
+  Clock,
+  Building2,
+  Mail,
+  Phone,
+  Ticket,
+  MapPin,
+  Eye
 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -34,20 +40,6 @@ import { useScreenSize } from "@/hooks/use-mobile";
 
 export default function ProjectDetail() {
   // Type definitions
-  interface Phase {
-    id: string;
-    phaseNumber: number;
-    phaseName: string;
-    description: string;
-    startDate: string | null;
-    endDate: string | null;
-    status: 'not_started' | 'in_progress' | 'completed' | 'on_hold';
-    progress: number;
-    deliverables: any[];
-    reports: any[];
-    modules: any[];
-  }
-
   interface Module {
     id: string;
     name: string;
@@ -103,6 +95,7 @@ export default function ProjectDetail() {
 
   const auth = useAuth() as any;
   const { isAuthenticated, isLoading, user } = auth;
+  const canEditProject = auth.hasPermission?.('projects.edit') || auth.isAdminRole?.();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const params = useParams();
@@ -110,33 +103,26 @@ export default function ProjectDetail() {
   const { isMobile } = useScreenSize();
 
   const [editingProject, setEditingProject] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState('modules');
+  const [activeTab, setActiveTab] = useState('tickets');
   const [expandedMilestone, setExpandedMilestone] = useState<string | null>(null);
-  
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+
   // Enhanced cache invalidation function for immediate table refresh
   const invalidateProjectCaches = async (projectId: string) => {
     try {
       // Force remove cached queries to bypass staleTime
-      await Promise.all([
-        queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
-        queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
-      ]);
-      
+      await queryClient.removeQueries({ queryKey: ['/api/projects', projectId, 'milestones'] });
+
       // Invalidate all project-related queries to ensure immediate refresh
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['/api/projects'] }),
         queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId] }),
         queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
-        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
         queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'gantt'] }),
-        queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'phases'] }),
       ]);
-      
+
       // Force immediate refetch from server
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'milestones'] }),
-        queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'modules'] }),
-      ]);
+      await queryClient.refetchQueries({ queryKey: ['/api/projects', projectId, 'milestones'] });
     } catch (error) {
       console.error('Error invalidating project caches:', error);
     }
@@ -178,17 +164,6 @@ export default function ProjectDetail() {
     enabled: !!isAuthenticated && !!projectId,
   });
 
-  const { data: modules = [], isLoading: modulesLoading } = useQuery<Module[]>({
-    queryKey: ['/api/projects', projectId, 'modules'],
-    queryFn: async () => {
-      if (!projectId) return [];
-      return batchQuery(`/api/projects/${projectId}/modules`);
-    },
-    enabled: !!isAuthenticated && !!projectId,
-    staleTime: 5 * 60 * 1000, // 5 minutes cache
-    refetchOnWindowFocus: false,
-  });
-
   // Fetch milestones directly from the milestones API
   const { data: milestones = [], isLoading: milestonesLoading } = useQuery<Milestone[]>({
     queryKey: ['/api/projects', projectId, 'milestones'],
@@ -209,59 +184,6 @@ export default function ProjectDetail() {
       setActiveTab('milestones');
     }
   }, [taskIdFromUrl, milestones]);
-
-  // Fetch phases from server API (includes real status updates from automation)
-  const { data: phases = [], isLoading: phasesLoading, error: phasesError } = useQuery<Phase[]>({
-    queryKey: ['/api/projects', projectId, 'phases'],
-    queryFn: async () => {
-      if (!projectId) return [];
-      
-      // Use POST to create or get existing phases (POST endpoint handles both cases now)
-      let serverPhases: any[] = [];
-      try {
-        const phasesResponse = await fetch(`/api/projects/${projectId}/phases`, {
-          method: 'POST',
-          credentials: 'include'
-        });
-        
-        if (phasesResponse.ok) {
-          serverPhases = await phasesResponse.json();
-        } else {
-          // Only fallback to GET if POST failed for some other reason
-          serverPhases = await batchQuery(`/api/projects/${projectId}/phases`);
-        }
-      } catch (error) {
-        console.log('Could not fetch or create phases');
-        // Final fallback - try GET
-        try {
-          serverPhases = await batchQuery(`/api/projects/${projectId}/phases`);
-        } catch (getError) {
-          console.log('Both POST and GET failed for phases');
-        }
-      }
-      
-      // Transform server phase data to match client interface
-      return (serverPhases || []).map((phase: any) => ({
-        id: phase.id,
-        phaseNumber: phase.phaseNumber,
-        phaseName: phase.phaseName,
-        description: phase.description,
-        startDate: phase.startDate,
-        endDate: phase.endDate,
-        status: phase.status,
-        progress: phase.progress || 0,
-        deliverables: phase.deliverables || [],
-        reports: phase.reports || [],
-        modules: phase.modules || [] // Add the required modules property
-      }));
-    },
-    enabled: !!isAuthenticated && !!projectId,
-    staleTime: 5 * 60 * 1000, // 5 minutes cache
-    refetchOnWindowFocus: false,
-  });
-
-
-
 
 
   // Fetch project charter
@@ -307,17 +229,107 @@ export default function ProjectDetail() {
 
   // Fetch segment leader based on project segment
   const { data: segmentLeader } = useQuery<any>({
-    queryKey: ['/api/segment-leaders', project?.segment],
+    queryKey: ['/api/segment-leaders', project?.segmentId],
     queryFn: async () => {
-      if (!project?.segment) return null;
-      const res = await fetch(`/api/segment-leaders/${project.segment}`, { 
-        credentials: 'include' 
+      if (!project?.segmentId) return null;
+      const res = await fetch(`/api/segment-leaders/${project.segmentId}`, {
+        credentials: 'include'
       });
       if (!res.ok) return null;
       return res.json();
     },
-    enabled: !!isAuthenticated && !!project?.segment,
+    enabled: !!isAuthenticated && !!project?.segmentId,
   });
+
+  // Fetch tickets specifically logged for this project
+  const { data: projectTickets = [], isLoading: ticketsLoading } = useQuery<any[]>({
+    queryKey: ['/api/tickets', 'project', projectId],
+    queryFn: async () => {
+      if (!projectId) return [];
+      try {
+        const res = await fetch(`/api/tickets?projectId=${projectId}`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) return data;
+        }
+        const allRes = await fetch('/api/tickets', { credentials: 'include' });
+        if (allRes.ok) {
+          const allData = await allRes.json();
+          if (Array.isArray(allData)) {
+            return allData.filter((t: any) => t.projectId === projectId || t.project?.id === projectId);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching project tickets:', err);
+      }
+      return [];
+    },
+    enabled: !!isAuthenticated && !!projectId,
+  });
+
+  // Query companies to enrich company details if not joined
+  const { data: companies = [] } = useQuery<any[]>({
+    queryKey: ['/api/companies'],
+    queryFn: async () => {
+      try {
+        const res = await fetch('/api/companies', { credentials: 'include' });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Query segments to show sector name
+  const { data: segments = [] } = useQuery<any[]>({
+    queryKey: ['/api/segments'],
+    queryFn: async () => {
+      try {
+        const res = await fetch('/api/segments', { credentials: 'include' });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    },
+    staleTime: 20 * 60 * 1000,
+  });
+
+  const company = project?.company || (project?.companyId ? (Array.isArray(companies) ? companies.find((c: any) => c.id === project.companyId) : null) : null);
+  const sectorName = project?.segmentId ? (Array.isArray(segments) ? segments.find((s: any) => s.id === project.segmentId)?.name : null) : null;
+
+  const getSupportState = (p: any): 'on_support' | 'expired' | 'closed' => {
+    if (!p) return 'on_support';
+    if (p.status === 'support_closed') return 'closed';
+    if (p.endDate && new Date(p.endDate) < new Date()) return 'expired';
+    return 'on_support';
+  };
+
+  const formatSupportStatus = (state: 'on_support' | 'expired' | 'closed') => {
+    switch (state) {
+      case 'on_support':
+        return 'On Support';
+      case 'expired':
+        return 'Expired - Pending Renewal';
+      case 'closed':
+        return 'Closed';
+    }
+  };
+
+  const getSupportStatusBadgeClass = (state: 'on_support' | 'expired' | 'closed') => {
+    switch (state) {
+      case 'on_support':
+        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case 'expired':
+        return 'bg-amber-50 text-amber-700 border-amber-200';
+      case 'closed':
+        return 'bg-slate-100 text-slate-700 border-slate-200';
+    }
+  };
 
   // Helper functions
   const getStatusColor = (status: string) => {
@@ -325,7 +337,7 @@ export default function ProjectDetail() {
       case 'active':
         return 'bg-green-100 text-green-800';
       case 'planning':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-gray-100 text-primary';
       case 'on_hold':
         return 'bg-yellow-100 text-yellow-800';
       case 'completed':
@@ -392,42 +404,38 @@ export default function ProjectDetail() {
     }
   };
 
-  // Phase management handlers
-  const handlePhaseUpdate = async (phaseId: string, updates: any) => {
-    if (!projectId) return;
-    try {
-      await apiRequest('PUT', `/api/phases/${phaseId}`, updates);
-      // Enhanced cache invalidation for immediate table refresh
-      await invalidateProjectCaches(projectId);
-      toast({
-        title: "Success",
-        description: "Phase updated successfully",
-      });
-    } catch (error: any) {
-      console.error('Error updating phase:', error);
-      toast({
-        title: "Error",
-        description: "Failed to update phase",
-        variant: "destructive",
-      });
-    }
-  };
+  const handleCloseSupport = async () => {
+    if (!project) return;
 
-  const handlePhaseComplete = async (phaseId: string, completionReport: string) => {
-    if (!projectId) return;
+    const confirmed = window.confirm(`Close support for "${project.name}"? This is a deliberate action distinct from the support period's end date just passing - it marks the project as no longer under support.`);
+    if (!confirmed) return;
+
     try {
-      await apiRequest('PUT', `/api/phases/${phaseId}/complete`, { completionReport });
-      // Enhanced cache invalidation for immediate table refresh
-      await invalidateProjectCaches(projectId);
+      await apiRequest('PUT', `/api/projects/${project.id}/close-support`);
+      if (project.id) {
+        await invalidateProjectCaches(project.id);
+      }
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       toast({
         title: "Success",
-        description: "Phase completed successfully",
+        description: "Project support closed",
       });
     } catch (error: any) {
-      console.error('Error completing phase:', error);
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 500);
+        return;
+      }
+      console.error('Error closing project support:', error);
       toast({
         title: "Error",
-        description: "Failed to complete phase",
+        description: "Failed to close project support",
         variant: "destructive",
       });
     }
@@ -514,7 +522,6 @@ export default function ProjectDetail() {
   if (projectLoading) {
     return (
       <div className="min-h-screen bg-background-page">
-        <Navigation />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="animate-pulse space-y-6">
             <div className="h-8 bg-gray-200 rounded w-1/3"></div>
@@ -529,7 +536,6 @@ export default function ProjectDetail() {
   if (!project) {
     return (
       <div className="min-h-screen bg-background-page">
-        <Navigation />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Project not found</h2>
@@ -545,7 +551,6 @@ export default function ProjectDetail() {
 
   return (
     <div className="min-h-screen bg-background-page">
-      <Navigation />
       
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         
@@ -565,10 +570,10 @@ export default function ProjectDetail() {
             </div>
           </div>
           
-          {(user?.role === 'admin' || user?.role === 'manager') && (
+          {canEditProject && (
             <div className="flex space-x-2">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => {
                   setEditingProject(project);
                 }}
@@ -576,8 +581,16 @@ export default function ProjectDetail() {
                 <Edit className="h-4 w-4 mr-2" />
                 Edit Project
               </Button>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
+                onClick={handleCloseSupport}
+                disabled={project?.status === 'support_closed'}
+                className="disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {project?.status === 'support_closed' ? 'Support Closed' : 'Close Support'}
+              </Button>
+              <Button
+                variant="outline"
                 onClick={handleDeactivateProject}
                 disabled={project?.status === 'inactive'}
                 className="text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -590,259 +603,161 @@ export default function ProjectDetail() {
         </div>
 
         {/* Project Header Card */}
-        <Card className="mb-6 sm:mb-8">
-          <CardHeader>
-            <div className="flex items-start justify-between">
+        <Card className="mb-6 sm:mb-8 border border-gray-200 shadow-sm">
+          <CardHeader className="pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
               <div className="flex-1">
-                <div className="flex items-center space-x-3 mb-2">
-                  <CardTitle className="text-2xl">{project.client || project.name}</CardTitle>
-                  <Badge className={getStatusColor(project.status)}>
-                    {formatStatus(project.status)}
+                <div className="flex flex-wrap items-center gap-3 mb-2">
+                  <CardTitle className="text-2xl font-bold text-gray-900">{project.client || project.name}</CardTitle>
+                  <Badge className={getSupportStatusBadgeClass(getSupportState(project))}>
+                    {formatSupportStatus(getSupportState(project))}
                   </Badge>
+                  {sectorName && (
+                    <Badge variant="outline" className="border-gray-300 text-gray-700 bg-gray-50">
+                      {sectorName}
+                    </Badge>
+                  )}
                 </div>
-                <CardDescription className="text-base">
-                  {project.description}
-                </CardDescription>
+                {project.description && (
+                  <CardDescription className="text-sm text-gray-600">
+                    {project.description}
+                  </CardDescription>
+                )}
               </div>
             </div>
           </CardHeader>
-                    <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <CardContent className="pt-2 border-t border-gray-100">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               
-              {/* Project Details */}
-              <div className="space-y-4">
-                <h4 className="font-medium text-gray-900">Project Details</h4>
+              {/* Column 1: Support Period & Timeline */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Support Agreement</h4>
                 
-                {project.client && (
-                  <div className="flex items-center text-sm">
-                    <Users className="h-4 w-4 mr-2 text-gray-400" />
-                    <span>{project.client}</span>
-                  </div>
-                )}
-                
-                <div className="flex items-center text-sm">
-                  <Calendar className="h-4 w-4 mr-2 text-gray-400" />
-                  <span>
-                    <span className="font-medium">Start:</span> {new Date(project.startDate).toLocaleDateString()} - <span className="font-medium">End:</span> {new Date(project.endDate).toLocaleDateString()}
-                  </span>
-                </div>
-
-                {/* Project Duration */}
-                <div className="flex items-center text-sm">
-                  <Clock className="h-4 w-4 mr-2 text-gray-400" />
-                  <span>
-                    <span className="font-medium">Duration:</span> {
-                      (() => {
-                        const start = new Date(project.startDate);
-                        const end = new Date(project.endDate);
-                        const diffTime = Math.abs(end.getTime() - start.getTime());
-                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                        return `${diffDays} days`;
-                      })()
-                    }
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between text-sm">
-                  <span>Contract Value:</span>
-                  <span className="font-medium">
-                    KSh {(() => {
-                      const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
-                        ? milestones.reduce((total: number, milestone: any) => {
-                            return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
-                          }, 0)
-                        : (project.budget ? Number(project.budget) : 0);
-                      return totalProjectValue > 0 ? totalProjectValue.toLocaleString() : 
-                             (project.budget ? Number(project.budget).toLocaleString() : '0');
-                    })()}
-                  </span>
-                </div>
-              </div>
-
-              {/* Financial Summary */}
-              <div className="space-y-4">
-                <h4 className="font-medium text-gray-900">Financial Status</h4>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Contract Value:</span>
-                    <span className="font-medium">
-                      KSh {(() => {
-                        const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
-                          ? milestones.reduce((total: number, milestone: any) => {
-                              return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
-                            }, 0)
-                          : (project.budget ? Number(project.budget) : 0);
-                        return totalProjectValue > 0 ? totalProjectValue.toLocaleString() : 
-                               (project.budget ? Number(project.budget).toLocaleString() : '0');
-                      })()}
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center text-gray-700">
+                    <Calendar className="h-4 w-4 mr-2 text-gray-400 shrink-0" />
+                    <span>
+                      <span className="font-medium text-gray-900">Period:</span> {new Date(project.startDate).toLocaleDateString()} – {new Date(project.endDate).toLocaleDateString()}
                     </span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Paid Amount:</span>
-                    <span className="font-medium text-green-600">KSh {(() => {
-                      const paidAmount = milestones.reduce((total: number, milestone: any) => {
-                        if (milestone.billingStatus === 'paid' && milestone.feeAmount) {
-                          return total + Number(milestone.feeAmount);
-                        }
-                        return total;
-                      }, 0);
-                      return paidAmount.toLocaleString();
-                    })()}</span>
+
+                  <div className="flex items-center text-gray-700">
+                    <Clock className="h-4 w-4 mr-2 text-gray-400 shrink-0" />
+                    <span>
+                      <span className="font-medium text-gray-900">Duration:</span> {
+                        (() => {
+                          const start = new Date(project.startDate);
+                          const end = new Date(project.endDate);
+                          const diffTime = Math.abs(end.getTime() - start.getTime());
+                          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                          return `${diffDays} days`;
+                        })()
+                      }
+                    </span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Outstanding:</span>
-                    <span className="font-medium">KSh {(() => {
-                      const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
-                        ? milestones.reduce((total: number, milestone: any) => {
-                            return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
-                          }, 0)
-                        : (project.budget ? Number(project.budget) : 0);
-                      const paidAmount = milestones.reduce((total: number, milestone: any) => {
-                        if (milestone.billingStatus === 'paid' && milestone.feeAmount) {
-                          return total + Number(milestone.feeAmount);
-                        }
-                        return total;
-                      }, 0);
-                      return (totalProjectValue - paidAmount).toLocaleString();
-                    })()}</span>
+
+                  <div className="flex items-center text-gray-700">
+                    <Ticket className="h-4 w-4 mr-2 text-gray-400 shrink-0" />
+                    <span>
+                      <span className="font-medium text-gray-900">Support Status:</span>{" "}
+                      <span className="capitalize">{formatSupportStatus(getSupportState(project))}</span>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center text-gray-700">
+                    <CheckCircle className="h-4 w-4 mr-2 text-gray-400 shrink-0" />
+                    <span>
+                      <span className="font-medium text-gray-900">Logged Tickets:</span> {projectTickets.length}
+                    </span>
                   </div>
                 </div>
-                <Progress 
-                  value={(() => {
-                    const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
-                      ? milestones.reduce((total: number, milestone: any) => {
-                          return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
-                        }, 0)
-                      : (project.budget ? Number(project.budget) : 0);
-                    const paidAmount = milestones.reduce((total: number, milestone: any) => {
-                      if (milestone.billingStatus === 'paid' && milestone.feeAmount) {
-                        return total + Number(milestone.feeAmount);
-                      }
-                      return total;
-                    }, 0);
-                    return totalProjectValue > 0 ? (paidAmount / totalProjectValue) * 100 : 0;
-                  })()} 
-                  className="h-2" 
-                />
-                <p className="text-xs text-gray-500">
-                  {(() => {
-                    const totalProjectValue = milestones.length > 0 && milestones.some((m: any) => m.feeAmount) 
-                      ? milestones.reduce((total: number, milestone: any) => {
-                          return total + (milestone.feeAmount ? Number(milestone.feeAmount) : 0);
-                        }, 0)
-                      : (project.budget ? Number(project.budget) : 0);
-                    const paidAmount = milestones.reduce((total: number, milestone: any) => {
-                      if (milestone.billingStatus === 'paid' && milestone.feeAmount) {
-                        return total + Number(milestone.feeAmount);
-                      }
-                      return total;
-                    }, 0);
-                    return totalProjectValue > 0 ? Math.round((paidAmount / totalProjectValue) * 100) : 0;
-                  })()}% paid
-                </p>
               </div>
 
-              {/* Milestone Summary */}
-              <div className="space-y-4">
-                <h4 className="font-medium text-gray-900">Milestone Progress</h4>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span>Weight-based Progress:</span>
-                    <span className="font-medium text-blue-600">{(() => {
-                      // Use comprehensive progress calculation including subtasks from both sources:
-                      // 1. Direct subtasks under milestone (milestone.subtasks)
-                      // 2. Subtasks under modules (only for Phase 3 modules)
-                      const allMilestones = milestones || [];
-                      const directSubtasks = allMilestones.flatMap(m => m.subtasks || []);
-                      const moduleSubtasks = allMilestones.flatMap(m => 
-                        (m.modules || []).flatMap(module => module.subtasks || [])
-                      );
-                      const allSubtasks = [...directSubtasks, ...moduleSubtasks];
-                      return calculateProjectProgress(allMilestones, allSubtasks);
-                    })()}%</span>
+              {/* Column 2: Company Details */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Company Information</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center text-gray-900 font-medium">
+                    <Building2 className="h-4 w-4 mr-2 text-primary shrink-0" />
+                    <span className="truncate">{company?.name || project.client || 'No company specified'}</span>
                   </div>
-                  <Progress 
-                    value={(() => {
-                      // Use comprehensive progress calculation including subtasks from both sources
-                      const allMilestones = milestones || [];
-                      const directSubtasks = allMilestones.flatMap(m => m.subtasks || []);
-                      const moduleSubtasks = allMilestones.flatMap(m => 
-                        (m.modules || []).flatMap(module => module.subtasks || [])
-                      );
-                      const allSubtasks = [...directSubtasks, ...moduleSubtasks];
-                      return calculateProjectProgress(allMilestones, allSubtasks);
-                    })()} 
-                    className="h-2" 
-                  />
-                  <div className="text-xs text-gray-500 mb-3">
-                    Progress calculated by weight-based subtask completion
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span>Total:</span>
-                    <span className="font-medium">{milestones?.length || 0}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span>Completed:</span>
-                    <span className="font-medium text-green-600">{(milestones || []).filter((m: any) => m.billingStatus === 'paid').length}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span>In Progress:</span>
-                    <span className="font-medium text-blue-600">{(milestones || []).filter((m: any) => m.billingStatus === 'to_send' || m.billingStatus === 'sent').length}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span>Not Started:</span>
-                    <span className="font-medium">{(milestones || []).filter((m: any) => (m.billingStatus || 'none') === 'none').length}</span>
-                  </div>
-                </div>
-                <Progress 
-                  value={(() => {
-                    const allMilestones = milestones || [];
-                    const directSubtasks = allMilestones.flatMap(m => m.subtasks || []);
-                    const moduleSubtasks = allMilestones.flatMap(m => 
-                      (m.modules || []).flatMap(module => module.subtasks || [])
-                    );
-                    const allSubtasks = [...directSubtasks, ...moduleSubtasks];
-                    return calculateProjectProgress(allMilestones, allSubtasks);
-                  })()} 
-                  className="h-2" 
-                />
-                <p className="text-xs text-gray-500">Weight-based progress: {(() => {
-                  const allMilestones = milestones || [];
-                  const directSubtasks = allMilestones.flatMap(m => m.subtasks || []);
-                  const moduleSubtasks = allMilestones.flatMap(m => 
-                    (m.modules || []).flatMap(module => module.subtasks || [])
-                  );
-                  const allSubtasks = [...directSubtasks, ...moduleSubtasks];
-                  return calculateProjectProgress(allMilestones, allSubtasks);
-                })()}%</p>
-              </div>
 
-              {/* Team Information */}
-              <div className="space-y-4">
-                <h4 className="font-medium text-gray-900">Team</h4>
-                
-                {segmentLeader && (
-                  <div className="flex items-center space-x-2">
-                    <Avatar className="w-6 h-6">
-                      <AvatarFallback className="text-xs">
-                        {getInitials(segmentLeader.leaderName || 'SL')}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="text-sm font-medium">
-                        {segmentLeader.leaderName}
-                      </p>
-                      <p className="text-xs text-gray-500">Project Manager</p>
+                  {(company?.primaryContactName || project.client) && (
+                    <div className="flex items-center text-gray-700">
+                      <Users className="h-4 w-4 mr-2 text-gray-400 shrink-0" />
+                      <span className="truncate">{company?.primaryContactName || project.client}</span>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {project.team && (
-                  <div className="text-sm">
-                    <p className="font-medium">{project.team.name}</p>
-                    <p className="text-xs text-gray-500">Project Team</p>
-                  </div>
-                )}
+                  {(company?.primaryContactEmail || project.clientEmail) && (
+                    <div className="flex items-center text-gray-700">
+                      <Mail className="h-4 w-4 mr-2 text-gray-400 shrink-0" />
+                      <a href={`mailto:${company?.primaryContactEmail || project.clientEmail}`} className="text-primary hover:underline truncate">
+                        {company?.primaryContactEmail || project.clientEmail}
+                      </a>
+                    </div>
+                  )}
+
+                  {company?.primaryContactPhone && (
+                    <div className="flex items-center text-gray-700">
+                      <Phone className="h-4 w-4 mr-2 text-gray-400 shrink-0" />
+                      <span>{company.primaryContactPhone}</span>
+                    </div>
+                  )}
+
+                  {company?.address && (
+                    <div className="flex items-center text-gray-700">
+                      <MapPin className="h-4 w-4 mr-2 text-gray-400 shrink-0" />
+                      <span className="truncate">{company.address}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Column 3: Team Information */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Account & Support Lead</h4>
+                
+                <div className="space-y-2">
+                  {segmentLeader && (
+                    <div className="flex items-center space-x-3">
+                      <Avatar className="w-8 h-8">
+                        <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                          {getInitials(segmentLeader.leaderName || 'SL')}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {segmentLeader.leaderName}
+                        </p>
+                        <p className="text-xs text-gray-500">Sector Leader</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {project.manager && !segmentLeader && (
+                    <div className="flex items-center space-x-3">
+                      <Avatar className="w-8 h-8">
+                        <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                          {getInitials(project.manager.firstName ? `${project.manager.firstName} ${project.manager.lastName || ''}` : project.manager.email)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {project.manager.firstName ? `${project.manager.firstName} ${project.manager.lastName || ''}` : project.manager.email}
+                        </p>
+                        <p className="text-xs text-gray-500">Project Manager</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {project.team && (
+                    <div className="text-sm pt-1">
+                      <span className="text-xs text-gray-500">Assigned Team:</span>
+                      <p className="font-medium text-gray-800">{project.team.name}</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </CardContent>
@@ -853,10 +768,9 @@ export default function ProjectDetail() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <nav className="flex" aria-label="Tabs">
               {[
-                { id: 'modules', name: 'Milestones', description: 'Track project milestones and tasks' },
-                { id: 'phases', name: 'Phases', description: 'Manage project phases and workflow' },
+                { id: 'tickets', name: 'Tickets', description: `Support tickets logged for this project (${projectTickets.length})` },
+                { id: 'milestones', name: 'Milestones', description: 'Track and manage project milestones' },
                 { id: 'gantt', name: 'Gantt Chart', description: 'Visualize project timeline' },
-                { id: 'milestones', name: 'Billing Milestones', description: 'Manage billing milestones' }
               ].map((tab, index) => (
                 <button
                   key={tab.id}
@@ -865,12 +779,12 @@ export default function ProjectDetail() {
                   }}
                   className={`flex-1 px-6 py-4 text-left transition-all duration-200 ${
                     activeTab === tab.id
-                      ? 'bg-blue-50 border-b-2 border-blue-500 text-blue-700'
+                      ? 'bg-gray-50 border-b-2 border-accent-brand text-primary'
                       : 'bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-800'
-                  } ${index === 0 ? 'rounded-l-lg' : ''} ${index === 3 ? 'rounded-r-lg' : ''}`}
+                  } ${index === 0 ? 'rounded-l-lg' : ''} ${index === 2 ? 'rounded-r-lg' : ''}`}
                 >
                   <div className="font-semibold text-sm mb-1">{tab.name}</div>
-                  <div className={`text-xs ${activeTab === tab.id ? 'text-blue-600' : 'text-gray-500'}`}>
+                  <div className={`text-xs ${activeTab === tab.id ? 'text-primary' : 'text-gray-500'}`}>
                     {tab.description}
                   </div>
                 </button>
@@ -880,56 +794,110 @@ export default function ProjectDetail() {
         </div>
 
         {/* Tab Content */}
-        {activeTab === 'phases' && projectId && (
+        {activeTab === 'tickets' && (
           <div className="space-y-6">
-            {phasesLoading ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Phases</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="animate-pulse space-y-4">
-                    <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-                    <div className="space-y-2">
-                      {[...Array(3)].map((_, i) => (
-                        <div key={i} className="h-16 bg-gray-200 rounded"></div>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg">Project Support Tickets</CardTitle>
+                  <CardDescription>Support issues and tickets logged for this project</CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs">
+                    {projectTickets.length} Total
+                  </Badge>
+                  <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                    {projectTickets.filter((t: any) => t.status === 'resolved' || t.status === 'closed').length} Resolved
+                  </Badge>
+                  <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                    {projectTickets.filter((t: any) => t.status !== 'resolved' && t.status !== 'closed').length} Open
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {ticketsLoading ? (
+                  <div className="p-6 space-y-3">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="h-14 bg-gray-100 rounded-lg animate-pulse" />
+                    ))}
+                  </div>
+                ) : projectTickets.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Ticket className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                    <h3 className="text-base font-medium text-gray-900 mb-1">No Tickets Logged</h3>
+                    <p className="text-sm text-gray-500">There are currently no support tickets logged for this project.</p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Ticket #</TableHead>
+                        <TableHead>Subject</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Priority</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Requester</TableHead>
+                        <TableHead>Created</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {projectTickets.map((ticket: any) => (
+                        <TableRow 
+                          key={ticket.id} 
+                          className="hover:bg-gray-50/80 cursor-pointer"
+                          onClick={() => setSelectedTicketId(ticket.id)}
+                        >
+                          <TableCell className="font-mono text-xs text-gray-600">
+                            {ticket.ticketNumber || `#${ticket.id.slice(0, 8)}`}
+                          </TableCell>
+                          <TableCell className="font-medium text-gray-900 max-w-xs truncate">
+                            {ticket.subject}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={TYPE_VARIANTS[ticket.type] || "outline"} className="text-xs">
+                              {TYPE_LABELS[ticket.type] || ticket.type}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={PRIORITY_VARIANTS[ticket.priority] || "outline"} className="capitalize text-xs">
+                              {ticket.priority}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={STATUS_VARIANTS[ticket.status] || "outline"} className="text-xs">
+                              {STATUS_LABELS[ticket.status] || ticket.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm text-gray-600">
+                            {ticket.contactName || (ticket.createdBy ? `${ticket.createdBy.firstName || ''} ${ticket.createdBy.lastName || ''}`.trim() : '—')}
+                          </TableCell>
+                          <TableCell className="text-xs text-gray-500 whitespace-nowrap">
+                            {ticket.createdAt ? new Date(ticket.createdAt).toLocaleDateString() : '—'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTicketId(ticket.id);
+                              }}
+                            >
+                              <Eye className="h-4 w-4 mr-1 text-gray-500" />
+                              View
+                            </Button>
+                          </TableCell>
+                        </TableRow>
                       ))}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : phasesError ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Phases</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-center py-8">
-                    <p className="text-red-600">Error loading phases: {phasesError?.message || 'Unknown error'}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : phases.length === 0 ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Phases</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-center py-8">
-                    <p className="text-gray-600">No phases found for this project.</p>
-                    <p className="text-sm text-gray-500 mt-2">Phases will be created automatically based on milestones.</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : (
-              <PhaseOverview 
-                projectId={projectId!}
-                phases={phases}
-                modules={modules}
-                projectTeam={project.team}
-                onPhaseUpdate={handlePhaseUpdate}
-                onPhaseComplete={handlePhaseComplete}
-              />
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            {selectedTicketId && (
+              <TicketDetailDialog ticketId={selectedTicketId} onClose={() => setSelectedTicketId(null)} />
             )}
           </div>
         )}
@@ -944,7 +912,7 @@ export default function ProjectDetail() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
                     <p className="text-gray-600">Loading Gantt chart data...</p>
                   </div>
                 </CardContent>
@@ -975,48 +943,16 @@ export default function ProjectDetail() {
                 </CardContent>
               </Card>
             ) : (
-              <GanttChart 
+              <GanttChart
                 data={ganttData}
-                onPhaseClick={(phaseId) => setActiveTab('phases')}
-                onTaskClick={(taskId) => setActiveTab('modules')}
+                onPhaseClick={(phaseId) => setActiveTab('milestones')}
+                onTaskClick={(taskId) => setActiveTab('milestones')}
               />
             )}
           </div>
         )}
 
 
-
-        {activeTab === 'modules' && (
-          <div className="space-y-6">
-            {/* Milestones Table */}
-            {modulesLoading ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Milestones</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="animate-pulse space-y-4">
-                    <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-                    <div className="space-y-2">
-                      {[...Array(3)].map((_, i) => (
-                        <div key={i} className="h-16 bg-gray-200 rounded"></div>
-                      ))}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : (
-              <ModuleTable 
-                modules={modules}
-                projectSegment={project.segment || 'private'}
-                projectTeam={project.team}
-                onEdit={handleEditMilestone}
-                initiallyExpandedModule={expandedMilestone}
-                projectId={projectId}
-              />
-            )}
-          </div>
-        )}
 
         {activeTab === 'milestones' && (
           <div className="space-y-6">
@@ -1039,7 +975,7 @@ export default function ProjectDetail() {
             ) : (
               <MilestonesTable 
                 milestones={milestones}
-                projectSegment={project.segment || 'private'}
+                projectSegment={project.segmentId || ''}
                 onEdit={handleEditMilestone}
                 onDelete={async (milestoneId) => {
                   if (confirm('Are you sure you want to delete this milestone?')) {

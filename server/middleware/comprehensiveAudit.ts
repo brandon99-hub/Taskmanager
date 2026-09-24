@@ -333,137 +333,6 @@ async function logProjectActionAsync(
 }
 
 // Middleware to log module-specific actions
-export function logModuleAction(actionType: string) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const moduleId = req.params.id;
-    const moduleName = req.body?.name || 'Unknown Module';
-    
-    return logUserAction(actionType, 'module', moduleId, moduleName)(req, res, next);
-  };
-}
-
-// Middleware to log subtask-specific actions
-export function logSubtaskAction(actionType: string) {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    const subtaskId = req.params.id;
-    let subtaskName = req.body?.name || 'Unknown Subtask';
-    
-    // Capture old values BEFORE the API call executes
-    const oldValues = await getSubtaskValues(subtaskId);
-    
-    // Store the original send function
-    const originalSend = res.send;
-    const originalJson = res.json;
-    
-    // Override response methods to capture response data and log after the action
-    res.send = function(body: any) {
-      // Log after the action is complete
-      logSubtaskActionAsync(actionType, subtaskId, subtaskName, req, res, body, oldValues);
-      return originalSend.call(this, body);
-    };
-    
-    res.json = function(body: any) {
-      // Log after the action is complete
-      logSubtaskActionAsync(actionType, subtaskId, subtaskName, req, res, body, oldValues);
-      return originalJson.call(this, body);
-    };
-    
-    next();
-  };
-}
-
-// Async function to log subtask action with proper name fetching and change tracking
-async function logSubtaskActionAsync(
-  actionType: string, 
-  subtaskId: string, 
-  subtaskName: string, 
-  req: Request, 
-  res: Response, 
-  body: any,
-  oldValues: any
-) {
-  try {
-    // If we don't have the name in the body, try to fetch it from the database
-    if (subtaskName === 'Unknown Subtask' && subtaskId) {
-      const { db } = await import('../db');
-      const { subtasks, modules, projects } = await import('../../shared/schema');
-      const { eq } = await import('drizzle-orm');
-      
-      const [subtask] = await db
-        .select({ 
-          name: subtasks.name,
-          moduleId: subtasks.moduleId
-        })
-        .from(subtasks)
-        .where(eq(subtasks.id, subtaskId));
-      
-      if (subtask?.name) {
-        subtaskName = subtask.name;
-        
-        // Also get module and project names for better context
-        if (subtask.moduleId) {
-          const [module] = await db
-            .select({ 
-              name: modules.name,
-              projectId: modules.projectId
-            })
-            .from(modules)
-            .where(eq(modules.id, subtask.moduleId));
-          
-          if (module?.name) {
-            subtaskName = `${subtask.name} (${module.name})`;
-            
-            if (module.projectId) {
-              const [project] = await db
-                .select({ name: projects.name })
-                .from(projects)
-                .where(eq(projects.id, module.projectId));
-              
-              if (project?.name) {
-                subtaskName = `${subtask.name} (${module.name} - ${project.name})`;
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    // Use the old values we captured before the API call
-    const newValues = req.body;
-    
-    // Now log the action with the correct name and change details
-    const clientMachineInfo = getClientMachineInfo(req);
-    const { auditService } = await import('../services/comprehensiveAuditService');
-    
-    await auditService.logUserAction({
-      actionType,
-      resourceType: 'subtask',
-      resourceId: subtaskId,
-      resourceName: subtaskName,
-      oldValues: oldValues,
-      newValues: newValues,
-      success: res.statusCode >= 200 && res.statusCode < 400,
-      errorMessage: res.statusCode >= 400 ? (typeof body === 'string' ? body : body?.message || 'Unknown error') : undefined,
-    }, {
-      userId: (req as any).user?.id,
-      userEmail: (req as any).user?.email || (req as any).user?.userEmail || 'No Email Found',
-      ipAddress: req.ip || req.connection.remoteAddress || 'unknown',
-      userAgent: req.get('User-Agent') || 'unknown',
-      sessionId: (req as any).sessionID,
-      requestId: (req as any).requestId,
-      machineInfo: {
-        serverHostname: clientMachineInfo.clientHostname || 'server',
-        clientHostname: clientMachineInfo.clientHostname,
-        clientPlatform: clientMachineInfo.clientPlatform,
-        clientArch: clientMachineInfo.clientArch,
-        clientIP: clientMachineInfo.clientIP
-      }
-    });
-  } catch (error) {
-    console.error('Error logging subtask action:', error);
-  }
-}
-
 // Middleware to log user management actions
 export function logUserManagementAction(actionType: string) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -487,50 +356,50 @@ export function logTeamAction(actionType: string) {
 }
 
 // Middleware to log milestone actions
-export function logMilestoneAction(actionType: string) {
+export function logBillingItemAction(actionType: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const milestoneId = req.params.id;
-    let milestoneName = req.body?.name || 'Unknown Milestone';
-    
+    const billingItemId = req.params.id;
+    let billingItemName = req.body?.name || 'Unknown Billing Item';
+
     // Capture old values BEFORE the API call executes
-    const oldValues = await getMilestoneValues(milestoneId);
-    
+    const oldValues = await getBillingItemValues(billingItemId);
+
     // Store the original send function
     const originalSend = res.send;
     const originalJson = res.json;
-    
+
     // Override response methods to capture response data and log after the action
     res.send = function(body: any) {
       // Log after the action is complete
-      logMilestoneActionAsync(actionType, milestoneId, milestoneName, req, res, body, oldValues);
+      logBillingItemActionAsync(actionType, billingItemId, billingItemName, req, res, body, oldValues);
       return originalSend.call(this, body);
     };
-    
+
     res.json = function(body: any) {
       // Log after the action is complete
-      logMilestoneActionAsync(actionType, milestoneId, milestoneName, req, res, body, oldValues);
+      logBillingItemActionAsync(actionType, billingItemId, billingItemName, req, res, body, oldValues);
       return originalJson.call(this, body);
     };
-    
+
     next();
   };
 }
 
-// Helper function to get current milestone values
-async function getMilestoneValues(milestoneId: string): Promise<any> {
+// Helper function to get current billing item values
+async function getBillingItemValues(billingItemId: string): Promise<any> {
   try {
     const { db } = await import('../db');
-    const { milestones } = await import('../../shared/schema');
+    const { billingItems } = await import('../../shared/schema');
     const { eq } = await import('drizzle-orm');
-    
-    const [milestone] = await db
+
+    const [billingItem] = await db
       .select()
-      .from(milestones)
-      .where(eq(milestones.id, milestoneId));
-    
-    return milestone || {};
+      .from(billingItems)
+      .where(eq(billingItems.id, billingItemId));
+
+    return billingItem || {};
   } catch (error) {
-    console.error('Error fetching milestone values:', error);
+    console.error('Error fetching billing item values:', error);
     return {};
   }
 }
@@ -554,79 +423,60 @@ async function getProjectValues(projectId: string): Promise<any> {
   }
 }
 
-// Helper function to get current subtask values
-async function getSubtaskValues(subtaskId: string): Promise<any> {
-  try {
-    const { db } = await import('../db');
-    const { subtasks } = await import('../../shared/schema');
-    const { eq } = await import('drizzle-orm');
-    
-    const [subtask] = await db
-      .select()
-      .from(subtasks)
-      .where(eq(subtasks.id, subtaskId));
-    
-    return subtask || {};
-  } catch (error) {
-    console.error('Error fetching subtask values:', error);
-    return {};
-  }
-}
-
-// Async function to log milestone action with proper name fetching
-async function logMilestoneActionAsync(
-  actionType: string, 
-  milestoneId: string, 
-  milestoneName: string, 
-  req: Request, 
-  res: Response, 
+// Async function to log billing item action with proper name fetching
+async function logBillingItemActionAsync(
+  actionType: string,
+  billingItemId: string,
+  billingItemName: string,
+  req: Request,
+  res: Response,
   body: any,
   oldValues: any
 ) {
   try {
     // If we don't have the name in the body, try to fetch it from the database
-    if (milestoneName === 'Unknown Milestone' && milestoneId) {
+    if (billingItemName === 'Unknown Billing Item' && billingItemId) {
       const { db } = await import('../db');
-      const { milestones, projects } = await import('../../shared/schema');
+      const { billingItems, projects } = await import('../../shared/schema');
       const { eq } = await import('drizzle-orm');
-      
-      const [milestone] = await db
-        .select({ 
-          name: milestones.name,
-          projectId: milestones.projectId
+
+      const [billingItem] = await db
+        .select({
+          name: billingItems.name,
+          projectId: billingItems.projectId
         })
-        .from(milestones)
-        .where(eq(milestones.id, milestoneId));
-      
-      if (milestone?.name) {
-        milestoneName = milestone.name;
-        
+        .from(billingItems)
+        .where(eq(billingItems.id, billingItemId));
+
+      if (billingItem?.name) {
+        billingItemName = billingItem.name;
+
         // Also get project name for better context
-        if (milestone.projectId) {
+        if (billingItem.projectId) {
           const [project] = await db
             .select({ name: projects.name })
             .from(projects)
-            .where(eq(projects.id, milestone.projectId));
-          
+            .where(eq(projects.id, billingItem.projectId));
+
           if (project?.name) {
-            milestoneName = `${milestone.name} (${project.name})`;
+            billingItemName = `${billingItem.name} (${project.name})`;
           }
         }
       }
     }
-    
+
     // Now log the action with the correct name
     const clientMachineInfo = getClientMachineInfo(req);
     const { auditService } = await import('../services/comprehensiveAuditService');
-    
+
     // Use the old values we captured before the API call
     const newValues = req.body;
-    
+
     await auditService.logUserAction({
       actionType,
-      resourceType: 'milestone',
-      resourceId: milestoneId,
-      resourceName: milestoneName,
+      resourceType: 'billing_item',
+      resourceId: billingItemId,
+      resourceName: billingItemName,
       oldValues: oldValues,
       newValues: newValues,
       success: res.statusCode >= 200 && res.statusCode < 400,
@@ -647,7 +497,7 @@ async function logMilestoneActionAsync(
       }
     });
   } catch (error) {
-    console.error('Error logging milestone action:', error);
+    console.error('Error logging billing item action:', error);
   }
 }
 

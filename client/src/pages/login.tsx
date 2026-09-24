@@ -75,11 +75,11 @@ export default function Login() {
 
         <Card className="border-0 shadow-2xl bg-white/80 backdrop-blur-sm">
           <CardHeader className="text-center pb-6">
-            <div className="mx-auto mb-4">
+            <div className="mx-auto mb-5">
               <img 
-                src="/Appkings.png" 
-                alt="AppKings Logo" 
-                className="h-16 w-auto mx-auto"
+                src="/logo.png" 
+                alt="Ecorenet Logo" 
+                className="h-16 w-auto max-w-[280px] object-contain mx-auto"
               />
             </div>
             <CardTitle className="text-2xl font-bold text-gray-900">Welcome Back</CardTitle>
@@ -148,7 +148,7 @@ export default function Login() {
                   <Button
                     type="button"
                     variant="link"
-                    className="text-sm text-blue-600 hover:text-blue-700 p-0 h-auto font-medium"
+                    className="text-sm text-primary hover:text-primary-dark p-0 h-auto font-medium"
                     onClick={() => setIsForgotPasswordOpen(true)}
                   >
                     Forgot your password?
@@ -157,7 +157,7 @@ export default function Login() {
 
                 <Button
                   type="submit"
-                  className="w-full h-12 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium text-base shadow-lg hover:shadow-xl transition-all duration-200 transform hover:-translate-y-0.5"
+                  className="w-full h-12 bg-primary hover:bg-primary-dark text-white font-semibold text-base shadow-md hover:shadow-lg transition-all duration-200 transform hover:-translate-y-0.5"
                   disabled={loginMutation.isPending}
                   data-testid="button-login"
                 >
@@ -176,18 +176,15 @@ export default function Login() {
               </form>
             </Form>
 
-            <div className="mt-8 text-center">
-              <p className="text-sm text-gray-600">
-                Don't have an account?{" "}
-                <Button
-                  variant="link"
-                  className="p-0 h-auto text-blue-600 hover:text-blue-700 font-medium"
-                  onClick={() => setLocation("/register")}
-                  data-testid="link-register"
-                >
-                  Create one now
-                </Button>
-              </p>
+            <div className="mt-6 text-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-gray-600 hover:text-primary"
+                onClick={() => setLocation("/")}
+              >
+                ← Go to Public Support Portal
+              </Button>
             </div>
           </CardContent>
         </Card>

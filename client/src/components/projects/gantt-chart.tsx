@@ -126,7 +126,7 @@ const getStatusColor = (status: string) => {
     case 'done':
       return 'bg-emerald-500';
     case 'in_progress':
-      return 'bg-blue-500';
+      return 'bg-primary';
     case 'on_hold':
       return 'bg-amber-500';
     case 'overdue':
@@ -146,7 +146,7 @@ const getPriorityColor = (priority: string) => {
     case 'high':
       return 'border-orange-500 bg-orange-50 text-orange-700';
     case 'medium':
-      return 'border-blue-500 bg-blue-50 text-blue-700';
+      return 'border-primary bg-gray-50 text-primary';
     case 'low':
       return 'border-gray-500 bg-gray-50 text-gray-700';
     default:
@@ -389,7 +389,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
     if (!phaseNumber) return 'bg-gray-100 text-gray-600';
     
     const colors = [
-      'bg-blue-100 text-blue-700',
+      'bg-gray-100 text-primary',
       'bg-green-100 text-green-700', 
       'bg-purple-100 text-purple-700',
       'bg-orange-100 text-orange-700',
@@ -601,7 +601,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <Target className="h-5 w-5 text-blue-600" />
+              <Target className="h-5 w-5 text-primary" />
               Project Timeline - Gantt Chart
             </CardTitle>
             <p className="text-sm text-gray-600 mt-1">
@@ -695,8 +695,8 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
               <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 z-10 shadow-sm">
                 <div className="flex">
                   {/* Labels Column - WIDER to cover milestone names completely */}
-                  <div className="w-96 bg-gradient-to-b from-blue-50 to-white border-r border-gray-200 p-3">
-                    <div className="text-sm font-semibold text-blue-700">Milestones</div>
+                  <div className="w-96 bg-gradient-to-b from-gray-50 to-white border-r border-gray-200 p-3">
+                    <div className="text-sm font-semibold text-primary">Milestones</div>
                   </div>
                   
                   {/* Timeline Grid - Starts exactly where milestone bars begin */}
@@ -823,7 +823,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                                 {getPhaseName(task.phaseNumber)}
                               </Badge>
                               {task.isParent && (
-                                <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800">
+                                <Badge variant="outline" className="text-xs bg-gray-100 text-primary">
                                   Parent
                                 </Badge>
                               )}
@@ -887,23 +887,23 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                       
                       {/* Child Modules (Phase 3) - Show modules under milestones */}
                       {expandedMilestones.has(task.id) && hasChildModules && (
-                        <div className="bg-blue-50 border-b border-gray-100">
+                        <div className="bg-gray-50 border-b border-gray-100">
                           {childModules.map((childModule: any, index: number) => {
                             const childX = getMilestoneStartPosition(childModule);
                             const childWidth = getTaskWidth(childModule.startDate, childModule.dueDate);
                             
                             return (
-                              <div key={childModule.id} className="flex items-center h-16 border-b border-gray-100 last:border-b-0 bg-blue-50/50">
+                              <div key={childModule.id} className="flex items-center h-16 border-b border-gray-100 last:border-b-0 bg-gray-50">
                                 {/* Child Module Label */}
-                                <div className="w-96 bg-blue-50/50 border-r border-gray-200 p-3 flex items-center space-x-3">
+                                <div className="w-96 bg-gray-50 border-r border-gray-200 p-3 flex items-center space-x-3">
                                   <div className="flex items-center space-x-2 ml-8">
-                                    <div className="w-3 h-3 rounded-full bg-blue-400"></div>
+                                    <div className="w-3 h-3 rounded-full bg-primary"></div>
                                     <div className="flex-1 min-w-0">
                                       <div className="font-medium text-sm text-gray-700 truncate">
                                         {childModule.name}
                                       </div>
                                       <div className="flex items-center space-x-2 mt-1">
-                                        <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800">
+                                        <Badge variant="outline" className="text-xs bg-gray-100 text-primary">
                                           Module
                                         </Badge>
                                         <Badge variant="outline" className="text-xs">
@@ -918,7 +918,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                                 <div className="flex-1 relative">
                                   <div className="relative h-full">
                                     <div
-                                      className="absolute top-2 h-10 bg-blue-400 rounded cursor-pointer transition-all hover:opacity-80 shadow-sm border border-blue-300"
+                                      className="absolute top-2 h-10 bg-primary rounded cursor-pointer transition-all hover:opacity-80 shadow-sm border border-primary"
                                       style={{
                                         left: `${childX}px`,
                                         width: `${Math.max(20, childWidth)}px`,
@@ -932,7 +932,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                                     {/* Progress Overlay for child modules */}
                                     {childModule.progress > 0 && (
                                       <div
-                                        className="absolute top-2 h-10 bg-gradient-to-r from-blue-500 to-blue-600 rounded-l transition-all shadow-sm"
+                                        className="absolute top-2 h-10 bg-primary rounded-l transition-all shadow-sm"
                                         style={{
                                           left: `${childX}px`,
                                           width: `${(childWidth * childModule.progress) / 100}px`,
@@ -1009,7 +1009,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                   <span className="text-gray-600">Completed</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-primary"></div>
                   <span className="text-gray-600">In Progress</span>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -1050,7 +1050,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                       </Badge>
                       
                       {task.isParent && (
-                        <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800">
+                        <Badge variant="outline" className="text-xs bg-gray-100 text-primary">
                           Parent
                         </Badge>
                       )}
@@ -1078,12 +1078,12 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
 
                   {/* Child Modules Section for List View (Phase 3) */}
                   {expandedMilestones.has(task.id) && hasChildModules && (
-                    <div className="mt-3 p-3 bg-blue-50 rounded border-l-4 border-blue-500">
+                    <div className="mt-3 p-3 bg-gray-50 rounded border-l-4 border-primary">
                       <div className="text-sm font-medium text-gray-700 mb-2">Modules:</div>
                       <div className="space-y-2">
                         {childModules.map((childModule: any) => (
                           <div key={childModule.id} className="flex items-center space-x-3 text-sm">
-                            <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                            <div className="w-2 h-2 bg-primary rounded-full"></div>
                             <span className="text-gray-700">{childModule.name}</span>
                             <Badge variant="outline" className="text-xs">
                               {childModule.status}
@@ -1136,7 +1136,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2">
-                    <Target className="h-5 w-5 text-blue-600" />
+                    <Target className="h-5 w-5 text-primary" />
                     {currentData?.project?.name || 'Project'} Timeline - Gantt Chart
                   </CardTitle>
                   <p className="text-sm text-gray-600 mt-1">
@@ -1218,7 +1218,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                 /* Loading State */
                 <div className="flex items-center justify-center h-64">
                   <div className="text-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
                     <p className="text-sm text-gray-600">Loading project data...</p>
                   </div>
                 </div>
@@ -1233,8 +1233,8 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                     <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 z-10 shadow-sm">
                       <div className="flex">
                         {/* Labels Column - WIDER to cover milestone names completely */}
-                        <div className="w-96 bg-gradient-to-b from-blue-50 to-white border-r border-gray-200 p-3 shadow-sm">
-                          <div className="text-sm font-semibold text-blue-700">Milestones</div>
+                        <div className="w-96 bg-gradient-to-b from-gray-50 to-white border-r border-gray-200 p-3 shadow-sm">
+                          <div className="text-sm font-semibold text-primary">Milestones</div>
                         </div>
                         
                         {/* Timeline Grid - Starts exactly where milestone bars begin */}
@@ -1427,7 +1427,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                         <span className="text-gray-600">Completed</span>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                        <div className="w-3 h-3 rounded-full bg-primary"></div>
                         <span className="text-gray-600">In Progress</span>
                       </div>
                       <div className="flex items-center space-x-2">
@@ -1480,7 +1480,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
 
                       {/* Subtasks Section for List View */}
                       {expandedMilestones.has(task.id) && task.subtasks && task.subtasks.length > 0 && (
-                        <div className="mt-3 p-3 bg-gray-50 rounded border-l-4 border-blue-500">
+                        <div className="mt-3 p-3 bg-gray-50 rounded border-l-4 border-primary">
                           <div className="text-sm font-medium text-gray-700 mb-2">Subtasks:</div>
                           <div className="space-y-2">
                             {task.subtasks.map((subtask: NonNullable<typeof task.subtasks>[0]) => (
@@ -1526,7 +1526,7 @@ export default function GanttChart({ data, onTaskClick, onPhaseClick }: GanttCha
                       key={p.id}
                       className={`px-4 py-2 rounded-lg border text-sm transition-colors duration-200 ${
                         p.id === activeProjectId 
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-md' 
+                          ? 'bg-primary text-white border-primary shadow-md'
                           : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'
                       }`}
                       onClick={async () => {

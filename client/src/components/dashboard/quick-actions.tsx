@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, Users, BarChart3, Download, UserPlus, DollarSign, Settings, FileText } from "lucide-react";
+import { Plus, Users, BarChart3, Download, Settings, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
@@ -30,84 +30,16 @@ export default function QuickActions() {
     const baseActions = [
       {
         icon: Users,
-        label: "Manage Milestones",
-        tooltip: "View, assign and update task statuses",
-        testId: "action-manage-tasks", 
+        label: "Ticket Board",
+        tooltip: "View tickets grouped by status",
+        testId: "action-manage-tasks",
         onClick: () => setLocation('/tasks'),
-        allowedRoles: ['admin', 'manager', 'employee', 'project_manager', 'finance_head', 'segment_leader']
+        allowedRoles: ['admin', 'manager', 'employee', 'segment_leader']
       }
     ];
 
     // Role-specific actions
     switch (dashboardType) {
-      case 'project_manager':
-        return [
-          {
-            icon: Plus,
-            label: "Create New Project",
-            tooltip: "Start a new project with tasks and team assignments",
-            testId: "action-create-project",
-            onClick: () => {
-              window.dispatchEvent(new CustomEvent('open-create-project'))
-            },
-            allowedRoles: ['project_manager']
-          },
-          {
-            icon: UserPlus,
-            label: "Manage Teams",
-            tooltip: "Create and manage project teams",
-            testId: "action-manage-teams",
-            onClick: () => setLocation('/teams'),
-            allowedRoles: ['project_manager']
-          },
-          ...baseActions,
-          {
-            icon: BarChart3,
-            label: "Project Reports",
-            tooltip: "View project performance and analytics",
-            testId: "action-view-analytics",
-            onClick: () => setLocation('/reports'),
-            allowedRoles: ['project_manager']
-          },
-          {
-            icon: Download,
-            label: "Export Data",
-            tooltip: "Download project and task data as CSV",
-            testId: "action-export-data",
-            onClick: handleExportData,
-            allowedRoles: ['project_manager']
-          }
-        ];
-
-      case 'finance_head':
-        return [
-          {
-            icon: DollarSign,
-            label: "Invoice Management",
-            tooltip: "Manage invoices and payment tracking",
-            testId: "action-manage-invoices",
-            onClick: () => setLocation('/invoices'),
-            allowedRoles: ['finance_head']
-          },
-          {
-            icon: FileText,
-            label: "Financial Reports",
-            tooltip: "View financial reports and analytics",
-            testId: "action-financial-reports",
-            onClick: () => setLocation('/reports?tab=financial'),
-            allowedRoles: ['finance_head']
-          },
-          ...baseActions,
-          {
-            icon: Download,
-            label: "Export Financial Data",
-            tooltip: "Download financial reports and invoices",
-            testId: "action-export-data",
-            onClick: handleExportData,
-            allowedRoles: ['finance_head']
-          }
-        ];
-
       case 'segment_leader_academic':
       case 'segment_leader_parastals':
       case 'segment_leader_private':

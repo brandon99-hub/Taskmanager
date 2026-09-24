@@ -28,26 +28,20 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
     projectSegment: 'all'
   });
   const dashboardType = getDashboardType();
+  const { data: segments = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ['/api/segments'],
+  });
+  const segmentNameById: Record<string, string> = Object.fromEntries(segments.map((s) => [s.id, s.name]));
 
-  // Determine API endpoint and terminology based on dashboard type
+  // Determine API endpoint and terminology. The old per-dashboard-type module/subtask
+  // breakdowns were removed along with that data model - everyone now sees milestones
+  // (billing items), which is the only concept left that "completed"/"overdue" applies to.
   const getApiEndpoint = () => {
-    if (dashboardType === 'project_manager') {
-      return type === "completed" ? '/api/dashboard/completed-modules' : '/api/dashboard/overdue-modules';
-    } else if (dashboardType === 'employee') {
-      return type === "completed" ? '/api/dashboard/completed-subtasks' : '/api/dashboard/overdue-breakdown';
-    } else {
-      return type === "completed" ? '/api/dashboard/completed-milestones' : '/api/dashboard/overdue-combined';
-    }
+    return type === "completed" ? '/api/dashboard/completed-milestones' : '/api/dashboard/overdue-combined';
   };
 
   const getTerminology = () => {
-    if (dashboardType === 'project_manager') {
-      return { singular: 'module', plural: 'modules', title: 'Modules' };
-    } else if (dashboardType === 'employee') {
-      return { singular: 'subtask', plural: 'subtasks', title: 'Subtasks' };
-    } else {
-      return { singular: 'milestone', plural: 'milestones', title: 'Milestones' };
-    }
+    return { singular: 'milestone', plural: 'milestones', title: 'Milestones' };
   };
 
   const terms = getTerminology();
@@ -60,11 +54,11 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
   });
 
   // Handle different response formats
-  const isCombinedData = Array.isArray(data) && data.length > 0 && data[0]?.project && (data[0]?.milestones || data[0]?.subtasks);
+  const isCombinedData = Array.isArray(data) && data.length > 0 && data[0]?.project && data[0]?.billingItems;
   const isCompletedMilestonesResponse = data && typeof data === 'object' && 'milestones' in data && 'systemTotalMilestones' in data;
-  const items = isCombinedData ? data : 
-    (isCompletedMilestonesResponse ? data.milestones : 
-    (Array.isArray(data) ? data : (data?.completedSubtasks || data?.overdueSubtasks || data?.overdueModules || [])));
+  const items = isCombinedData ? data :
+    (isCompletedMilestonesResponse ? data.milestones :
+    (Array.isArray(data) ? data : []));
   const systemTotalMilestones = isCompletedMilestonesResponse ? data.systemTotalMilestones : 0;
 
 
@@ -90,7 +84,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
     switch (status) {
       case 'done': return 'bg-green-100 text-green-800';
       case 'overdue': return 'bg-red-100 text-red-800';
-      case 'in_progress': return 'bg-blue-100 text-blue-800';
+      case 'in_progress': return 'bg-gray-100 text-primary';
       case 'client_review': return 'bg-yellow-100 text-yellow-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -99,7 +93,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
   const getBillingStatusColor = (status: string) => {
     switch (status) {
       case 'paid': return 'bg-green-100 text-green-800';
-      case 'sent': return 'bg-blue-100 text-blue-800';
+      case 'sent': return 'bg-gray-100 text-primary';
       case 'to_send': return 'bg-orange-100 text-orange-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -121,10 +115,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
     items.reduce((acc: any, projectGroup: any) => {
       acc[projectGroup.project.id] = {
         project: projectGroup.project,
-        items: [
-          ...projectGroup.milestones.map((milestone: any) => ({ ...milestone, type: 'milestone' })),
-          ...projectGroup.subtasks.map((subtask: any) => ({ ...subtask, type: 'subtask' }))
-        ]
+        items: (projectGroup.billingItems || []).map((item: any) => ({ ...item, type: 'milestone' }))
       };
       return acc;
     }, {}) :
@@ -143,26 +134,25 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
 
 
   // Calculate metrics based on type (completed vs overdue)
-  const overdueMilestones = type === "overdue" ? (isCombinedData ? 
-    items.reduce((sum: number, projectGroup: any) => sum + (projectGroup.milestones?.length || 0), 0) :
+  const overdueMilestones = type === "overdue" ? (isCombinedData ?
+    items.reduce((sum: number, projectGroup: any) => sum + (projectGroup.billingItems?.length || 0), 0) :
     items.length) : 0;
-  const overdueSubtasks = type === "overdue" ? (isCombinedData ? 
-    items.reduce((sum: number, projectGroup: any) => sum + (projectGroup.subtasks?.length || 0), 0) :
-    0) : 0;
-  
+  // Subtasks no longer exist as a concept (billing items have no subtask hierarchy).
+  const overdueSubtasks = 0;
+
   const totalItems = type === "overdue" ? (overdueMilestones + overdueSubtasks) : items.length;
-  
+
   // Calculate payment values for overdue milestones only
-  const totalValue = type === "overdue" ? (isCombinedData ? 
-    items.reduce((sum: number, projectGroup: any) => 
-      sum + (projectGroup.milestones?.reduce((milSum: number, milestone: any) => 
-        milSum + parseFloat(milestone.feeAmount || '0'), 0) || 0), 0) : 
+  const totalValue = type === "overdue" ? (isCombinedData ?
+    items.reduce((sum: number, projectGroup: any) =>
+      sum + (projectGroup.billingItems?.reduce((milSum: number, milestone: any) =>
+        milSum + parseFloat(milestone.feeAmount || '0'), 0) || 0), 0) :
     0) : 0;
-  
-  const paidValue = type === "overdue" ? (isCombinedData ? 
-    items.reduce((sum: number, projectGroup: any) => 
-      sum + (projectGroup.milestones?.reduce((milSum: number, milestone: any) => 
-        milSum + (milestone.billingStatus === 'paid' ? parseFloat(milestone.feeAmount || '0') : 0), 0) || 0), 0) : 
+
+  const paidValue = type === "overdue" ? (isCombinedData ?
+    items.reduce((sum: number, projectGroup: any) =>
+      sum + (projectGroup.billingItems?.reduce((milSum: number, milestone: any) =>
+        milSum + (milestone.billingStatus === 'paid' ? parseFloat(milestone.feeAmount || '0') : 0), 0) || 0), 0) :
     0) : 0;
   
   const pendingValue = totalValue - paidValue;
@@ -222,15 +212,15 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                 {type === "completed" ? (
                   <>
                     {/* Completed Milestones Summary Cards */}
-                    <Card className="bg-gradient-to-r from-blue-50 to-blue-100">
+                    <Card className="bg-gradient-to-r from-gray-50 to-gray-100">
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-medium text-blue-600">Completed {terms.title}</p>
-                            <p className="text-2xl font-bold text-blue-900">{completedMilestones}</p>
-                            <p className="text-xs text-blue-600 mt-1">{totalMilestones} total {terms.plural}</p>
+                            <p className="text-sm font-medium text-primary">Completed {terms.title}</p>
+                            <p className="text-2xl font-bold text-primary">{completedMilestones}</p>
+                            <p className="text-xs text-primary mt-1">{totalMilestones} total {terms.plural}</p>
                           </div>
-                          <CheckCircle className="h-8 w-8 text-blue-600" />
+                          <CheckCircle className="h-8 w-8 text-primary" />
                         </div>
                       </CardContent>
                     </Card>
@@ -264,14 +254,14 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                 ) : (
                   <>
                     {/* Overdue Milestones Summary Cards */}
-                <Card className="bg-gradient-to-r from-blue-50 to-blue-100">
+                <Card className="bg-gradient-to-r from-gray-50 to-gray-100">
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-medium text-blue-600">Overdue Milestones</p>
-                        <p className="text-2xl font-bold text-blue-900">{overdueMilestones}</p>
+                        <p className="text-sm font-medium text-primary">Overdue Milestones</p>
+                        <p className="text-2xl font-bold text-primary">{overdueMilestones}</p>
                       </div>
-                      <AlertTriangle className="h-8 w-8 text-blue-600" />
+                      <AlertTriangle className="h-8 w-8 text-primary" />
                     </div>
                   </CardContent>
                 </Card>
@@ -362,9 +352,9 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                         className="text-xs border rounded px-2 py-1"
                       >
                         <option value="all">All Segments</option>
-                        <option value="private">Private</option>
-                        <option value="academic">Academic</option>
-                        <option value="parastatal">Parastatal</option>
+                        {segments.map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
                       </select>
 
                       {/* Time-based filter for completed milestones */}
@@ -403,7 +393,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                   {/* Filtered Projects */}
                   {Object.values(itemsByProject).filter((projectGroup: any) => {
                     if (filterConfig.projectSegment !== 'all') {
-                      if (projectGroup.project?.segment !== filterConfig.projectSegment) {
+                      if (projectGroup.project?.segmentId !== filterConfig.projectSegment) {
                         return false;
                       }
                     }
@@ -474,7 +464,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                           <div className="flex items-center gap-3">
                             <span className="text-lg">{projectGroup.project?.name}</span>
                             <Badge variant="outline" className="capitalize">
-                              {projectGroup.project?.segment || 'private'}
+                              {segmentNameById[projectGroup.project?.segmentId] || 'Unassigned'}
                             </Badge>
                             <Badge className={getStatusColor(projectGroup.project?.status)}>
                               {projectGroup.project?.status}
@@ -508,8 +498,8 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                               (filterConfig.priorityFilter === 'all' || item.priority === filterConfig.priorityFilter)
                             ).length > 0 && (
                               <div>
-                                <div className={`px-4 py-2 border-b ${type === "completed" ? "bg-green-50" : "bg-blue-50"}`}>
-                                  <h4 className={`font-medium ${type === "completed" ? "text-green-900" : "text-blue-900"}`}>
+                                <div className={`px-4 py-2 border-b ${type === "completed" ? "bg-green-50" : "bg-gray-50"}`}>
+                                  <h4 className={`font-medium ${type === "completed" ? "text-green-900" : "text-primary"}`}>
                                     {type === "completed" ? "Completed Milestones" : "Overdue Milestones"}
                                   </h4>
                                 </div>
@@ -847,7 +837,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                               <div className="flex items-center gap-3">
                               {projectGroup.project?.name}
                               <Badge variant="outline" className="capitalize">
-                                {projectGroup.project?.segment || 'private'}
+                                {segmentNameById[projectGroup.project?.segmentId] || 'Unassigned'}
                               </Badge>
                               <Badge className={getStatusColor(projectGroup.project?.status)}>
                                 {projectGroup.project?.status}
@@ -916,8 +906,8 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
 
                               {/* Milestone Metrics */}
                               {milestones.length > 0 && (
-                                <div className={`p-3 rounded-lg ${type === "completed" ? "bg-green-50" : "bg-blue-50"}`}>
-                                  <h4 className={`font-medium mb-2 ${type === "completed" ? "text-green-900" : "text-blue-900"}`}>
+                                <div className={`p-3 rounded-lg ${type === "completed" ? "bg-green-50" : "bg-gray-50"}`}>
+                                  <h4 className={`font-medium mb-2 ${type === "completed" ? "text-green-900" : "text-primary"}`}>
                                     {type === "completed" ? "Completed Milestones" : "Overdue Milestones"}
                                   </h4>
                                   <div className="space-y-2">
@@ -970,8 +960,8 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
 
                               {/* Completion Timeline for Completed Milestones */}
                               {type === "completed" && milestones.length > 0 && (
-                                <div className="p-3 bg-blue-50 rounded-lg">
-                                  <h4 className="font-medium text-blue-900 mb-2">Completion Timeline</h4>
+                                <div className="p-3 bg-gray-50 rounded-lg">
+                                  <h4 className="font-medium text-primary mb-2">Completion Timeline</h4>
                                   <div className="space-y-2">
                                     {milestones
                                       .sort((a: any, b: any) => new Date(b.paymentReceivedAt || b.endDate).getTime() - new Date(a.paymentReceivedAt || a.endDate).getTime())
@@ -979,7 +969,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                                       .map((milestone: any, index: number) => (
                                         <div key={milestone.id} className="flex items-center justify-between text-sm">
                                           <div className="flex items-center gap-2">
-                                            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                            <div className="w-2 h-2 bg-primary rounded-full"></div>
                                             <span className="font-medium">{milestone.name}</span>
                                           </div>
                                           <div className="text-gray-600">
@@ -1061,14 +1051,14 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                             <>
                               {/* Overview for Combined Data */}
                               <div className="grid gap-4 md:grid-cols-2">
-                                <div className="p-3 bg-blue-50 rounded-lg">
-                                  <h4 className="font-medium text-blue-900 mb-2">Milestone Summary</h4>
+                                <div className="p-3 bg-gray-50 rounded-lg">
+                                  <h4 className="font-medium text-primary mb-2">Milestone Summary</h4>
                                   <div className="space-y-2">
                                     {items.reduce((sum: number, projectGroup: any) => sum + (projectGroup.milestones?.length || 0), 0) > 0 && (
                                       <>
                                         <div className="flex items-center justify-between text-sm">
                                           <span>Count:</span>
-                                          <span className="font-medium text-blue-900">
+                                          <span className="font-medium text-primary">
                                             {items.reduce((sum: number, projectGroup: any) => sum + (projectGroup.milestones?.length || 0), 0)}
                                           </span>
                                         </div>
@@ -1210,7 +1200,7 @@ export default function MilestoneDetailModal({ type, trigger }: MilestoneDetailM
                             </div>
                             <div className="flex items-center justify-between">
                               <span className="text-sm text-gray-600">Total Actual Hours:</span>
-                              <span className="font-medium text-blue-600">
+                              <span className="font-medium text-primary">
                                 {items.reduce((sum: number, m: any) => sum + (parseFloat(m.actualHours || '0')), 0)}h
                               </span>
                             </div>

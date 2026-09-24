@@ -4,7 +4,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useScreenSize, useResponsiveDesign, useTouchInteractions } from "@/hooks/use-mobile";
-import Navigation from "@/components/layout/navigation";
 import CreateProjectModal from "@/components/projects/create-project-modal";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +11,8 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangle, Search, Filter, Grid3X3, Table, Clock } from "lucide-react";
+import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangle, Search, Filter, Grid3X3, Table, Clock, FolderOpen, Building2 } from "lucide-react";
+import PageHeader from "@/components/layout/page-header";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { batchQuery } from "@/lib/queryBatcher";
@@ -52,6 +52,26 @@ export default function Projects() {
     queryKey: ['/api/projects'],
     enabled: !!isAuthenticated,
   });
+
+  const { data: segments = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ['/api/segments'],
+    enabled: !!isAuthenticated,
+  });
+  const segmentNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of segments) map[s.id] = s.name;
+    return map;
+  }, [segments]);
+
+  const { data: companies = [] } = useQuery<any[]>({
+    queryKey: ['/api/companies'],
+    enabled: !!isAuthenticated,
+  });
+  const companyNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of companies) map[c.id] = c.name;
+    return map;
+  }, [companies]);
 
   // Fetch milestone data for each project using batch loading for better performance
   const { data: projectMilestoneData = [], isLoading: milestonesLoading } = useQuery<Record<string, any[]>>({
@@ -121,7 +141,40 @@ export default function Projects() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [segmentFilter, setSegmentFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
-  
+
+  // Support/SLA state: this app only tracks projects during their SLA/support period, so the
+  // filter is about that state rather than the full project lifecycle status. "On Support" and
+  // "Expired - Pending Renewal" are purely computed from the project's own start/end dates;
+  // "Closed" is a deliberate action (the support_closed status) set via the project detail page,
+  // not just the date lapsing.
+  const getSupportState = (project: any): 'on_support' | 'expired' | 'closed' => {
+    if (project.status === 'support_closed') return 'closed';
+    if (project.endDate && new Date(project.endDate) < new Date()) return 'expired';
+    return 'on_support';
+  };
+
+  const formatSupportStatus = (state: 'on_support' | 'expired' | 'closed') => {
+    switch (state) {
+      case 'on_support':
+        return 'On Support';
+      case 'expired':
+        return 'Expired - Pending Renewal';
+      case 'closed':
+        return 'Closed';
+    }
+  };
+
+  const getSupportStatusBadgeClass = (state: 'on_support' | 'expired' | 'closed') => {
+    switch (state) {
+      case 'on_support':
+        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case 'expired':
+        return 'bg-amber-50 text-amber-700 border-amber-200';
+      case 'closed':
+        return 'bg-slate-100 text-slate-700 border-slate-200';
+    }
+  };
+
   const filteredProjects = useMemo(() => {
     // Ensure projects is an array
     const safeProjects = Array.isArray(projects) ? projects : [];
@@ -136,14 +189,14 @@ export default function Projects() {
       ));
     }
     
-    // Apply status filter
+    // Apply support-state filter (On Support / Expired - Pending Renewal / Closed)
     if (statusFilter !== "all") {
-      filtered = filtered.filter((p: any) => p.status === statusFilter);
+      filtered = filtered.filter((p: any) => getSupportState(p) === statusFilter);
     }
     
     // Apply segment filter
     if (segmentFilter !== "all") {
-      filtered = filtered.filter((p: any) => p.segment === segmentFilter);
+      filtered = filtered.filter((p: any) => p.segmentId === segmentFilter);
     }
     
     return filtered;
@@ -323,6 +376,7 @@ export default function Projects() {
       case 'completed': return 'bg-primary text-primary-foreground';
       case 'on_hold': return 'bg-error text-error-foreground';
       case 'on_support': return 'bg-purple-500 text-white';
+      case 'support_closed': return 'bg-gray-700 text-white';
       case 'inactive': return 'bg-gray-500 text-white';
       case 'cancelled': return 'bg-gray-500 text-white';
       default: return 'bg-gray-500 text-white';
@@ -336,6 +390,7 @@ export default function Projects() {
       'on_hold': 'On Hold',
       'completed': 'Completed',
       'on_support': 'On Support',
+      'support_closed': 'Support Closed',
       'inactive': 'Inactive'
     };
     
@@ -346,37 +401,65 @@ export default function Projects() {
 
   return (
     <div className="min-h-screen bg-background-page">
-      <Navigation />
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
-          <div>
-            <h2 className="text-3xl font-medium text-gray-900 mb-2" data-testid="text-title">Projects</h2>
-            <p className="text-gray-600" data-testid="text-subtitle">Manage and track all your active projects</p>
-          </div>
-          <div className="flex space-x-3 mt-4 md:mt-0">
-            {/* Mount modal so it can open from global event as well */}
-            {isAdminRole() && <CreateProjectModal />}
-          </div>
-        </div>
+        <PageHeader
+          icon={FolderOpen}
+          title="Projects"
+          description="Manage and track all your active projects"
+          titleBadge={
+            <Badge variant="outline" data-testid="badge-project-count">
+              ({filteredProjects.length})
+            </Badge>
+          }
+          actions={isAdminRole() && <CreateProjectModal />}
+          filters={
+            <>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="lg:w-56" data-testid="select-status">
+                  <SelectValue placeholder="Support state" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Support States</SelectItem>
+                  <SelectItem value="on_support">On Support</SelectItem>
+                  <SelectItem value="expired">Expired - Pending Renewal</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                </SelectContent>
+              </Select>
 
-        {/* Search and Filters */}
-        <div className="mb-6 space-y-4">
-          {/* View Toggle and Project Count Row */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            {/* View Toggle */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-700">View:</span>
-              <div className="flex bg-gray-100 rounded-lg p-1">
+              <Select value={segmentFilter} onValueChange={setSegmentFilter}>
+                <SelectTrigger className="lg:w-48" data-testid="select-segment">
+                  <SelectValue placeholder="Filter by segment" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Segments</SelectItem>
+                  {segments.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  placeholder="Search projects..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="pl-10"
+                  data-testid="input-search"
+                />
+              </div>
+
+              <div className="flex bg-gray-100 rounded-lg p-1 shrink-0">
                 <button
                   onClick={() => setViewMode("grid")}
                   className={`px-3 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 ${
-                    viewMode === "grid" 
-                      ? 'bg-white text-gray-900 shadow-sm' 
+                    viewMode === "grid"
+                      ? 'bg-white text-gray-900 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
+                  data-testid="button-view-grid"
                 >
                   <Grid3X3 className="h-4 w-4" />
                   Grid
@@ -384,84 +467,27 @@ export default function Projects() {
                 <button
                   onClick={() => setViewMode("table")}
                   className={`px-3 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 ${
-                    viewMode === "table" 
-                      ? 'bg-white text-gray-900 shadow-sm' 
+                    viewMode === "table"
+                      ? 'bg-white text-gray-900 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
+                  data-testid="button-view-table"
                 >
                   <Table className="h-4 w-4" />
                   Table
                 </button>
               </div>
-            </div>
-            
-            {/* Project Count */}
-            <div className="text-sm text-gray-600">
-              {filteredProjects.length} project{filteredProjects.length !== 1 ? 's' : ''} found
-            </div>
-          </div>
-          
-          {/* Filters Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Filters & Search</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className={`grid gap-4 ${responsive.gridCols} md:grid-cols-2 lg:grid-cols-4`}>
-                <div className="relative lg:col-span-2">
-                  <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                  <Input
-                    placeholder="Search projects..."
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    className="pl-10"
-                    data-testid="input-search"
-                  />
-                </div>
-                
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger data-testid="select-status">
-                    <SelectValue placeholder="Filter by status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="planning">Planning</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="on_hold">On Hold</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="on_support">On Support</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
+            </>
+          }
+        />
 
-                <div className="flex flex-col space-y-2 lg:space-y-0">
-                  <Select value={segmentFilter} onValueChange={setSegmentFilter}>
-                    <SelectTrigger data-testid="select-segment">
-                      <SelectValue placeholder="Filter by segment" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Segments</SelectItem>
-                      <SelectItem value="academic">Academic</SelectItem>
-                      <SelectItem value="parastals">Parastals</SelectItem>
-                      <SelectItem value="private">Private</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  
-                  <div className="flex items-center justify-between">
-                    <Badge variant="outline" data-testid="badge-project-count">
-                      {filteredProjects.length} projects
-                    </Badge>
-                    {(statusFilter !== "all" || segmentFilter !== "all") && (
-                      <Badge variant="secondary" className="text-xs">
-                        Filtered
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        {(statusFilter !== "all" || segmentFilter !== "all") && (
+          <div className="flex items-center justify-end mb-4">
+            <Badge variant="secondary" className="text-xs">
+              Filtered
+            </Badge>
+          </div>
+        )}
 
         {/* Projects Display */}
         {projectsLoading ? (
@@ -488,260 +514,93 @@ export default function Projects() {
               <h3 className="text-lg font-medium text-gray-900 mb-2" data-testid="text-no-projects">No projects found</h3>
               <p className="text-gray-600 mb-4">Try adjusting your search or filters</p>
             </CardContent>
-          </Card>
-        ) : viewMode === "table" ? (
-           /* Table View */
-           <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 border border-gray-200 rounded-lg">
-            <table className="min-w-full border-collapse bg-white rounded-lg overflow-hidden shadow-sm" style={{ minWidth: '1200px' }}>
+          </Card>        ) : viewMode === "table" ? (
+          /* Table View */
+          <div className="w-full overflow-x-auto border border-gray-200 rounded-lg shadow-sm bg-white">
+            <table className="w-full text-left border-collapse bg-white">
               <thead>
-                <tr className="border-b border-gray-200 text-xs md:text-sm">
-                  <th className="text-left p-3 min-w-[200px]">Client</th>
-                  <th className="text-left p-3 hidden md:table-cell min-w-[100px]">Segment</th>
-                  <th className="text-left p-3 min-w-[80px]">Status</th>
-                  <th className="text-left p-3 min-w-[100px]">Progress</th>
-                  <th className="text-left p-3 hidden lg:table-cell min-w-[80px]">Overdue</th>
-                  <th className="text-left p-3 hidden lg:table-cell min-w-[150px]">Client Email</th>
-                  <th className="text-left p-3 hidden xl:table-cell min-w-[120px]">Contract Amount</th>
-                  <th className="text-left p-3 hidden xl:table-cell min-w-[100px]">Paid</th>
-                  <th className="text-left p-3 hidden xl:table-cell min-w-[100px]">Milestones</th>
-                  <th className="text-left p-3 hidden xl:table-cell min-w-[100px]">Start Date</th>
-                  <th className="text-left p-3 hidden xl:table-cell min-w-[100px]">End Date</th>
-                  <th className="text-left p-3 hidden xl:table-cell min-w-[80px]">Duration</th>
-                  <th className="text-left p-3 min-w-[120px]">Actions</th>
+                <tr className="border-b border-gray-200 text-xs md:text-sm bg-gray-50/75">
+                  <th className="text-left p-3 min-w-[200px] font-semibold text-gray-700">Project Title</th>
+                  <th className="text-left p-3 min-w-[130px] font-semibold text-gray-700">Company</th>
+                  <th className="text-left p-3 min-w-[180px] font-semibold text-gray-700">Contact Person</th>
+                  <th className="text-left p-3 hidden md:table-cell min-w-[130px] font-semibold text-gray-700">Sector</th>
+                  <th className="text-left p-3 min-w-[130px] font-semibold text-gray-700">Status</th>
+                  <th className="text-left p-3 hidden xl:table-cell min-w-[160px] font-semibold text-gray-700">Timeline</th>
+                  <th className="text-left p-3 min-w-[110px] font-semibold text-gray-700">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-200 text-xs md:text-sm">
                 {currentProjects.map((project: any) => {
-                  const overdueData = getProjectOverdueData(project.id);
-                  const overdueCount = overdueData.total;
-                  const { milestones: overdueMilestones, subtasks: overdueSubtasks } = overdueData;
-                  const milestoneCount = project.milestoneCount || 0;
-                  const completedMilestoneCount = project.completedMilestoneCount || 0;
-                  const completionRate = milestoneCount > 0 ? Math.round((completedMilestoneCount / milestoneCount) * 100) : 0;
-                  
+                  const supportState = getSupportState(project);
+                  const companyName = project.company?.name || companyNameById[project.companyId] || project.client || '—';
+                  const contactPersonName = project.contactPerson || project.company?.primaryContactName || project.client || '—';
+                  const contactEmail = project.contactEmail || project.company?.primaryContactEmail || project.clientEmail || '—';
+
                   return (
                     <tr 
                       key={project.id}
-                      className="hover:bg-gray-50 transition-colors cursor-pointer text-xs md:text-sm"
+                      className="hover:bg-gray-50/80 transition-colors cursor-pointer border-b border-gray-100 last:border-b-0"
                       onClick={() => setLocation(`/projects/${project.id}`)}
                     >
+                      {/* Project Title */}
                       <td className="px-4 py-3 md:py-4">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div>
-                              <div className="text-sm font-medium text-gray-900">{project.client || project.name}</div>
-                              {project.description && project.description.trim() !== '' && project.description !== project.client && (
-                                <div className="text-sm text-gray-500">{project.description}</div>
-                              )}
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent 
-                            side="top" 
-                            align="start"
-                            className="max-w-lg p-4"
-                            sideOffset={5}
-                          >
-                            <div className="space-y-4">
-                              <div>
-                                <h4 className="font-semibold text-gray-900 mb-1">{project.client || project.name}</h4>
-                                {project.description && project.description.trim() !== '' && project.description !== project.client && (
-                                  <p className="text-sm text-gray-600 line-clamp-3">{project.description}</p>
-                                )}
-                              </div>
-                              
-                              <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div className="space-y-2">
-                                  <div className="flex items-center gap-2">
-                                    <Badge variant="outline" className="capitalize">
-                                      {project.segment || 'private'}
-                                    </Badge>
-                                    <Badge className={getStatusColor(project.status)}>
-                                      {formatStatus(project.status)}
-                                    </Badge>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-gray-600">Progress:</span>
-                                    <span className="font-medium">{projectProgressMap[project.id] || 0}%</span>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-gray-600">Milestones:</span>
-                                    <span className="font-medium">
-                                      {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
-                                    </span>
-                                  </div>
-                                  {overdueCount > 0 && (
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-red-600">Overdue:</span>
-                                      <span className="font-medium text-red-600">
-                                        {overdueMilestones}M + {overdueSubtasks}S = {overdueCount}
-                                      </span>
-                                    </div>
-                                  )}
-                                </div>
-                                
-                                <div className="space-y-2">
-                                  <div>
-                                    <span className="text-gray-600">Manager:</span>
-                                    <div className="font-medium">
-                                      {project.manager?.firstName && project.manager?.lastName 
-                                        ? `${project.manager.firstName} ${project.manager.lastName}`
-                                        : project.manager?.email || 'Not assigned'}
-                                    </div>
-                                    {project.manager?.email && project.manager?.firstName && (
-                                      <div className="text-xs text-gray-500">{project.manager.email}</div>
-                                    )}
-                                  </div>
-                                  {project.team && (
-                                    <div>
-                                      <span className="text-gray-600">Team:</span>
-                                      <div className="font-medium">{project.team.name}</div>
-                                    </div>
-                                  )}
-                                  <div>
-                                    <span className="text-gray-600">Duration:</span>
-                                    <div className="font-medium">
-                                      {project.startDate && project.endDate ? (() => {
-                                        const start = new Date(project.startDate);
-                                        const end = new Date(project.endDate);
-                                        const diffTime = Math.abs(end.getTime() - start.getTime());
-                                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                                        return `${diffDays} days`;
-                                      })() : 'N/A'}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              <div className="border-t pt-3 space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">Contract Amount:</span>
-                                  <span className="font-medium">
-                                    {(project.totalFees && Number(project.totalFees) > 0)
-                                      ? `KSh ${Number(project.totalFees).toLocaleString()}`
-                                      : (project.budget && parseFloat(project.budget) > 0
-                                          ? `KSh ${parseFloat(project.budget).toLocaleString()}`
-                                          : 'N/A')}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">Paid Amount:</span>
-                                  <span className="font-medium text-green-600">
-                                    KSh {(project.paidAmount || 0).toLocaleString()}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">Outstanding:</span>
-                                  <span className="font-medium text-orange-600">
-                                    KSh {((project.totalFees && Number(project.totalFees) > 0) 
-                                      ? (Number(project.totalFees) - (project.paidAmount || 0))
-                                      : (parseFloat(project.budget || '0') - (project.paidAmount || 0))
-                                    ).toLocaleString()}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">Payment Progress:</span>
-                                  <span className="font-medium">
-                                    {Math.round(((project.paidAmount || 0) / ((project.totalFees && Number(project.totalFees) > 0) 
-                                      ? Number(project.totalFees) 
-                                      : parseFloat(project.budget || '1'))) * 100)}%
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      </td>
-                      <td className="px-4 py-3 md:py-4 hidden md:table-cell">
-                        <Badge variant="outline" className="capitalize">
-                          {project.segment || 'private'}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 md:py-4">
-                        <Badge className={getStatusColor(project.status)}>
-                          {formatStatus(project.status)}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 md:py-4">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center gap-2 cursor-help">
-                              <Progress value={projectProgressMap[project.id] || 0} className="h-1.5 md:h-2 w-14 md:w-16" />
-                              <span className="text-[10px] md:text-sm text-gray-600">{projectProgressMap[project.id] || 0}%</span>
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Comprehensive progress combining milestones and subtasks (Critical=4, High=3, Medium=2, Low=1)</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </td>
-                      <td className="px-4 py-3 md:py-4 hidden lg:table-cell">
-                        {overdueCount > 0 ? (
-                          <Tooltip>
-                            <TooltipTrigger>
-                              <Badge variant="destructive" className="flex items-center space-x-1">
-                                <AlertTriangle className="h-3 w-3" />
-                                <span>{overdueCount}</span>
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="space-y-1">
-                                {overdueMilestones > 0 && (
-                                  <p className="text-sm font-medium">
-                                    📋 {overdueMilestones} overdue milestone{overdueMilestones > 1 ? 's' : ''}
-                                  </p>
-                                )}
-                                {overdueSubtasks > 0 && (
-                                  <p className="text-sm font-medium">
-                                    📝 {overdueSubtasks} overdue subtask{overdueSubtasks > 1 ? 's' : ''}
-                                  </p>
-                                )}
-                                {overdueMilestones > 0 && overdueSubtasks > 0 && (
-                                  <p className="text-xs text-gray-500 border-t pt-1">
-                                    Total: {overdueCount} overdue items
-                                  </p>
-                                )}
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        ) : (
-                          <span className="text-sm text-gray-500">-</span>
+                        <div className="font-semibold text-gray-900">{project.name || project.client}</div>
+                        {project.description && project.description.trim() !== '' && project.description !== (project.name || project.client) && (
+                          <div className="text-xs text-gray-500 line-clamp-1 mt-0.5">{project.description}</div>
                         )}
                       </td>
-                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden lg:table-cell">
-                        {project.contactEmail || 'N/A'}
+
+                      {/* Company */}
+                      <td className="px-4 py-3 md:py-4 font-medium text-gray-800">
+                        {companyName}
                       </td>
-                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
-                        {(project.totalFees && Number(project.totalFees) > 0)
-                          ? `KSh ${Number(project.totalFees).toLocaleString()}`
-                          : (project.budget && parseFloat(project.budget) > 0
-                              ? `KSh ${parseFloat(project.budget).toLocaleString()}`
-                              : 'N/A')}
+
+                      {/* Contact Person (Column 3) */}
+                      <td className="px-4 py-3 md:py-4">
+                        <div className="font-medium text-gray-900">{contactPersonName}</div>
+                        {contactEmail !== '—' && (
+                          <div className="text-xs text-gray-500 font-mono mt-0.5 truncate max-w-[220px]">
+                            {contactEmail}
+                          </div>
+                        )}
                       </td>
-                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
-                        KSh {(project.paidAmount || 0).toLocaleString()}
-                      </td>
-                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
-                        {completedMilestoneCount}/{milestoneCount} ({completionRate}%)
-                      </td>
-                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
-                        {project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
-                        {project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 md:py-4 text-sm text-gray-900 hidden xl:table-cell">
-                        <span className="font-medium">
-                          {project.startDate && project.endDate
-                            ? (() => {
-                            const start = new Date(project.startDate);
-                            const end = new Date(project.endDate);
-                            const diffTime = Math.abs(end.getTime() - start.getTime());
-                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                            return `${diffDays} days`;
-                              })()
-                            : 'N/A'}
+
+                      {/* Sector (Column 4) */}
+                      <td className="px-4 py-3 md:py-4 hidden md:table-cell">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-100/90 text-slate-700 border border-slate-200/80 whitespace-nowrap shadow-none">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                          {segmentNameById[project.segmentId] || 'Unassigned'}
                         </span>
                       </td>
+
+                      {/* Status (Column 5) */}
+                      <td className="px-4 py-3 md:py-4">
+                        <Badge variant="outline" className={`text-xs font-medium whitespace-nowrap ${getSupportStatusBadgeClass(supportState)}`}>
+                          {formatSupportStatus(supportState)}
+                        </Badge>
+                      </td>
+
+                      {/* Timeline */}
+                      <td className="px-4 py-3 md:py-4 hidden xl:table-cell">
+                        {project.startDate && project.endDate ? (() => {
+                          const start = new Date(project.startDate);
+                          const end = new Date(project.endDate);
+                          const diffTime = Math.abs(end.getTime() - start.getTime());
+                          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                          return (
+                            <div>
+                              <div className="text-xs text-gray-800 font-medium">
+                                {start.toLocaleDateString()} – {end.toLocaleDateString()}
+                              </div>
+                              <div className="text-[11px] text-gray-500">{diffDays} days support</div>
+                            </div>
+                          );
+                        })() : (
+                          <span className="text-gray-400 text-xs">N/A</span>
+                        )}
+                      </td>
+
+                      {/* Actions */}
                       <td className="px-4 py-3 md:py-4">
                         <div className="flex items-center gap-2">
                           <Button
@@ -756,13 +615,16 @@ export default function Projects() {
                           </Button>
                           {isAdminRole() && (
                             <Button
-                              variant="outline"
+                              variant="ghost"
                               size="sm"
-                              disabled={project.status === 'inactive'}
-                              onClick={(e) => handleDeactivateProject(e, project)}
-                              className="text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              disabled={project.status === 'support_closed'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeactivateProject(e, project);
+                              }}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50 disabled:opacity-50"
                             >
-                              {project.status === 'inactive' ? 'Inactive' : 'Deactivate'}
+                              {project.status === 'support_closed' ? 'Closed' : 'Close'}
                             </Button>
                           )}
                         </div>
@@ -782,213 +644,120 @@ export default function Projects() {
             onTouchEnd={handleSwipe}
           >
             {currentProjects.map((project: any) => {
-              const overdueData = getProjectOverdueData(project.id);
-              const overdueCount = overdueData.total;
-              const { milestones: overdueMilestones, subtasks: overdueSubtasks } = overdueData;
-              const milestoneCount = project.milestoneCount ?? 0;
-              const completedMilestoneCount = project.completedMilestoneCount ?? 0;
-              const completionRate = milestoneCount > 0 ? Math.round((completedMilestoneCount / milestoneCount) * 100) : project.progress;
+              const supportState = getSupportState(project);
+              const companyName = project.company?.name || companyNameById[project.companyId] || project.client || '—';
+              const clientEmail = project.contactEmail || project.company?.primaryContactEmail || '—';
+
               return (
                 <Card 
                   key={project.id} 
-                  className="hover:shadow-lg transition-all cursor-pointer border-l-4 border-l-primary" 
+                  className="hover:shadow-md transition-all cursor-pointer border border-gray-200/80 rounded-xl overflow-hidden bg-white" 
                   data-testid={`card-project-${project.id}`}
                   onClick={() => handleProjectClick(project.id)}
                 >
-                  <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <CardTitle className="text-lg" data-testid={`text-project-name-${project.id}`}>
-                            {project.client || project.name}
-                          </CardTitle>
-                          {overdueCount > 0 && (
-                            <Tooltip>
-                              <TooltipTrigger>
-                                <Badge variant="destructive" className="flex items-center space-x-1">
-                                  <AlertTriangle className="h-3 w-3" />
-                                  <span>{overdueCount}</span>
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <div className="space-y-1">
-                                  {overdueMilestones > 0 && (
-                                    <p className="text-sm font-medium">
-                                      📋 {overdueMilestones} overdue milestone{overdueMilestones > 1 ? 's' : ''}
-                                    </p>
-                                  )}
-                                  {overdueSubtasks > 0 && (
-                                    <p className="text-sm font-medium">
-                                      📝 {overdueSubtasks} overdue subtask{overdueSubtasks > 1 ? 's' : ''}
-                                    </p>
-                                  )}
-                                  {overdueMilestones > 0 && overdueSubtasks > 0 && (
-                                    <p className="text-xs text-gray-500 border-t pt-1">
-                                      Total: {overdueCount} overdue items
-                                    </p>
-                                  )}
-                                </div>
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                        </div>
-                        {project.description && project.description.trim() !== '' && project.description !== project.client && (
-                          <CardDescription className="line-clamp-2" data-testid={`text-project-description-${project.id}`}>
-                            {project.description}
-                          </CardDescription>
-                        )}
+                  <CardHeader className="pb-3 border-b border-gray-100">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <CardTitle className="text-base font-semibold text-gray-900 truncate" data-testid={`text-project-name-${project.id}`}>
+                          {project.name || project.client}
+                        </CardTitle>
+                        <p className="text-xs text-gray-500 flex items-center gap-1 mt-1 truncate">
+                          <Building2 className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                          <span className="font-medium text-gray-700">{companyName}</span>
+                        </p>
                       </div>
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-1 shrink-0">
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button 
                               variant="ghost" 
                               size="sm" 
+                              className="h-8 w-8 p-0"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleProjectClick(project.id);
                               }}
                               data-testid={`button-project-view-${project.id}`}
                             >
-                              <ExternalLink className="h-4 w-4" />
+                              <ExternalLink className="h-4 w-4 text-gray-500" />
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
                             <p>View project details</p>
                           </TooltipContent>
                         </Tooltip>
-                        {(user as any)?.role !== 'employee' && (
-                          <>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={(e) => handleEditProject(e, project)}
-                              data-testid={`button-project-edit-${project.id}`}
-                            >
-                              Edit
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={(e) => handleDeactivateProject(e, project)}
-                              data-testid={`button-project-terminate-${project.id}`}
-                            >
-                              Deactivate
-                            </Button>
-                          </>
+                        {isAdminRole() && (
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            className="h-8 text-xs text-gray-600"
+                            onClick={(e) => handleEditProject(e, project)}
+                            data-testid={`button-project-edit-${project.id}`}
+                          >
+                            Edit
+                          </Button>
                         )}
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {/* Status */}
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Badge className={getStatusColor(project.status)} data-testid={`badge-project-status-${project.id}`}>
-                            {formatStatus(project.status)}
-                          </Badge>
-                          <Badge variant="outline" className="capitalize" data-testid={`badge-project-segment-${project.id}`}>
-                            {project.segment || 'private'}
-                          </Badge>
-                        </div>
-                        <span className="text-sm text-gray-500" data-testid={`text-project-progress-${project.id}`}>
-                          {projectProgressMap[project.id] || 0}% Complete
+                  <CardContent className="pt-4 space-y-3">
+                    {/* Status & Sector Badges */}
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge variant="outline" className={`text-xs font-medium ${getSupportStatusBadgeClass(supportState)}`} data-testid={`badge-project-status-${project.id}`}>
+                        {formatSupportStatus(supportState)}
+                      </Badge>
+                      <Badge variant="outline" className="capitalize text-xs font-normal text-gray-600" data-testid={`badge-project-segment-${project.id}`}>
+                        {segmentNameById[project.segmentId] || 'Unassigned'}
+                      </Badge>
+                    </div>
+
+                    {project.description && project.description.trim() !== '' && project.description !== (project.name || project.client) && (
+                      <p className="text-xs text-gray-500 line-clamp-2" data-testid={`text-project-description-${project.id}`}>
+                        {project.description}
+                      </p>
+                    )}
+
+                    {/* Metadata lines */}
+                    <div className="space-y-1.5 text-xs text-gray-600 pt-2 border-t border-gray-100">
+                      {/* Timeline */}
+                      <div className="flex items-center" data-testid={`text-project-dates-${project.id}`}>
+                        <Calendar className="h-3.5 w-3.5 mr-2 text-gray-400 shrink-0" />
+                        <span>
+                          {project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A'} – {project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A'}
                         </span>
                       </div>
 
-                      {/* Progress Bar */}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Progress value={projectProgressMap[project.id] || 0} className="h-2 cursor-help" data-testid={`progress-project-${project.id}`} />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Comprehensive progress combining milestones and subtasks (Critical=4, High=3, Medium=2, Low=1)</p>
-                        </TooltipContent>
-                      </Tooltip>
-
-                      {/* Project Details */}
-                      <div className="space-y-2 text-sm text-gray-600">
-                        {project.client && (
-                          <div className="flex items-center" data-testid={`text-project-client-${project.id}`}>
-                            <Users className="h-4 w-4 mr-2" />
-                            <span>{project.client}</span>
-                          </div>
-                        )}
-                        
-                        <div className="flex items-center" data-testid={`text-project-dates-${project.id}`}>
-                          <Calendar className="h-4 w-4 mr-2" />
-                          <span>
-                            <span className="font-medium">Start:</span> {project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A'} - <span className="font-medium">End:</span> {project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A'}
-                          </span>
-                        </div>
-
-                        {/* Project Duration */}
+                      {/* Duration */}
+                      {project.startDate && project.endDate && (
                         <div className="flex items-center">
-                          <Clock className="h-4 w-4 mr-2" />
-                          <span className="text-sm text-gray-600">
-                            <span className="font-medium">Duration:</span> {project.startDate && project.endDate ? (() => {
-                                const start = new Date(project.startDate);
-                                const end = new Date(project.endDate);
-                                const diffTime = Math.abs(end.getTime() - start.getTime());
-                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                                return `${diffDays} days`;
-                            })() : 'N/A'}
+                          <Clock className="h-3.5 w-3.5 mr-2 text-gray-400 shrink-0" />
+                          <span>
+                            {(() => {
+                              const start = new Date(project.startDate);
+                              const end = new Date(project.endDate);
+                              const diffTime = Math.abs(end.getTime() - start.getTime());
+                              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                              return `${diffDays} days support`;
+                            })()}
                           </span>
                         </div>
+                      )}
 
-                        {((project.totalFees && Number(project.totalFees) > 0) || (project.budget && parseFloat(project.budget) > 0)) && (
-                          <div className="flex items-center" data-testid={`text-project-budget-${project.id}`}>
-                            <DollarSign className="h-4 w-4 mr-2" />
-                            <span>KSh {(project.totalFees && Number(project.totalFees) > 0) 
-                              ? Number(project.totalFees).toLocaleString()
-                              : parseFloat(project.budget).toLocaleString()}</span>
-                          </div>
-                        )}
+                      {/* Email */}
+                      {clientEmail !== '—' && (
+                        <div className="flex items-center truncate">
+                          <Users className="h-3.5 w-3.5 mr-2 text-gray-400 shrink-0" />
+                          <span className="truncate">{clientEmail}</span>
+                        </div>
+                      )}
 
+                      {/* Manager */}
+                      {project.manager && (
                         <div className="flex items-center" data-testid={`text-project-manager-${project.id}`}>
-                          <Users className="h-4 w-4 mr-2" />
-                          <span>Manager: {project.manager?.firstName || project.manager?.email}</span>
+                          <Users className="h-3.5 w-3.5 mr-2 text-gray-400 shrink-0" />
+                          <span>Manager: {project.manager?.firstName ? `${project.manager.firstName} ${project.manager.lastName || ''}` : project.manager?.email}</span>
                         </div>
-
-                        {project.team && (
-                          <div className="flex items-center" data-testid={`text-project-team-${project.id}`}>
-                            <Users className="h-4 w-4 mr-2" />
-                            <span>Team: {project.team.name}</span>
-                          </div>
-                        )}
-                        
-                        {/* Financial Summary */}
-                        <div className="pt-2 border-t border-gray-200">
-                          <div className="flex items-center justify-between text-xs text-gray-700 mb-1">
-                            <span data-testid={`text-project-milestones-${project.id}`}>
-                              {completedMilestoneCount}/{milestoneCount} milestones done ({completionRate}%)
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-medium text-green-600" data-testid={`text-project-paid-amount-${project.id}`}>
-                              KSh {(project.paidAmount || 0).toLocaleString()} paid
-                            </span>
-                          </div>
-                          {((project.totalFees && Number(project.totalFees) > 0) || (project.budget && parseFloat(project.budget) > 0)) && (
-                            <div className="flex items-center justify-between text-xs mt-1">
-                              <span className="text-gray-600">
-                                Outstanding: KSh {((project.totalFees && Number(project.totalFees) > 0) 
-                                  ? (Number(project.totalFees) - (project.paidAmount || 0))
-                                  : (parseFloat(project.budget || '0') - (project.paidAmount || 0))
-                                ).toLocaleString()}
-                              </span>
-                              <span className={`font-medium ${(project.paidAmount || 0) >= ((project.totalFees && Number(project.totalFees) > 0) 
-                                ? Number(project.totalFees) 
-                                : parseFloat(project.budget || '0')) ? 'text-green-600' : 'text-orange-600'}`}>
-                                {Math.round(((project.paidAmount || 0) / ((project.totalFees && Number(project.totalFees) > 0) 
-                                  ? Number(project.totalFees) 
-                                  : parseFloat(project.budget || '1'))) * 100)}% paid
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

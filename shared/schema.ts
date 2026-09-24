@@ -31,6 +31,7 @@ export const projectStatusEnum = pgEnum("project_status", [
   "cancelled",
   "terminated", // Added terminated status
   "on_support", // Added on_support status
+  "support_closed", // Support period deliberately closed out (distinct from the date just lapsing)
 ]);
 
 export const taskPriorityEnum = pgEnum("task_priority", [
@@ -66,6 +67,37 @@ export const billingStatusEnum = pgEnum("billing_status", [
   "processing", // payment being processed
 ]);
 
+// Support ticket lifecycle for projects that have entered their SLA/support period
+export const ticketStatusEnum = pgEnum("ticket_status", [
+  "open",
+  "in_progress",
+  "resolved",
+  "closed",
+]);
+
+export const ticketPriorityEnum = pgEnum("ticket_priority", [
+  "low",
+  "medium",
+  "high",
+  "urgent",
+]);
+
+// Top-level classification for every support contact. Complaint/Enquiry go through the
+// full ticket workflow (category, assignment, status lifecycle); Compliment/Suggestion
+// are logged in the same table but skip those workflow fields.
+export const ticketTypeEnum = pgEnum("ticket_type", [
+  "complaint",
+  "enquiry",
+  "compliment",
+  "suggestion",
+]);
+
+// Service categories only make sense as a breakdown of Complaint or Enquiry tickets.
+export const serviceCategoryTypeEnum = pgEnum("service_category_type", [
+  "complaint",
+  "enquiry",
+]);
+
 // Session storage table (required for Replit Auth)
 export const sessions = pgTable(
   "sessions",
@@ -89,6 +121,7 @@ export const users = pgTable("users", {
   idNumber: varchar("id_number"), // Added for personnel import
   profileImageUrl: varchar("profile_image_url"),
   role: varchar("role", { length: 20 }).notNull().default("employee"),
+  roleId: varchar("role_id").references(() => roles.id), // Dynamic, admin-managed role (replaces the hardcoded `role` string over time)
   isActive: boolean("is_active").notNull().default(true), // Added for account management
   lastLoginAt: timestamp("last_login_at"),
   resetToken: text("reset_token"), // Added for password reset
@@ -98,9 +131,6 @@ export const users = pgTable("users", {
   passwordGeneratedAt: timestamp("password_generated_at"),
   mustChangePassword: boolean("must_change_password").default(false),
   lastPasswordChange: timestamp("last_password_change"),
-  // New admin role assignment fields
-  isProjectManager: boolean("is_project_manager").default(false),
-  isFinanceHead: boolean("is_finance_head").default(false),
   assignedSegment: projectSegmentEnum("assigned_segment"), // For segment leaders
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -109,20 +139,21 @@ export const users = pgTable("users", {
 // Segment leaders table
 export const segmentLeaders = pgTable("segment_leaders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  segment: projectSegmentEnum("segment").notNull(),
+  segmentId: varchar("segment_id").references(() => segments.id).notNull(),
+  leaderId: varchar("leader_id").references(() => users.id),
   leaderEmail: varchar("leader_email").notNull(),
   leaderName: varchar("leader_name").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
-  uniqueSegment: index("unique_segment").on(table.segment),
+  uniqueSegment: index("unique_segment").on(table.segmentId),
 }));
 
 // Admin roles assignment table for tracking special admin roles
 export const adminRoles = pgTable("admin_roles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  roleType: varchar("role_type", { length: 50 }).notNull(), // 'project_manager', 'finance_head', 'segment_leader'
+  roleType: varchar("role_type", { length: 50 }).notNull(), // 'segment_leader'
   segment: projectSegmentEnum("segment"), // Only for segment leaders
   assignedAt: timestamp("assigned_at").defaultNow(),
   assignedBy: varchar("assigned_by").references(() => users.id).notNull(),
@@ -162,6 +193,33 @@ export const teamMemberRoles = pgTable("team_member_roles", {
   uniqueTeamMemberRole: index("unique_team_member_role").on(table.teamMemberId, table.roleId),
 }));
 
+// Dynamic RBAC: roles and permissions are admin-managed data instead of hardcoded strings
+export const roles = pgTable("roles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 100 }).notNull().unique(),
+  description: text("description"),
+  isSystem: boolean("is_system").default(false), // protects seeded roles (e.g. Administrator) from deletion
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const permissions = pgTable("permissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: varchar("key", { length: 100 }).notNull().unique(), // e.g. "projects.create", "tickets.view_all"
+  label: varchar("label", { length: 200 }).notNull(),
+  category: varchar("category", { length: 50 }).notNull(), // e.g. "Projects", "Tickets", "Users", "Admin"
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const rolePermissions = pgTable("role_permissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  roleId: varchar("role_id").references(() => roles.id, { onDelete: 'cascade' }).notNull(),
+  permissionId: varchar("permission_id").references(() => permissions.id, { onDelete: 'cascade' }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  uniqueRolePermission: index("unique_role_permission").on(table.roleId, table.permissionId),
+}));
+
 // External notification recipients table
 export const externalNotificationRecipients = pgTable("external_notification_recipients", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -191,16 +249,48 @@ export const teams = pgTable("teams", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 100 }).notNull(),
   description: text("description"),
-  segment: projectSegmentEnum("segment").notNull().default("private"),
+  segment: projectSegmentEnum("segment").notNull().default("private"), // Legacy enum, superseded by sectorId below - kept for backfill/rollback only
+  sectorId: varchar("sector_id").references(() => segments.id),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// Companies table: normalizes the client/company a project and its tickets belong to
+export const companies = pgTable("companies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 200 }).notNull(),
+  primaryContactName: varchar("primary_contact_name", { length: 200 }),
+  primaryContactEmail: varchar("primary_contact_email", { length: 255 }),
+  primaryContactPhone: varchar("primary_contact_phone", { length: 50 }),
+  address: text("address"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  nameIdx: index("idx_companies_name").on(table.name),
+}));
+
+// Segments table: admin-managed replacement for the hardcoded academic/parastals/private
+// project_segment enum. `projects.segmentId` and `segmentLeaders.segmentId` reference this
+// table. The old projectSegmentEnum is kept (unused by these two tables going forward) since
+// several other tables (teams, monthlyTargets, adminRoles, users.assignedSegment) still use it
+// and converting those is out of scope for this pass.
+export const segments = pgTable("segments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 100 }).notNull().unique(),
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  nameIdx: index("idx_segments_name").on(table.name),
+}));
 
 // Projects table (keeping existing structure, adding new contact fields)
 export const projects = pgTable("projects", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 200 }).notNull(), // Keep existing name field
   description: text("description"), // Database has this as optional
-  client: varchar("client", { length: 200 }),
+  client: varchar("client", { length: 200 }), // Legacy free-text client name; superseded by companyId
+  companyId: varchar("company_id").references(() => companies.id),
   // New contact fields
   contactPerson: varchar("contact_person"),
   contactPhone: varchar("contact_phone"),
@@ -208,7 +298,7 @@ export const projects = pgTable("projects", {
   startDate: timestamp("start_date"),
   endDate: timestamp("end_date"),
   status: projectStatusEnum("status").notNull().default("planning"), // Use existing projectStatus enum
-  segment: projectSegmentEnum("segment").notNull().default("private"), // Added segment field
+  segmentId: varchar("segment_id").references(() => segments.id), // Admin-managed segment (replaces the old segment enum)
   budget: decimal("budget", { precision: 12, scale: 2 }), // Keep as budget in DB, will display as Contract Amount in frontend
   teamId: varchar("team_id").references(() => teams.id),
   managerId: varchar("manager_id").references(() => users.id).notNull(),
@@ -217,82 +307,27 @@ export const projects = pgTable("projects", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Modules table (renamed from tasks, billing fields moved to milestones)
-export const modules = pgTable("modules", {
+// Billing items: flat, per-project invoicing line items. Replaces the old
+// phase -> milestone -> module -> subtask delivery hierarchy, which has been
+// removed entirely (see [[project-taskflow-rbac-tickets-rebuild]] memory) -
+// this table exists solely to keep invoicing/billing (feeAmount, billingStatus,
+// invoice/collection dates, invoiceReports/invoiceCollections) working.
+export const billingItems = pgTable("billing_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").references(() => projects.id, { onDelete: 'cascade' }).notNull(),
   name: varchar("name", { length: 200 }).notNull(),
   description: text("description"),
-  priority: taskPriorityEnum("priority").notNull().default("medium"),
-  status: text("status").notNull().default("todo"), // Use text to match existing database
-  startDate: timestamp("start_date"),
-  dueDate: timestamp("due_date"),
-  estimatedHours: integer("estimated_hours"),
-  actualHours: integer("actual_hours").default(0),
-  // Weight field for module calculations
-  weight: integer("weight").default(2), // Calculated from priority: low=1, medium=2, high=3, critical=4
-  projectId: varchar("project_id").references(() => projects.id).notNull(),
-  // Phase information since modules belong to phases
-  phaseNumber: integer("phase_number"),
-  phaseName: varchar("phase_name", { length: 100 }),
-  phase: varchar("phase", { length: 100 }), // Added phase column for better tracking
-  assignedUserId: varchar("assigned_user_id").references(() => users.id),
-  assignedTeamId: varchar("assigned_team_id").references(() => teams.id), // Auto-assigned from project team
-  milestoneId: varchar("milestone_id").references(() => milestones.id), // Link to milestone for Phase 3 structure
-  createdById: varchar("created_by_id").references(() => users.id).notNull(),
-  completedAt: timestamp("completed_at"),
-  progressPercent: integer("progress_percent").notNull().default(0),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-// Milestones table for invoicable entities (can contain multiple modules)
-export const milestones = pgTable("milestones", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name", { length: 200 }).notNull(),
-  description: text("description"),
-  priority: taskPriorityEnum("priority").notNull().default("medium"),
-  // Date fields
-  startDate: timestamp("start_date"),
-  endDate: timestamp("end_date"),
-  // Phase attribution (user-controlled)
-  phaseNumber: integer("phase_number"),
-  phaseName: varchar("phase_name", { length: 100 }),
-  // Financials / billing fields moved here from modules
   feeAmount: decimal("fee_amount", { precision: 12, scale: 2 }),
   billingStatus: billingStatusEnum("billing_status").notNull().default("none"),
-  // Invoice and collection dates
   expectedInvoiceDate: timestamp("expected_invoice_date"),
   expectedCollectionDate: timestamp("expected_collection_date"),
-  // Invoice tracking fields
   invoiceSentAt: timestamp("invoice_sent_at"),
   paymentReceivedAt: timestamp("payment_received_at"),
   overdueFlag: boolean("overdue_flag").default(false),
-  projectId: varchar("project_id").references(() => projects.id).notNull(),
   createdById: varchar("created_by_id").references(() => users.id).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-
-// Project Phases table for managing project phases
-export const projectPhases = pgTable("project_phases", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  projectId: varchar("project_id").references(() => projects.id, { onDelete: 'cascade' }).notNull(),
-  phaseNumber: integer("phase_number").notNull(),
-  phaseType: varchar("phase_type", { length: 50 }).notNull(), // initiation_contracting, requirements_design, etc.
-  phaseName: varchar("phase_name", { length: 100 }).notNull(),
-  description: text("description"),
-  startDate: timestamp("start_date"),
-  endDate: timestamp("end_date"),
-  status: varchar("status", { length: 20 }).notNull().default("not_started"), // not_started, in_progress, completed, on_hold
-  progress: integer("progress").notNull().default(0), // percentage 0-100
-  deliverables: jsonb("deliverables"), // Array of deliverable items
-  completionReport: text("completion_report"),
-  completedAt: timestamp("completed_at"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-}, (table) => ({
-  uniqueProjectPhase: index("unique_project_phase").on(table.projectId, table.phaseNumber),
-}));
 
 // Contracts table for managing project contracts
 export const contracts = pgTable("contracts", {
@@ -321,46 +356,63 @@ export const contracts = pgTable("contracts", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Module-milestone relationship table (many modules can belong to one milestone)
-export const moduleMilestones = pgTable("module_milestones", {
+// Service categories for classifying support tickets (Enquiry, Suggestion, Complaint, Compliment, ...)
+export const serviceCategories = pgTable("service_categories", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  moduleId: varchar("module_id").references(() => modules.id, { onDelete: 'cascade' }).notNull(),
-  milestoneId: varchar("milestone_id").references(() => milestones.id, { onDelete: 'cascade' }).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-// Subtasks table for modules (updated to reference modules instead of milestones)
-export const subtasks = pgTable("subtasks", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name", { length: 200 }).notNull(),
+  name: varchar("name", { length: 100 }).notNull().unique(),
   description: text("description"),
-  status: text("status").notNull().default("not_started"), // Use text to match existing database
-  priority: taskPriorityEnum("priority").notNull().default("medium"),
-  startDate: timestamp("start_date"),
-  dueDate: timestamp("due_date"),
-  estimatedHours: integer("estimated_hours"),
-  estimatedDays: integer("estimated_days"),
-  actualHours: integer("actual_hours").default(0),
-  actualDays: integer("actual_days").default(0),
-  progressPercent: integer("progress_percent").notNull().default(0),
-  moduleId: varchar("module_id").references(() => modules.id, { onDelete: 'cascade' }),
-  milestoneId: varchar("milestone_id").references(() => milestones.id, { onDelete: 'cascade' }),
-  assignedUserId: varchar("assigned_user_id").references(() => users.id),
-  assignedDevId: varchar("assigned_dev_id").references(() => users.id), // Developer assigned to subtask
-  assignedConsultantId: varchar("assigned_consultant_id").references(() => users.id), // Functional consultant assigned to subtask
-  createdById: varchar("created_by_id").references(() => users.id).notNull(),
-  completedAt: timestamp("completed_at"),
+  color: varchar("color", { length: 20 }),
+  type: serviceCategoryTypeEnum("type").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Subtask dependencies table for simple dependencies
-export const subtaskDependencies = pgTable("subtask_dependencies", {
+// Support tickets raised for a project once it has entered its SLA/support period
+export const tickets = pgTable("tickets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  subtaskId: varchar("subtask_id").references(() => subtasks.id, { onDelete: 'cascade' }).notNull(),
-  dependsOnSubtaskId: varchar("depends_on_subtask_id").references(() => subtasks.id, { onDelete: 'cascade' }).notNull(),
+  ticketNumber: varchar("ticket_number", { length: 50 }).notNull().unique(),
+  projectId: varchar("project_id").references(() => projects.id, { onDelete: 'cascade' }).notNull(),
+  companyId: varchar("company_id").references(() => companies.id).notNull(),
+  type: ticketTypeEnum("type").notNull(),
+  // Required for complaint/enquiry tickets, null for compliment/suggestion (validated at the route layer).
+  categoryId: varchar("category_id").references(() => serviceCategories.id),
+  subject: varchar("subject", { length: 200 }).notNull(),
+  description: text("description").notNull(),
+  status: ticketStatusEnum("status").notNull().default("open"),
+  priority: ticketPriorityEnum("priority").notNull().default("medium"),
+  contactName: varchar("contact_name", { length: 200 }),
+  contactEmail: varchar("contact_email", { length: 255 }),
+  contactPhone: varchar("contact_phone", { length: 50 }),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id).notNull(),
+  assignedToUserId: varchar("assigned_to_user_id").references(() => users.id),
+  assignedTeamId: varchar("assigned_team_id").references(() => teams.id),
+  escalatedFromUserId: varchar("escalated_from_user_id").references(() => users.id),
+  escalationReason: text("escalation_reason"),
+  escalatedAt: timestamp("escalated_at"),
+  rootCause: text("root_cause"),
+  resolutionNotes: text("resolution_notes"),
+  resolvedAt: timestamp("resolved_at"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  projectIdx: index("idx_tickets_project_id").on(table.projectId),
+  companyIdx: index("idx_tickets_company_id").on(table.companyId),
+  assignedToIdx: index("idx_tickets_assigned_to").on(table.assignedToUserId),
+  createdByIdx: index("idx_tickets_created_by").on(table.createdByUserId),
+  statusIdx: index("idx_tickets_status").on(table.status),
+}));
+
+// Comment / audit thread on a ticket (status changes, assignment notes, internal comments)
+export const ticketComments = pgTable("ticket_comments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticketId: varchar("ticket_id").references(() => tickets.id, { onDelete: 'cascade' }).notNull(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  comment: text("comment").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  ticketIdx: index("idx_ticket_comments_ticket_id").on(table.ticketId),
+}));
 
 // Team memberships
 export const teamMembers = pgTable("team_members", {
@@ -381,14 +433,6 @@ export const projectAttachments = pgTable("project_attachments", {
   mimeType: varchar("mime_type", { length: 100 }),
   uploadedById: varchar("uploaded_by_id").references(() => users.id).notNull(),
   uploadedAt: timestamp("uploaded_at").defaultNow(),
-});
-
-// Module dependencies
-export const moduleDependencies = pgTable("module_dependencies", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  moduleId: varchar("module_id").references(() => modules.id, { onDelete: 'cascade' }).notNull(),
-  dependsOnModuleId: varchar("depends_on_module_id").references(() => modules.id, { onDelete: 'cascade' }).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Notifications
@@ -440,15 +484,19 @@ export const userCalendarSettings = pgTable("user_calendar_settings", {
 });
 
 // Relations
-export const usersRelations = relations(users, ({ many }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
   managedProjects: many(projects, { relationName: "manager" }),
-  assignedModules: many(modules, { relationName: "assignee" }),
-  createdModules: many(modules, { relationName: "creator" }),
   teamMemberships: many(teamMembers),
   notifications: many(notifications),
   uploadedAttachments: many(projectAttachments),
   sentInvoices: many(invoiceReports, { relationName: "sentBy" }),
   collectedInvoices: many(invoiceCollections, { relationName: "collectedBy" }),
+  role: one(roles, {
+    fields: [users.roleId],
+    references: [roles.id],
+  }),
+  createdTickets: many(tickets, { relationName: "ticketCreator" }),
+  assignedTickets: many(tickets, { relationName: "ticketAssignee" }),
 }));
 
 export const teamsRelations = relations(teams, ({ many }) => ({
@@ -466,66 +514,106 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
     fields: [projects.teamId],
     references: [teams.id],
   }),
-  modules: many(modules),
+  company: one(companies, {
+    fields: [projects.companyId],
+    references: [companies.id],
+  }),
+  segment: one(segments, {
+    fields: [projects.segmentId],
+    references: [segments.id],
+  }),
+  billingItems: many(billingItems),
   attachments: many(projectAttachments),
   invoices: many(invoiceReports),
   collections: many(invoiceCollections),
+  tickets: many(tickets),
 }));
 
-export const modulesRelations = relations(modules, ({ one, many }) => ({
+export const billingItemsRelations = relations(billingItems, ({ one, many }) => ({
   project: one(projects, {
-    fields: [modules.projectId],
+    fields: [billingItems.projectId],
     references: [projects.id],
   }),
-  assignedUser: one(users, {
-    fields: [modules.assignedUserId],
-    references: [users.id],
-    relationName: "assignee",
-  }),
-  milestone: one(milestones, {
-    fields: [modules.milestoneId],
-    references: [milestones.id],
-  }),
   createdBy: one(users, {
-    fields: [modules.createdById],
+    fields: [billingItems.createdById],
     references: [users.id],
-    relationName: "creator",
   }),
-  dependencies: many(moduleDependencies, { relationName: "module" }),
-  dependentModules: many(moduleDependencies, { relationName: "dependsOn" }),
   invoices: many(invoiceReports),
   collections: many(invoiceCollections),
 }));
 
-export const milestonesRelations = relations(milestones, ({ one, many }) => ({
+export const companiesRelations = relations(companies, ({ many }) => ({
+  projects: many(projects),
+  tickets: many(tickets),
+}));
+
+export const segmentsRelations = relations(segments, ({ many }) => ({
+  projects: many(projects),
+  segmentLeaders: many(segmentLeaders),
+}));
+
+export const rolesRelations = relations(roles, ({ many }) => ({
+  users: many(users),
+  rolePermissions: many(rolePermissions),
+}));
+
+export const permissionsRelations = relations(permissions, ({ many }) => ({
+  rolePermissions: many(rolePermissions),
+}));
+
+export const rolePermissionsRelations = relations(rolePermissions, ({ one }) => ({
+  role: one(roles, {
+    fields: [rolePermissions.roleId],
+    references: [roles.id],
+  }),
+  permission: one(permissions, {
+    fields: [rolePermissions.permissionId],
+    references: [permissions.id],
+  }),
+}));
+
+export const serviceCategoriesRelations = relations(serviceCategories, ({ many }) => ({
+  tickets: many(tickets),
+}));
+
+export const ticketsRelations = relations(tickets, ({ one, many }) => ({
   project: one(projects, {
-    fields: [milestones.projectId],
+    fields: [tickets.projectId],
     references: [projects.id],
+  }),
+  company: one(companies, {
+    fields: [tickets.companyId],
+    references: [companies.id],
+  }),
+  category: one(serviceCategories, {
+    fields: [tickets.categoryId],
+    references: [serviceCategories.id],
   }),
   createdBy: one(users, {
-    fields: [milestones.createdById],
+    fields: [tickets.createdByUserId],
     references: [users.id],
-    relationName: "creator",
+    relationName: "ticketCreator",
   }),
-  modules: many(modules),
+  assignedTo: one(users, {
+    fields: [tickets.assignedToUserId],
+    references: [users.id],
+    relationName: "ticketAssignee",
+  }),
+  assignedTeam: one(teams, {
+    fields: [tickets.assignedTeamId],
+    references: [teams.id],
+  }),
+  comments: many(ticketComments),
 }));
 
-export const projectPhasesRelations = relations(projectPhases, ({ one, many }) => ({
-  project: one(projects, {
-    fields: [projectPhases.projectId],
-    references: [projects.id],
+export const ticketCommentsRelations = relations(ticketComments, ({ one }) => ({
+  ticket: one(tickets, {
+    fields: [ticketComments.ticketId],
+    references: [tickets.id],
   }),
-  modules: many(modules, { relationName: "phaseModules" }),
-}));
-
-export const moduleMilestonesRelations = relations(moduleMilestones, ({ one }) => ({
-  module: one(modules, {
-    fields: [moduleMilestones.moduleId],
-    references: [modules.id],
-  }),
-  milestone: one(milestones, {
-    fields: [moduleMilestones.milestoneId],
-    references: [milestones.id],
+  user: one(users, {
+    fields: [ticketComments.userId],
+    references: [users.id],
   }),
 }));
 
@@ -556,8 +644,11 @@ export const employeeRolesRelations = relations(employeeRoles, ({ many }) => ({
   teamMemberRoles: many(teamMemberRoles),
 }));
 
-export const segmentLeadersRelations = relations(segmentLeaders, ({ many }) => ({
-  projects: many(projects, { relationName: "segmentLeader" }),
+export const segmentLeadersRelations = relations(segmentLeaders, ({ one }) => ({
+  segment: one(segments, {
+    fields: [segmentLeaders.segmentId],
+    references: [segments.id],
+  }),
 }));
 
 export const externalNotificationRecipientsRelations = relations(externalNotificationRecipients, ({ one }) => ({
@@ -576,19 +667,6 @@ export const projectAttachmentsRelations = relations(projectAttachments, ({ one 
   uploadedBy: one(users, {
     fields: [projectAttachments.uploadedById],
     references: [users.id],
-  }),
-}));
-
-export const moduleDependenciesRelations = relations(moduleDependencies, ({ one }) => ({
-  module: one(modules, {
-    fields: [moduleDependencies.moduleId],
-    references: [modules.id],
-    relationName: "module",
-  }),
-  dependsOnModule: one(modules, {
-    fields: [moduleDependencies.dependsOnModuleId],
-    references: [modules.id],
-    relationName: "dependsOn",
   }),
 }));
 
@@ -659,7 +737,7 @@ export const insertAdminRoleSchema = createInsertSchema(adminRoles).omit({
 });
 
 // Type definitions for admin role management
-export type AdminRoleType = 'project_manager' | 'finance_head' | 'segment_leader';
+export type AdminRoleType = 'segment_leader';
 
 export type AdminRoleAssignment = {
   id: string;
@@ -680,32 +758,10 @@ export const insertProjectSchema = createInsertSchema(projects).omit({
   updatedAt: true,
 });
 
-export const insertModuleSchema = createInsertSchema(modules).omit({
-  id: true,
-  actualHours: true,
-  completedAt: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export const insertMilestoneSchema = createInsertSchema(milestones).omit({
+export const insertBillingItemSchema = createInsertSchema(billingItems).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
-});
-
-export const insertSubtaskSchema = createInsertSchema(subtasks).omit({
-  id: true,
-  actualHours: true,
-  actualDays: true,
-  completedAt: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export const insertSubtaskDependencySchema = createInsertSchema(subtaskDependencies).omit({
-  id: true,
-  createdAt: true,
 });
 
 export const insertTeamMemberSchema = createInsertSchema(teamMembers).omit({
@@ -716,11 +772,6 @@ export const insertTeamMemberSchema = createInsertSchema(teamMembers).omit({
 export const insertProjectAttachmentSchema = createInsertSchema(projectAttachments).omit({
   id: true,
   uploadedAt: true,
-});
-
-export const insertModuleDependencySchema = createInsertSchema(moduleDependencies).omit({
-  id: true,
-  createdAt: true,
 });
 
 export const insertNotificationSchema = createInsertSchema(notifications).omit({
@@ -735,9 +786,52 @@ export const insertSystemConfigSchema = z.object({
   description: z.string().optional(),
 });
 
-export const insertModuleMilestoneSchema = z.object({
-  moduleId: z.string().uuid("Invalid module ID"),
-  milestoneId: z.string().uuid("Invalid milestone ID"),
+export const insertCompanySchema = createInsertSchema(companies).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertSegmentSchema = createInsertSchema(segments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertRoleSchema = createInsertSchema(roles).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPermissionSchema = createInsertSchema(permissions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertRolePermissionSchema = createInsertSchema(rolePermissions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertServiceCategorySchema = createInsertSchema(serviceCategories).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertTicketSchema = createInsertSchema(tickets).omit({
+  id: true,
+  ticketNumber: true,
+  status: true,
+  resolvedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertTicketCommentSchema = createInsertSchema(ticketComments).omit({
+  id: true,
+  createdAt: true,
 });
 
 // Types
@@ -752,26 +846,14 @@ export type UpdateTeam = Partial<InsertTeam>;
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = z.infer<typeof insertProjectSchema>;
 
-export type Module = typeof modules.$inferSelect;
-export type InsertModule = z.infer<typeof insertModuleSchema>;
-
-export type Milestone = typeof milestones.$inferSelect;
-export type InsertMilestone = typeof milestones.$inferInsert;
-
-export type ModuleMilestone = typeof moduleMilestones.$inferSelect;
-export type InsertModuleMilestone = typeof moduleMilestones.$inferInsert;
-
-export type Subtask = typeof subtasks.$inferSelect;
-export type InsertSubtask = z.infer<typeof insertSubtaskSchema>;
+export type BillingItem = typeof billingItems.$inferSelect;
+export type InsertBillingItem = z.infer<typeof insertBillingItemSchema>;
 
 export type TeamMember = typeof teamMembers.$inferSelect;
 export type InsertTeamMember = z.infer<typeof insertTeamMemberSchema>;
 
 export type ProjectAttachment = typeof projectAttachments.$inferSelect;
 export type InsertProjectAttachment = z.infer<typeof insertProjectAttachmentSchema>;
-
-export type ModuleDependency = typeof moduleDependencies.$inferSelect;
-export type InsertModuleDependency = z.infer<typeof insertModuleDependencySchema>;
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
@@ -815,10 +897,34 @@ export type InsertAdminRole = z.infer<typeof insertAdminRoleSchema>;
 export type AdminRoleMember = typeof adminRoleMembers.$inferSelect;
 export type InsertAdminRoleMember = typeof adminRoleMembers.$inferInsert;
 
+export type Company = typeof companies.$inferSelect;
+export type InsertCompany = z.infer<typeof insertCompanySchema>;
+
+export type Segment = typeof segments.$inferSelect;
+export type InsertSegment = z.infer<typeof insertSegmentSchema>;
+
+export type Role = typeof roles.$inferSelect;
+export type InsertRole = z.infer<typeof insertRoleSchema>;
+
+export type Permission = typeof permissions.$inferSelect;
+export type InsertPermission = z.infer<typeof insertPermissionSchema>;
+
+export type RolePermission = typeof rolePermissions.$inferSelect;
+export type InsertRolePermission = z.infer<typeof insertRolePermissionSchema>;
+
+export type ServiceCategory = typeof serviceCategories.$inferSelect;
+export type InsertServiceCategory = z.infer<typeof insertServiceCategorySchema>;
+
+export type Ticket = typeof tickets.$inferSelect;
+export type InsertTicket = z.infer<typeof insertTicketSchema>;
+
+export type TicketComment = typeof ticketComments.$inferSelect;
+export type InsertTicketComment = z.infer<typeof insertTicketCommentSchema>;
+
 // Invoice reports table for tracking sent invoices
 export const invoiceReports = pgTable("invoice_reports", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  moduleId: varchar("module_id").references(() => modules.id).notNull(),
+  billingItemId: varchar("billing_item_id").references(() => billingItems.id).notNull(),
   projectId: varchar("project_id").references(() => projects.id).notNull(),
   invoiceNumber: varchar("invoice_number", { length: 100 }).unique().notNull(),
   invoiceDate: timestamp("invoice_date").notNull(),
@@ -916,7 +1022,7 @@ export const systemEventsLogs = pgTable("system_events_logs", {
 export const invoiceCollections = pgTable("invoice_collections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   invoiceId: varchar("invoice_id").references(() => invoiceReports.id).notNull(),
-  moduleId: varchar("module_id").references(() => modules.id).notNull(),
+  billingItemId: varchar("billing_item_id").references(() => billingItems.id).notNull(),
   projectId: varchar("project_id").references(() => projects.id).notNull(),
   collectionDate: timestamp("collection_date").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
@@ -929,9 +1035,9 @@ export const invoiceCollections = pgTable("invoice_collections", {
 });
 
 export const invoiceReportsRelations = relations(invoiceReports, ({ one, many }) => ({
-  module: one(modules, {
-    fields: [invoiceReports.moduleId],
-    references: [modules.id],
+  billingItem: one(billingItems, {
+    fields: [invoiceReports.billingItemId],
+    references: [billingItems.id],
   }),
   project: one(projects, {
     fields: [invoiceReports.projectId],
@@ -945,21 +1051,19 @@ export const invoiceReportsRelations = relations(invoiceReports, ({ one, many })
   collections: many(invoiceCollections),
 }));
 
-export const monthlyTargetsRelations = relations(monthlyTargets, ({ one }) => ({
-  segment: one(projects, {
-    fields: [monthlyTargets.segment],
-    references: [projects.segment],
-  }),
-}));
+// Note: monthlyTargets.segment stays on the legacy projectSegmentEnum (unconverted in this
+// pass), so it can no longer form a relation against projects (whose segment is now the
+// dynamic segmentId FK) - this relation was unused anyway, so it's dropped rather than
+// reworked into a non-FK-based join.
 
 export const invoiceCollectionsRelations = relations(invoiceCollections, ({ one }) => ({
   invoice: one(invoiceReports, {
     fields: [invoiceCollections.invoiceId],
     references: [invoiceReports.id],
   }),
-  module: one(modules, {
-    fields: [invoiceCollections.moduleId],
-    references: [modules.id],
+  billingItem: one(billingItems, {
+    fields: [invoiceCollections.billingItemId],
+    references: [billingItems.id],
   }),
   project: one(projects, {
     fields: [invoiceCollections.projectId],

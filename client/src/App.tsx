@@ -5,8 +5,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import NotFound from "@/pages/not-found";
+import Landing from "@/pages/landing";
 import Login from "@/pages/login";
-import Register from "@/pages/register";
 import ResetPassword from "@/pages/reset-password";
 import Home from "@/pages/home";
 import Dashboard from "@/pages/dashboard";
@@ -15,9 +15,6 @@ import ProjectDetail from "@/pages/project-detail";
 import Tasks from "@/pages/tasks";
 import Reports from "@/pages/reports";
 import ReportDetail from "@/pages/report-detail";
-import Contracts from "@/pages/contracts";
-import ContractDetail from "@/pages/contract-detail";
-import ContractForm from "@/pages/contract-form";
 import Team from "@/pages/team";
 import TeamDetail from "@/pages/team-detail";
 import ExecutiveDashboard from "@/pages/executive-dashboard";
@@ -25,6 +22,11 @@ import MarketingLogin from "@/pages/marketing-login";
 import MarketingDashboard from "@/pages/marketing-dashboard";
 import MarketingResetPassword from "@/pages/marketing-reset-password";
 import Logs from "@/pages/logs";
+import Tickets from "@/pages/tickets";
+import Companies from "@/pages/companies";
+import ServiceCategories from "@/pages/service-categories";
+import Segments from "@/pages/segments";
+import AuthenticatedLayout from "@/components/layout/authenticated-layout";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 function Router() {
@@ -48,33 +50,42 @@ function Router() {
       
       {!isAuthenticated ? (
         <>
-          <Route path="/" component={Login} />
+          <Route path="/" component={Landing} />
+          <Route path="/support" component={Landing} />
           <Route path="/login" component={Login} />
-          <Route path="/register" component={Register} />
           <Route path="/reset-password" component={ResetPassword} />
         </>
       ) : (
-        <>
-          <Route path="/" component={Dashboard} />
-          <Route path="/home" component={Home} />
-          <Route path="/projects" component={Projects} />
-          <Route path="/projects/:id" component={ProjectDetail} />
-          <Route path="/tasks" component={Tasks} />
-          {isAuthenticated && isAdminRole() && (
-            <>
-              <Route path="/reports" component={Reports} />
-              <Route path="/reports/detail" component={ReportDetail} />
-              <Route path="/contracts" component={Contracts} />
-              <Route path="/contracts/new" component={ContractForm} />
-              <Route path="/contracts/:id" component={ContractDetail} />
-              <Route path="/contracts/:id/edit" component={ContractForm} />
-              <Route path="/executive-dashboard" component={ExecutiveDashboard} />
-              <Route path="/logs" component={Logs} />
-            </>
+        <Route>
+          {() => (
+            <AuthenticatedLayout>
+              <Switch>
+                <Route path="/" component={Dashboard} />
+                <Route path="/support" component={Landing} />
+                <Route path="/home" component={Home} />
+                <Route path="/projects" component={Projects} />
+                <Route path="/projects/:id" component={ProjectDetail} />
+                <Route path="/tasks" component={Tasks} />
+                <Route path="/tickets" component={Tickets} />
+                <Route path="/companies" component={Companies} />
+                <Route path="/segments" component={Segments} />
+                <Route path="/sectors" component={Segments} />
+                <Route path="/service-categories" component={ServiceCategories} />
+                {isAdminRole() && (
+                  <>
+                    <Route path="/reports" component={Reports} />
+                    <Route path="/reports/detail" component={ReportDetail} />
+                    <Route path="/executive-dashboard" component={ExecutiveDashboard} />
+                    <Route path="/logs" component={Logs} />
+                  </>
+                )}
+                <Route path="/teams" component={Team} />
+                <Route path="/teams/:teamId" component={TeamDetail} />
+                <Route component={NotFound} />
+              </Switch>
+            </AuthenticatedLayout>
           )}
-          <Route path="/teams" component={Team} />
-          <Route path="/teams/:teamId" component={TeamDetail} />
-        </>
+        </Route>
       )}
       <Route component={NotFound} />
     </Switch>

@@ -3,7 +3,6 @@ import { useParams, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import Navigation from "@/components/layout/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -77,6 +76,12 @@ export default function TeamDetail() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
+  const { data: segmentsList = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ['/api/segments'],
+    enabled: !!isAuthenticated,
+  });
+  const segmentNameById: Record<string, string> = Object.fromEntries(segmentsList.map((s) => [s.id, s.name]));
+
   // Fetch team details
   const { data: teamDetails, isLoading: teamDetailsLoading, error: teamDetailsError } = useQuery<any>({
     queryKey: ['/api/teams', teamId, 'details'],
@@ -104,7 +109,6 @@ export default function TeamDetail() {
   if (teamDetailsLoading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navigation />
         <div className="p-6">
           <div className="max-w-7xl mx-auto">
             <div className="animate-pulse">
@@ -125,7 +129,6 @@ export default function TeamDetail() {
   if (teamDetailsError || !teamDetails) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navigation />
         <div className="p-6">
           <div className="max-w-7xl mx-auto">
             <div className="text-center py-12">
@@ -147,7 +150,6 @@ export default function TeamDetail() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
-      <Navigation />
       
       {/* Hero Section */}
       <div className="relative overflow-hidden">
@@ -437,7 +439,7 @@ export default function TeamDetail() {
                           
                           <div className="flex items-center justify-between">
                             <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800 border-blue-200">
-                              {project.segment}
+                              {segmentNameById[project.segmentId] || 'Unassigned'}
                             </Badge>
                             <Button variant="ghost" size="sm" className="text-xs text-gray-500 hover:text-blue-600">
                               <Eye className="w-3 h-3 mr-1" />
@@ -631,7 +633,7 @@ export default function TeamDetail() {
                                 {project.status}
                               </Badge>
                               <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200">
-                                {project.segment}
+                                {segmentNameById[project.segmentId] || 'Unassigned'}
                               </Badge>
                             </div>
                           </div>

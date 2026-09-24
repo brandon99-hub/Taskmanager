@@ -2,8 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 
 export interface DashboardRoleData {
   role: string;
-  isProjectManager: boolean;
-  isFinanceHead: boolean;
   assignedSegment?: string;
 }
 
@@ -41,15 +39,13 @@ export function useAuth() {
 
   const getDashboardType = (): string => {
     if (!dashboardRole) return 'employee';
-    
+
     // Check admin role assignments first
-    if (dashboardRole?.isProjectManager) return 'project_manager';
-    if (dashboardRole?.isFinanceHead) return 'finance_head';
     if (dashboardRole?.assignedSegment) return `segment_leader_${dashboardRole.assignedSegment}`;
-    
+
     // Check base user roles
     if (dashboardRole?.role === 'admin' || dashboardRole?.role === 'manager') return 'admin';
-    
+
     return 'employee';
   };
 
@@ -62,15 +58,19 @@ export function useAuth() {
       console.log('isAdminRole: No dashboard role found');
       return false;
     }
-    
-    const isAdmin = dashboardRole?.isProjectManager || 
-           dashboardRole?.isFinanceHead || 
-           !!dashboardRole?.assignedSegment ||
+
+    const isAdmin = !!dashboardRole?.assignedSegment ||
            ['admin', 'manager'].includes(dashboardRole?.role);
-    
-    
+
+
     return isAdmin;
   };
+
+  const permissions: string[] = (user as any)?.permissions || [];
+
+  const hasPermission = (key: string): boolean => permissions.includes(key);
+
+  const hasAnyPermission = (keys: string[]): boolean => keys.some((key) => permissions.includes(key));
 
   return {
     user,
@@ -81,5 +81,8 @@ export function useAuth() {
     getDashboardType,
     getSegment,
     isAdminRole,
+    permissions,
+    hasPermission,
+    hasAnyPermission,
   };
 }

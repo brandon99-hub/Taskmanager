@@ -3,13 +3,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useScreenSize } from "@/hooks/use-mobile";
 import { useQuery } from "@tanstack/react-query";
-import Navigation from "@/components/layout/navigation";
 import MetricsCards from "@/components/dashboard/metrics-cards";
-import InvoiceReport from "@/components/dashboard/invoice-report";
-import ProjectManagementHub from "@/components/dashboard/project-management-hub";
-import RiskQualityControl from "@/components/dashboard/risk-quality-control";
-import KanbanBoard from "@/components/dashboard/kanban-board";
-import UpcomingDeadlines from "@/components/dashboard/upcoming-deadlines";
+import TicketKanban from "@/components/tickets/ticket-kanban";
+import TicketsByStatusChart from "@/components/dashboard/tickets-by-status-chart";
+import { MonthlyTrendsChart } from "@/components/marketing/monthly-trends-chart";
 import TeamWorkload from "@/components/dashboard/team-workload";
 import QuickActions from "@/components/dashboard/quick-actions";
 import CreateProjectModal from "@/components/projects/create-project-modal";
@@ -19,7 +16,7 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 export default function Dashboard() {
   const { isAuthenticated, isLoading, getDashboardType, getSegment, isAdminRole } = useAuth();
   const { toast } = useToast();
-  const { isMobile, isTablet } = useScreenSize();
+  const { isMobile } = useScreenSize();
   const dashboardType = getDashboardType();
   const segment = getSegment();
   
@@ -44,8 +41,6 @@ export default function Dashboard() {
   // Get user-friendly role name for header
   const getRoleName = () => {
     switch (dashboardType) {
-      case 'project_manager': return 'Project Manager Dashboard';
-      case 'finance_head': return 'Finance Head Dashboard';
       case 'segment_leader_academic': return 'Academic Segment Leader Dashboard';
       case 'segment_leader_parastals': return 'Parastatal Segment Leader Dashboard';
       case 'segment_leader_private': return 'Private Segment Leader Dashboard';
@@ -57,10 +52,8 @@ export default function Dashboard() {
 
   const getSubtitle = () => {
     if (isMobile) return "Track & manage work";
-    
+
     switch (dashboardType) {
-      case 'project_manager': return 'Oversee all projects, teams, and deliverables';
-      case 'finance_head': return 'Monitor financial performance, collections, and budgets';
       case 'segment_leader_academic': return 'Manage academic sector projects and performance';
       case 'segment_leader_parastals': return 'Manage parastatal sector projects and performance';
       case 'segment_leader_private': return 'Manage private sector projects and performance';
@@ -74,7 +67,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background-page">
-      <Navigation />
       
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
         
@@ -99,32 +91,28 @@ export default function Dashboard() {
         {/* Metrics Cards */}
         <MetricsCards />
 
-        {/* Section 1 - Role-based content */}
-        {dashboardType === 'project_manager' ? (
-          <ProjectManagementHub />
-        ) : (dashboardType === 'finance_head' || ['admin', 'manager'].includes(dashboardType)) ? (
-          <InvoiceReport />
-        ) : null}
+        {/* Tickets Kanban */}
+        <div className="mb-6 lg:mb-8">
+          <TicketKanban />
+        </div>
 
-        {/* Section 2 - Risk Management & Quality Control for Project Managers */}
-        {dashboardType === 'project_manager' && (
-          <RiskQualityControl />
-        )}
-
-        {/* Main Content */}
-        <div className={`grid gap-6 lg:gap-8 ${isMobile ? 'grid-cols-1' : isTablet ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-3'}`}>
-          
-          {/* Kanban Board Section */}
-          <div className={isMobile || isTablet ? 'order-1' : 'lg:col-span-2 order-1'}>
-            <KanbanBoard />
+        {/* Analytics Section: Resolution Trends (70%) & Status Distribution (30%) */}
+        <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 mb-6 lg:mb-8">
+          <div className="lg:col-span-7">
+            <MonthlyTrendsChart 
+              title="Ticket Resolution Trends" 
+              description="Monthly count of tickets resolved and logged"
+            />
           </div>
-
-          {/* Right Sidebar */}
-          <div className={`space-y-4 sm:space-y-6 ${isMobile ? 'order-2' : isTablet ? 'order-2' : 'order-2'}`}>
-            <UpcomingDeadlines />
-            <TeamWorkload />
-            <QuickActions />
+          <div className="lg:col-span-3">
+            <TicketsByStatusChart />
           </div>
+        </div>
+
+        {/* Team Workload and Quick Actions */}
+        <div className={`grid gap-6 lg:gap-8 ${isMobile ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
+          <TeamWorkload />
+          <QuickActions />
         </div>
       </div>
       

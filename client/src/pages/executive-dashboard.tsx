@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useScreenSize } from "@/hooks/use-mobile";
-import Navigation from "@/components/layout/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -144,14 +143,32 @@ export default function ExecutiveDashboard() {
   const { data: projectsData, isLoading: projectsLoading } = useQuery<any[]>({
     queryKey: ['/api/projects'],
     queryFn: async () => {
-      const response = await fetch('/api/projects', { 
-        credentials: 'include' 
+      const response = await fetch('/api/projects', {
+        credentials: 'include'
       });
       if (!response.ok) throw new Error('Failed to fetch projects data');
       return response.json();
     },
     enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
   });
+
+  const { data: segmentsData = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ['/api/segments'],
+    enabled: isAuthenticated && ['admin', 'manager'].includes((user as any)?.role),
+  });
+  // Fixed palette cycled across however many segments exist, instead of a color-per-literal-name.
+  const SEGMENT_COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'];
+  const segmentColorById: Record<string, string> = {};
+  segmentsData.forEach((s, i) => { segmentColorById[s.id] = SEGMENT_COLORS[i % SEGMENT_COLORS.length]; });
+  const segmentNameById: Record<string, string> = Object.fromEntries(segmentsData.map((s) => [s.id, s.name]));
+  // monthlyTargets/actualCollections are still keyed by the legacy academic/parastals/private
+  // name (out of scope for the dynamic-segments migration), so resolve each dynamic segment's
+  // id to that legacy name where one matches, for looking up expected/collected revenue.
+  const legacySegmentNameById: Record<string, string> = Object.fromEntries(
+    segmentsData
+      .filter((s) => ['academic', 'parastals', 'private'].includes(s.name.trim().toLowerCase()))
+      .map((s) => [s.id, s.name.trim().toLowerCase()])
+  );
 
   const { data: milestonesData, isLoading: milestonesLoading } = useQuery<any[]>({
     queryKey: ['/api/milestones'],
@@ -354,20 +371,21 @@ export default function ExecutiveDashboard() {
 
     // Segment performance - use corrected invoice report data for consistency
     const segmentData = projects.reduce((acc, project) => {
-      const segment = project.segment || 'private';
+      const segment = project.segmentId || 'unassigned';
       if (!acc[segment]) {
         acc[segment] = { projects: 0, revenue: 0, completion: 0, collectedRevenue: 0 };
       }
       acc[segment].projects++;
       acc[segment].revenue += parseFloat(project.budget || '0');
       acc[segment].completion += project.progress || 0;
-      
-      // Use corrected invoice data for segment revenue (based on milestone due dates)
-      // This ensures consistency with the invoice report
-      const segmentExpected = invoice?.monthlyTargets?.[segment] || 0;
-      const segmentCollected = invoice?.actualCollections?.[segment] || 0;
+
+      // Use corrected invoice data for segment revenue (based on milestone due dates).
+      // monthlyTargets/actualCollections are still keyed by the legacy academic/parastals/private
+      // name, so this only resolves for segments that still match one of those 3 names.
+      const legacyName = legacySegmentNameById[segment];
+      const segmentCollected = legacyName ? (invoice?.actualCollections?.[legacyName] || 0) : 0;
       acc[segment].collectedRevenue = segmentCollected;
-      
+
       return acc;
     }, {} as any);
 
@@ -645,8 +663,8 @@ export default function ExecutiveDashboard() {
     { name: 'Pending', value: metrics.pendingRevenue, color: '#F59E0B' }
   ];
 
-  const segmentChartData = Object.entries(metrics.segmentData).map(([segment, data]: [string, any]) => ({
-    segment: segment.charAt(0).toUpperCase() + segment.slice(1),
+  const segmentChartData = Object.entries(metrics.segmentData).map(([segmentId, data]: [string, any]) => ({
+    segment: segmentNameById[segmentId] || 'Unassigned',
     projects: data.projects,
     revenue: data.revenue,
     completion: data.completion
@@ -684,12 +702,10 @@ export default function ExecutiveDashboard() {
     
     // Fallback to project-based segment data if invoice data is not available
     if (metrics && metrics.segmentData) {
-      return Object.entries(metrics.segmentData).map(([segment, data]: [string, any]) => ({
-        name: segment.charAt(0).toUpperCase() + segment.slice(1),
+      return Object.entries(metrics.segmentData).map(([segmentId, data]: [string, any]) => ({
+        name: segmentNameById[segmentId] || 'Unassigned',
         value: data.collectedRevenue || data.revenue || 0,
-        color: segment === 'academic' ? '#3B82F6' : 
-               segment === 'parastals' ? '#10B981' : 
-               segment === 'private' ? '#8B5CF6' : '#6B7280'
+        color: segmentColorById[segmentId] || '#6B7280'
       })).filter((segment: any) => segment.value > 0);
     }
     
@@ -699,7 +715,6 @@ export default function ExecutiveDashboard() {
 
   return (
     <div className="min-h-screen bg-background-page">
-      <Navigation />
       
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         

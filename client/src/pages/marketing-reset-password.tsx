@@ -100,9 +100,9 @@ export default function MarketingResetPassword() {
           <CardHeader className="space-y-3 pb-8">
             <div className="text-center">
               <img 
-                src="/Appkings.png" 
-                alt="AppKings Logo" 
-                className="h-16 w-auto mx-auto mb-6"
+                src="/logo.png" 
+                alt="Ecorenet Logo" 
+                className="h-16 w-auto max-w-[280px] object-contain mx-auto mb-6"
               />
               <CardTitle className="text-2xl font-bold text-gray-900">Reset Password</CardTitle>
               <CardDescription className="text-gray-600 mt-2">
