@@ -3,8 +3,12 @@ import cookieParser from 'cookie-parser';
 import type { Express, Request, Response, NextFunction } from 'express';
 
 export function setupCSRFProtection(app: Express) {
+  if (!process.env.COOKIE_SECRET) {
+    throw new Error("COOKIE_SECRET environment variable is required");
+  }
+
   // Enhanced cookie parser configuration
-  app.use(cookieParser(process.env.COOKIE_SECRET || 'your-super-secure-cookie-secret'));
+  app.use(cookieParser(process.env.COOKIE_SECRET));
   
   // Enhanced CSRF protection configuration
   const csrfProtection = csrf({
@@ -54,24 +58,14 @@ export function setupCSRFProtection(app: Express) {
 
   // Enhanced CSRF protection with better route handling
   app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-    // Skip CSRF for auth endpoints, marketing routes (JWT-based), and public APIs
-    const skipCSRFPaths = [
-      '/auth/login', 
-      '/auth/register', 
-      '/auth/forgot-password',
-      '/auth/reset-password',
-      '/csrf-token',
-      '/public/',
-      '/webhook/',
-      '/marketing/'  // Skip CSRF for marketing routes as they use JWT authentication
-    ];
-    
-    if (skipCSRFPaths.some(path => req.path.includes(path))) {
-      return next();
-    }
-    
-    // Skip CSRF for file uploads and webhooks
-    if (req.path.includes('/upload') || req.path.includes('/webhook')) {
+    // Skip CSRF for auth endpoints, marketing routes (JWT-based), and public APIs.
+    // Exact-match single routes and prefix-match path families (trailing '/') separately —
+    // substring matching here would silently exempt any future route whose path merely
+    // contains one of these strings (e.g. '/auth/login-history' matching '/auth/login').
+    const skipCSRFExact = ['/auth/login', '/auth/register', '/auth/forgot-password', '/auth/reset-password', '/csrf-token'];
+    const skipCSRFPrefixes = ['/public/', '/webhook/', '/marketing/', '/upload/'];
+
+    if (skipCSRFExact.includes(req.path) || skipCSRFPrefixes.some(prefix => req.path.startsWith(prefix))) {
       return next();
     }
     

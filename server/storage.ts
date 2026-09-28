@@ -65,6 +65,10 @@ import {
   ticketComments,
   type TicketComment,
   type InsertTicketComment,
+  ticketEmailLinks,
+  type TicketEmailLink,
+  userMicrosoftSettings,
+  type UserMicrosoftSettings,
 } from "../shared/schema";
 import { db } from "./db";
 import { eq, desc, asc, and, or, sql, count, avg, inArray, gt, lte, ne } from "drizzle-orm";
@@ -109,10 +113,20 @@ export interface IStorage {
   createTicket(ticket: InsertTicket & { ticketNumber: string }): Promise<Ticket>;
   assignTicket(id: string, assignedToUserId: string | null, assignedTeamId?: string | null): Promise<Ticket>;
   updateTicketStatus(id: string, status: string, resolution?: { rootCause: string; resolutionNotes: string }): Promise<Ticket>;
+  updateTicketClassification(id: string, classification: Record<string, unknown>, opts?: { applyToCategoryAndPriority?: boolean; categoryId?: string | null; priority?: string }): Promise<Ticket>;
   recordTicketEscalation(id: string, data: { escalatedToUserId: string; escalatedFromUserId: string; reason: string }): Promise<Ticket>;
   getTicketComments(ticketId: string): Promise<(TicketComment & { user: User })[]>;
   addTicketComment(comment: InsertTicketComment): Promise<TicketComment>;
   getTicketCount(): Promise<number>;
+  getCompanyByEmailDomain(domain: string): Promise<Company | undefined>;
+  getOpenTicketsForProject(projectId: string): Promise<any[]>;
+  getTicketByEmailConversationId(conversationId: string): Promise<Ticket | undefined>;
+  linkTicketEmailConversation(ticketId: string, conversationId: string): Promise<TicketEmailLink>;
+
+  // Microsoft 365 inbox connection (per user; mirrors getUserCalendarSettings/updateUserCalendarSettings)
+  getUserMicrosoftSettings(userId: string): Promise<UserMicrosoftSettings>;
+  updateUserMicrosoftSettings(userId: string, settings: Partial<UserMicrosoftSettings>): Promise<void>;
+  getConnectedMicrosoftUsers(): Promise<UserMicrosoftSettings[]>;
 
   // Dynamic RBAC: roles & permissions operations
   getRoles(): Promise<Role[]>;
@@ -239,6 +253,14 @@ export interface IStorage {
     totalTasks: number;
     completedTasks: number;
     workloadPercentage: number;
+  }[]>;
+  getTeamPerformance(): Promise<{
+    id: string;
+    name: string;
+    memberCount: number;
+    totalTickets: number;
+    resolvedTickets: number;
+    resolutionRate: number;
   }[]>;
   getTeamWorkloadForUserTeams(userId: string): Promise<{
     userId: string;
@@ -725,6 +747,24 @@ export class DatabaseStorage implements IStorage {
     return newTicket;
   }
 
+  async updateTicketClassification(
+    id: string,
+    classification: Record<string, unknown>,
+    opts?: { applyToCategoryAndPriority?: boolean; categoryId?: string | null; priority?: string }
+  ): Promise<Ticket> {
+    const updates: any = { aiClassification: classification, updatedAt: new Date() };
+    if (opts?.applyToCategoryAndPriority) {
+      if (opts.categoryId !== undefined) updates.categoryId = opts.categoryId;
+      if (opts.priority) updates.priority = opts.priority;
+    }
+    const [updatedTicket] = await db
+      .update(tickets)
+      .set(updates)
+      .where(eq(tickets.id, id))
+      .returning();
+    return updatedTicket;
+  }
+
   async assignTicket(id: string, assignedToUserId: string | null, assignedTeamId?: string | null): Promise<Ticket> {
     const [updatedTicket] = await db
       .update(tickets)
@@ -779,6 +819,93 @@ export class DatabaseStorage implements IStorage {
   async addTicketComment(comment: InsertTicketComment): Promise<TicketComment> {
     const [newComment] = await db.insert(ticketComments).values(comment).returning();
     return newComment;
+  }
+
+  async getCompanyByEmailDomain(domain: string): Promise<Company | undefined> {
+    const [company] = await db
+      .select()
+      .from(companies)
+      .where(eq(companies.emailDomain, domain.toLowerCase()));
+    return company;
+  }
+
+  async getOpenTicketsForProject(projectId: string): Promise<any[]> {
+    const rows = await db
+      .select()
+      .from(tickets)
+      .where(
+        and(
+          eq(tickets.projectId, projectId),
+          inArray(tickets.status, ['open', 'in_progress'])
+        )
+      )
+      .orderBy(desc(tickets.createdAt));
+    return rows;
+  }
+
+  async getTicketByEmailConversationId(conversationId: string): Promise<Ticket | undefined> {
+    const [direct] = await db
+      .select()
+      .from(tickets)
+      .where(eq(tickets.emailConversationId, conversationId));
+    if (direct) return direct;
+
+    const [linked] = await db
+      .select({ ticket: tickets })
+      .from(ticketEmailLinks)
+      .innerJoin(tickets, eq(ticketEmailLinks.ticketId, tickets.id))
+      .where(eq(ticketEmailLinks.conversationId, conversationId));
+    return linked?.ticket;
+  }
+
+  async linkTicketEmailConversation(ticketId: string, conversationId: string): Promise<TicketEmailLink> {
+    const [link] = await db
+      .insert(ticketEmailLinks)
+      .values({ ticketId, conversationId })
+      .returning();
+    return link;
+  }
+
+  async getUserMicrosoftSettings(userId: string): Promise<UserMicrosoftSettings> {
+    const [settings] = await db
+      .select()
+      .from(userMicrosoftSettings)
+      .where(eq(userMicrosoftSettings.userId, userId));
+    return settings || {
+      id: '',
+      userId,
+      connected: false,
+      mailboxEmail: null,
+      accessToken: null,
+      refreshToken: null,
+      tokenExpiry: null,
+      deltaLink: null,
+      lastSyncAt: null,
+      lastSyncError: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }
+
+  async updateUserMicrosoftSettings(userId: string, settings: Partial<UserMicrosoftSettings>): Promise<void> {
+    const settingsWithUserId = { ...settings, userId };
+    await db
+      .insert(userMicrosoftSettings)
+      .values(settingsWithUserId as any)
+      .onConflictDoUpdate({
+        target: userMicrosoftSettings.userId,
+        set: {
+          ...settings,
+          updatedAt: new Date() as any,
+        } as any,
+      });
+  }
+
+  async getConnectedMicrosoftUsers(): Promise<UserMicrosoftSettings[]> {
+    return await db
+      .select()
+      .from(userMicrosoftSettings)
+      .where(eq(userMicrosoftSettings.connected, true));
   }
 
   // Dynamic RBAC: roles & permissions operations
@@ -2094,6 +2221,52 @@ export class DatabaseStorage implements IStorage {
         ? Math.round((Number(data.completedTasks) / data.totalTasks) * 100)
         : 0,
     }));
+  }
+
+  async getTeamPerformance(): Promise<{
+    id: string;
+    name: string;
+    memberCount: number;
+    totalTickets: number;
+    resolvedTickets: number;
+    resolutionRate: number;
+  }[]> {
+    const ticketStats = await db
+      .select({
+        teamId: tickets.assignedTeamId,
+        totalTickets: count(tickets.id),
+        resolvedTickets: sql<number>`SUM(CASE WHEN ${tickets.status} IN ('resolved', 'closed') THEN 1 ELSE 0 END)`,
+      })
+      .from(tickets)
+      .where(sql`${tickets.assignedTeamId} IS NOT NULL`)
+      .groupBy(tickets.assignedTeamId);
+
+    const memberCounts = await db
+      .select({
+        teamId: teamMembers.teamId,
+        memberCount: count(teamMembers.id),
+      })
+      .from(teamMembers)
+      .groupBy(teamMembers.teamId);
+
+    const allTeams = await db.select().from(teams);
+
+    const statsByTeam = new Map(ticketStats.map((s) => [s.teamId, s]));
+    const membersByTeam = new Map(memberCounts.map((m) => [m.teamId, m.memberCount]));
+
+    return allTeams.map((team) => {
+      const stats = statsByTeam.get(team.id);
+      const totalTickets = stats?.totalTickets ?? 0;
+      const resolvedTickets = Number(stats?.resolvedTickets ?? 0);
+      return {
+        id: team.id,
+        name: team.name,
+        memberCount: membersByTeam.get(team.id) ?? 0,
+        totalTickets,
+        resolvedTickets,
+        resolutionRate: totalTickets > 0 ? Math.round((resolvedTickets / totalTickets) * 100) : 0,
+      };
+    });
   }
 
   async getTeamWorkloadForUserTeams(currentUserId: string): Promise<{

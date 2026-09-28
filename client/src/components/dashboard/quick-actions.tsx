@@ -1,48 +1,55 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, Users, BarChart3, Download, Settings, FileText } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Plus, BarChart3, Settings, FileText, Ticket, Mail, Building2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function QuickActions() {
-  const { toast } = useToast();
   const [, setLocation] = useLocation();
   const auth = useAuth() as any;
-  const { user, getDashboardType, isAdminRole } = auth;
+  const { user, getDashboardType, isAdminRole, hasAnyPermission } = auth;
   const dashboardType = getDashboardType();
-  
-  // Debug logging
-  // console.debug('QuickActions - dashboardType:', dashboardType);
-  // console.debug('QuickActions - user role:', user?.role);
-  // console.debug('QuickActions - isAdminRole():', isAdminRole());
-
-  const handleExportData = () => {
-    // Generate CSV data from current tasks/projects
-    toast({
-      title: "Export Started",
-      description: "Generating report... This feature will download CSV files soon.",
-    });
-  };
 
   const getActionsForRole = () => {
     const baseActions = [
       {
-        icon: Users,
-        label: "Ticket Board",
-        tooltip: "View tickets grouped by status",
-        testId: "action-manage-tasks",
-        onClick: () => setLocation('/tasks'),
+        icon: Ticket,
+        label: "Tickets",
+        tooltip: "View and manage support tickets",
+        testId: "action-tickets",
+        onClick: () => setLocation('/tickets'),
         allowedRoles: ['admin', 'manager', 'employee', 'segment_leader']
       }
     ];
+
+    if (isAdminRole?.() || hasAnyPermission?.(['inbox.manage'])) {
+      baseActions.push({
+        icon: Mail,
+        label: "Inbox",
+        tooltip: "View incoming ticket emails",
+        testId: "action-inbox",
+        onClick: () => setLocation('/inbox'),
+        allowedRoles: ['admin', 'manager', 'employee', 'segment_leader']
+      });
+    }
+
+    if (isAdminRole?.() || hasAnyPermission?.(['reports.view'])) {
+      baseActions.push({
+        icon: BarChart3,
+        label: "Reports",
+        tooltip: "Access analytics and performance reports",
+        testId: "action-view-reports",
+        onClick: () => setLocation('/reports'),
+        allowedRoles: ['admin', 'manager', 'employee', 'segment_leader']
+      });
+    }
 
     // Role-specific actions
     switch (dashboardType) {
       case 'segment_leader_academic':
       case 'segment_leader_parastals':
-      case 'segment_leader_private':
+      case 'segment_leader_private': {
         const segment = dashboardType.split('_')[2];
         return [
           {
@@ -54,15 +61,8 @@ export default function QuickActions() {
             allowedRoles: ['segment_leader']
           },
           ...baseActions,
-          {
-            icon: Download,
-            label: "Export Segment Data",
-            tooltip: `Download ${segment} segment reports`,
-            testId: "action-export-data",
-            onClick: handleExportData,
-            allowedRoles: ['segment_leader']
-          }
         ];
+      }
 
       case 'admin':
       case 'manager':
@@ -77,29 +77,21 @@ export default function QuickActions() {
             },
             allowedRoles: ['admin', 'manager']
           },
-          {
-            icon: Settings,
-            label: "Admin Management",
-            tooltip: "Manage admin roles and system settings",
-            testId: "action-admin-management",
-            onClick: () => setLocation('/teams'), // Admin role management is in teams page
-            allowedRoles: ['admin', 'manager']
-          },
           ...baseActions,
           {
-            icon: BarChart3,
-            label: "View Reports",
-            tooltip: "Access analytics and performance reports",
-            testId: "action-view-analytics",
-            onClick: () => setLocation('/reports'),
+            icon: Settings,
+            label: "Manage Teams",
+            tooltip: "Create and manage teams and admin roles",
+            testId: "action-manage-teams",
+            onClick: () => setLocation('/teams'),
             allowedRoles: ['admin', 'manager']
           },
           {
-            icon: Download,
-            label: "Export Data",
-            tooltip: "Download project and task data as CSV",
-            testId: "action-export-data",
-            onClick: handleExportData,
+            icon: Building2,
+            label: "Companies",
+            tooltip: "View and manage client companies",
+            testId: "action-companies",
+            onClick: () => setLocation('/companies'),
             allowedRoles: ['admin', 'manager']
           }
         ];

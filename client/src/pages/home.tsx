@@ -309,7 +309,7 @@ export default function Home() {
                 <span>TaskFlow v1.0</span>
                 <Separator orientation="horizontal" className="w-full sm:hidden" />
                 <Separator orientation="vertical" className="hidden sm:block h-4" />
-                <span>© 2024 AppKings Solutions</span>
+                <span>© 2024 Ecorenet Business Solutions</span>
               </div>
             </div>
           </CardContent>

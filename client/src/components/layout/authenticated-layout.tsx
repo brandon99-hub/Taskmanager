@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { User, BarChart3, Shield, ListChecks, LogOut } from "lucide-react";
+import { User, Shield, ListChecks, LogOut } from "lucide-react";
 import AppSidebar from "@/components/layout/app-sidebar";
 import NotificationsMenu from "@/components/layout/notifications-menu";
 
@@ -93,12 +93,6 @@ export default function AuthenticatedLayout({ children }: { children: ReactNode 
                 </Link>
                 {isAdminRole() && (
                   <>
-                    <Link href="/executive-dashboard">
-                      <DropdownMenuItem data-testid="menu-executive-dashboard">
-                        <BarChart3 className="mr-2 h-4 w-4" />
-                        <span>Executive Dashboard</span>
-                      </DropdownMenuItem>
-                    </Link>
                     <Link href="/logs">
                       <DropdownMenuItem data-testid="menu-logs">
                         <Shield className="mr-2 h-4 w-4" />

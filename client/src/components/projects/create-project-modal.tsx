@@ -63,7 +63,7 @@ const createProjectSchema = z.object({
 
 
 
-  status: z.enum(["planning", "active", "on_hold", "completed", "on_support", "inactive"]).optional(),
+  status: z.enum(["active", "support_closed"]).optional(),
 
 }).refine((data) => {
   if (!data.startDate || !data.endDate) return true;
@@ -104,6 +104,12 @@ type NewMilestoneRow = {
 };
 
 
+
+// The DB status enum has legacy values (planning, on_hold, completed, on_support, etc.) but
+// this form only distinguishes "closed out" from everything else -- mirrors getSupportState()
+// on the project detail page, where only 'support_closed' is treated as distinct.
+const toFormStatus = (status?: string): "active" | "support_closed" =>
+  status === "support_closed" ? "support_closed" : "active";
 
 export default function CreateProjectModal({ project, onClose }: { project?: any; onClose?: () => void }) {
 
@@ -194,7 +200,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
       budget: "0.00",
 
-      status: "planning",
+      status: "active",
 
     },
 
@@ -300,7 +306,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         segmentId: project.segmentId || "",
         teamId: project.teamId || "none",
         budget: project.budget ? String(project.budget) : "",
-        status: project.status || "planning",
+        status: toFormStatus(project.status),
       };
 
       // Reset form and form ready state
@@ -331,7 +337,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
         segmentId: preservedSegmentId,
         teamId: "none",
         budget: "",
-        status: "planning" as const,
+        status: "active" as const,
       };
       
       setIsFormReady(false);
@@ -378,18 +384,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   });
 
-  // Teams are still keyed by the legacy academic/parastals/private name (teams.segment
-  // wasn't migrated to the dynamic segments table), so resolve the selected dynamic
-  // segment's name to filter teams the same way it always worked for those 3 segments.
-  const currentSegmentName = (segments.find((s: any) => s.id === currentSegmentId)?.name || '').toLowerCase();
+  const { data: allTeams = [] } = useQuery<any[]>({
 
-  const { data: teams = [] } = useQuery<any[]>({
-
-    queryKey: ['/api/teams', currentSegmentName],
+    queryKey: ['/api/teams'],
 
     queryFn: async () => {
 
-      const res = await fetch(`/api/teams?segment=${currentSegmentName}`, {
+      const res = await fetch(`/api/teams`, {
 
         credentials: 'include',
 
@@ -403,13 +404,20 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     },
 
-    enabled: isOpen && !!currentSegmentName, // load when modal opens and a segment is selected
+    enabled: isOpen, // load when modal opens
 
     staleTime: 0,
 
     refetchOnMount: 'always',
 
   });
+
+  // Teams now carry their own sectorId directly, so filter client-side to only the
+  // teams linked to the currently selected sector instead of the legacy segment enum.
+  const teams = useMemo(
+    () => currentSegmentId ? allTeams.filter((t: any) => t.sectorId === currentSegmentId) : allTeams,
+    [allTeams, currentSegmentId]
+  );
 
   const { data: companies = [] } = useQuery<any[]>({
 
@@ -471,7 +479,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         budget: project.budget ? String(project.budget) : "",
 
-        status: project.status || "planning",
+        status: toFormStatus(project.status),
 
       };
 
@@ -586,7 +594,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         const currentTeam = teams.find(team => team.id === currentTeamId);
 
-        if (!currentTeam || currentTeam.segment !== currentSegmentName) {
+        if (!currentTeam || currentTeam.sectorId !== currentSegmentId) {
 
           // Reset team selection if the current team is not in the new segment
 
@@ -598,7 +606,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
     }
 
-  }, [currentSegmentId, currentSegmentName, teams, form, isEditMode]);
+  }, [currentSegmentId, teams, form, isEditMode]);
 
 
 
@@ -634,7 +642,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
         budget: "",
 
-        status: "planning",
+        status: "active",
 
       });
 
@@ -722,20 +730,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
     }
   }, [isEditMode, existingMilestones, isDataLoaded, dataLoadingComplete]);
 
-  // Auto-select team Project Leader as manager when team changes (new project only)
   const watchedTeamId = form.watch('teamId');
-  useEffect(() => {
-    if (isEditMode) return;
-    if (!watchedTeamId || watchedTeamId === 'none') return;
-    // This effect is declared before teamMembers; the callback runs after render, when teamMembers is defined
-    // eslint-disable-next-line @typescript-eslint/no-use-before-define
-    const leader = (teamMembers || []).find((m: any) => m.role === 'Project Leader');
-    if (leader && leader.id) {
-      form.setValue('managerId', leader.id, { shouldDirty: true, shouldValidate: true });
-    }
-  }, [isEditMode, watchedTeamId]);
-
-
 
   // Fetch team members for the form's selected team (for new projects or when changing teams)
 
@@ -803,18 +798,16 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
   });
 
-  // Fetch admins as fallback candidates for manager selection
-  const { data: admins = [], isLoading: adminsLoading } = useQuery<any[]>({
-    queryKey: ['/api/users', 'admin'],
-    queryFn: async () => {
-      const res = await fetch('/api/users?role=admin', { credentials: 'include', cache: 'no-store' });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: isOpen,
-    staleTime: 5 * 60 * 1000,
-  });
-
+  // Auto-select the team's Project Leader as manager whenever the selected team (or its
+  // members) changes. managerId has no visible field of its own anymore -- the selected
+  // team's Project Leader is always the project's manager, in both create and edit mode.
+  useEffect(() => {
+    if (!watchedTeamId || watchedTeamId === 'none') return;
+    const leader = (teamMembers || []).find((m: any) => m.role === 'Project Leader');
+    if (leader && leader.id && form.getValues('managerId') !== leader.id) {
+      form.setValue('managerId', leader.id, { shouldDirty: true, shouldValidate: true });
+    }
+  }, [watchedTeamId, teamMembers]);
 
 
   // Fetch team members for the existing project's team (for edit mode)
@@ -1131,6 +1124,21 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
       return;
     }
 
+    if (data.teamId && data.teamId !== 'none' && !data.managerId) {
+      setIsProcessingMilestones(false);
+      setMilestoneProgress({ current: 0, total: 0, message: '' });
+      form.setError('teamId', {
+        type: 'manual',
+        message: 'This team has no Project Leader assigned yet — add one from the Teams page first.',
+      });
+      toast({
+        title: 'Validation Error',
+        description: 'This team has no Project Leader assigned yet — add one from the Teams page first.',
+        variant: 'destructive'
+      });
+      return;
+    }
+
     createProjectMutation.mutate(data, {
       onSuccess: async (savedProject) => {
         try {
@@ -1434,7 +1442,11 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                 />
 
+              </div>
 
+
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                 <FormField
 
@@ -1450,13 +1462,13 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                       <FormControl>
 
-                        <Input 
+                        <Input
 
-                          placeholder="Enter contact person name" 
+                          placeholder="Enter contact person name"
 
                           className="h-11"
 
-                          {...field} 
+                          {...field}
 
                           data-testid="input-project-contact-person"
 
@@ -1474,11 +1486,7 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                 />
 
-              </div>
 
-
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                 <FormField
 
@@ -1518,8 +1526,10 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                 />
 
-                
-                
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
                 <FormField
 
                   control={form.control}
@@ -1549,6 +1559,54 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                         />
 
                       </FormControl>
+
+                      <FormMessage />
+
+                    </FormItem>
+
+                  )}
+
+                />
+
+                <FormField
+
+                  control={form.control}
+
+                  name="status"
+
+                  render={({ field }) => (
+
+                    <FormItem>
+
+                      <FormLabel className="text-sm font-medium text-gray-700">Project Status</FormLabel>
+
+                      <Select
+
+                        onValueChange={field.onChange}
+
+                        value={field.value || 'active'}
+
+                      >
+
+                        <FormControl>
+
+                          <SelectTrigger className="h-11" data-testid="select-project-status">
+
+                            <SelectValue placeholder="Select status" />
+
+                          </SelectTrigger>
+
+                        </FormControl>
+
+                        <SelectContent>
+
+                          <SelectItem value="active">On Support</SelectItem>
+
+                          <SelectItem value="support_closed">Closed</SelectItem>
+
+                        </SelectContent>
+
+                      </Select>
 
                       <FormMessage />
 
@@ -1718,43 +1776,6 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
 
                 />
 
-                {/* Project Leader (Manager) selection */}
-                <FormField
-                  control={form.control}
-                  name="managerId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-sm font-medium text-gray-700">Project Leader (Manager)</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger className="h-11" data-testid="select-project-manager">
-                            <SelectValue placeholder="Select project leader" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {/* Prefer team members if a team is selected */}
-                          {(() => {
-                            const selectedTeamId = form.getValues("teamId");
-                            const selectedTeam = selectedTeamId && selectedTeamId !== 'none' ? teams.find((t: any) => t.id === selectedTeamId) : null;
-                            const teamMembers = (selectedTeam?.members || []).map((m: any) => m.user || m);
-                            const uniq = (arr: any[]) => arr.filter((x, i) => arr.findIndex(y => (y.id || y.userId) === (x.id || x.userId)) === i);
-                            const options = uniq(teamMembers.length > 0 ? teamMembers : admins);
-                            if (!options || options.length === 0) {
-                              return <SelectItem value="no_managers" disabled>No candidates available</SelectItem>;
-                            }
-                            return options.map((u: any) => (
-                              <SelectItem key={u.id} value={u.id}>
-                                {u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : (u.email || 'Unknown User')}
-                              </SelectItem>
-                            ));
-                          })()}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
               </div>
 
             </div>
@@ -1850,68 +1871,6 @@ export default function CreateProjectModal({ project, onClose }: { project?: any
                   )}
 
                 />
-
-                {/* Status field - only show in edit mode */}
-
-                {isEditMode && (
-
-                  <FormField
-
-                    control={form.control}
-
-                    name="status"
-
-                    render={({ field }) => (
-
-                      <FormItem>
-
-                        <FormLabel className="text-sm font-medium text-gray-700">Project Status</FormLabel>
-
-                        <Select 
-
-                          onValueChange={field.onChange} 
-
-                          value={field.value || 'planning'}
-
-                        >
-
-                          <FormControl>
-
-                            <SelectTrigger className="h-11" data-testid="select-project-status">
-
-                              <SelectValue placeholder="Select status" />
-
-                            </SelectTrigger>
-
-                          </FormControl>
-
-                          <SelectContent>
-
-                            <SelectItem value="planning">Not Started</SelectItem>
-
-                            <SelectItem value="active">Active</SelectItem>
-
-                            <SelectItem value="on_hold">On Hold</SelectItem>
-
-                            <SelectItem value="completed">Completed</SelectItem>
-
-                            <SelectItem value="on_support">On Support</SelectItem>
-
-                            <SelectItem value="inactive">Inactive</SelectItem>
-
-                          </SelectContent>
-
-                        </Select>
-
-                        <FormMessage />
-
-                      </FormItem>
-
-                    )}
-
-                  />
-
-                )}
 
               </div>
 

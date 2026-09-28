@@ -1,7 +1,7 @@
 import { emailService, EmailNotificationData } from './emailService';
 import { storage } from '../storage';
 import { InsertNotification } from '../../shared/schema';
-import { formatDueDate, shouldSendDueSoonNotification, getNotificationThreshold } from '../../shared/dateUtils';
+import { formatDueDate } from '../../shared/dateUtils';
 
 export interface NotificationContext {
   task?: any;
@@ -23,7 +23,16 @@ export enum NotificationType {
   FINANCE_DEADLINE_WARNING = 'finance_deadline_warning',
   TICKET_ASSIGNED = 'ticket_assigned',
   TICKET_ESCALATED = 'ticket_escalated',
-  TICKET_RESOLVED = 'ticket_resolved'
+  TICKET_RESOLVED = 'ticket_resolved',
+  TICKET_CREATED = 'ticket_created'
+}
+
+/** A ticket's notification recipient — a real user (userId set, gets in-app + email) or a
+ *  public submitter with no account (userId absent, email-only via contactEmail/contactName). */
+export interface TicketNotificationRecipient {
+  userId?: string;
+  email: string;
+  name: string;
 }
 
 export class NotificationService {
@@ -94,14 +103,12 @@ export class NotificationService {
       });
 
       const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
-      await this.emailSvc.sendEmail({
+      await this.emailSvc.sendTicketAssignedEmail({
         to: assignee.email,
-        subject: `Ticket ${ticket.ticketNumber} assigned to you`,
-        html: `
-          <p>Hi ${assignee.firstName || assignee.email},</p>
-          <p>You've been assigned ticket <strong>${ticket.ticketNumber}</strong>: ${ticket.subject}</p>
-          <p><a href="${baseUrl}/tickets">View ticket</a></p>
-        `,
+        userName: assignee.firstName || assignee.email,
+        ticketNumber: ticket.ticketNumber,
+        ticketSubject: ticket.subject,
+        ticketUrl: baseUrl ? `${baseUrl}/tickets` : undefined,
       });
     } catch (error) {
       console.error('Error sending ticket assigned notification:', error);
@@ -127,15 +134,14 @@ export class NotificationService {
       });
 
       const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
-      await this.emailSvc.sendEmail({
+      await this.emailSvc.sendTicketEscalatedEmail({
         to: assignee.email,
-        subject: `Ticket ${ticket.ticketNumber} escalated to you`,
-        html: `
-          <p>Hi ${assignee.firstName || assignee.email},</p>
-          <p><strong>${escalatorName}</strong> escalated ticket <strong>${ticket.ticketNumber}</strong> (${ticket.subject}) to you.</p>
-          <p><strong>Reason:</strong> ${reason}</p>
-          <p><a href="${baseUrl}/tickets">View ticket</a></p>
-        `,
+        userName: assignee.firstName || assignee.email,
+        ticketNumber: ticket.ticketNumber,
+        ticketSubject: ticket.subject,
+        escalatedByName: escalatorName,
+        escalationReason: reason,
+        ticketUrl: baseUrl ? `${baseUrl}/tickets` : undefined,
       });
     } catch (error) {
       console.error('Error sending ticket escalated notification:', error);
@@ -143,105 +149,103 @@ export class NotificationService {
   }
 
   /**
-   * Notify the ticket's original requester that it has been resolved.
+   * Notify every assigned member of a newly created team who else is on it and what role
+   * each person holds, including their own. Fire-and-forget per member — one failed email
+   * never blocks the rest.
    */
-  async sendTicketResolvedNotification(ticket: any, requester: any): Promise<void> {
-    if (!ticket || !requester) return;
+  async sendTeamAssignmentNotification(
+    team: { id: string; name: string },
+    members: { userId: string; name: string; email: string; role: string }[],
+    projectName?: string
+  ): Promise<void> {
+    if (!team || !members?.length) return;
+    const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
+
+    for (const member of members) {
+      try {
+        await this.createInAppNotification({
+          userId: member.userId,
+          title: 'Added to a team',
+          message: `You've been added to ${team.name} as ${member.role}`,
+          type: NotificationType.TEAM_UPDATE,
+          relatedId: team.id,
+        });
+
+        await this.emailSvc.sendTeamAssignmentEmail({
+          to: member.email,
+          userName: member.name || member.email,
+          teamName: team.name,
+          projectName,
+          ownRole: member.role,
+          roster: members.map((m) => ({ name: m.name || m.email, role: m.role, isSelf: m.userId === member.userId })),
+          teamUrl: baseUrl ? `${baseUrl}/teams` : undefined,
+        });
+      } catch (error) {
+        console.error(`Error sending team assignment notification to ${member.email}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Notify a ticket's requester that it was logged (public submitters have no account, so
+   * this is email-only for them; internal requesters also get an in-app notification).
+   */
+  async sendTicketCreatedNotification(ticket: any, recipient: TicketNotificationRecipient): Promise<void> {
+    if (!ticket || !recipient?.email) return;
     try {
-      await this.createInAppNotification({
-        userId: requester.id,
-        title: 'Your ticket was resolved',
-        message: `Ticket ${ticket.ticketNumber}: ${ticket.subject} has been resolved`,
-        type: NotificationType.TICKET_RESOLVED,
-        relatedId: ticket.id,
-      });
+      if (recipient.userId) {
+        await this.createInAppNotification({
+          userId: recipient.userId,
+          title: 'Ticket received',
+          message: `Ticket ${ticket.ticketNumber}: ${ticket.subject} has been logged`,
+          type: NotificationType.TICKET_CREATED,
+          relatedId: ticket.id,
+        });
+      }
 
       const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
-      await this.emailSvc.sendEmail({
-        to: requester.email,
-        subject: `Ticket ${ticket.ticketNumber} resolved`,
-        html: `
-          <p>Hi ${requester.firstName || requester.email},</p>
-          <p>Your ticket <strong>${ticket.ticketNumber}</strong>: ${ticket.subject} has been resolved.</p>
-          <p><a href="${baseUrl}/tickets">View ticket</a></p>
-        `,
+      await this.emailSvc.sendTicketCreatedEmail({
+        to: recipient.email,
+        userName: recipient.name || recipient.email,
+        ticketNumber: ticket.ticketNumber,
+        ticketSubject: ticket.subject,
+        ticketDescription: ticket.description,
+        ticketType: ticket.type,
+        ticketUrl: baseUrl ? `${baseUrl}/tickets` : undefined,
+      });
+    } catch (error) {
+      console.error('Error sending ticket created notification:', error);
+    }
+  }
+
+  /**
+   * Notify the ticket's original requester that it has been resolved. Works for both
+   * internally-created tickets (in-app + email) and public submissions (email-only, since
+   * there's no user account to attach an in-app notification to).
+   */
+  async sendTicketResolvedNotification(ticket: any, recipient: TicketNotificationRecipient): Promise<void> {
+    if (!ticket || !recipient?.email) return;
+    try {
+      if (recipient.userId) {
+        await this.createInAppNotification({
+          userId: recipient.userId,
+          title: 'Your ticket was resolved',
+          message: `Ticket ${ticket.ticketNumber}: ${ticket.subject} has been resolved`,
+          type: NotificationType.TICKET_RESOLVED,
+          relatedId: ticket.id,
+        });
+      }
+
+      const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
+      await this.emailSvc.sendTicketResolvedEmail({
+        to: recipient.email,
+        userName: recipient.name || recipient.email,
+        ticketNumber: ticket.ticketNumber,
+        ticketSubject: ticket.subject,
+        ticketUrl: baseUrl ? `${baseUrl}/tickets` : undefined,
       });
     } catch (error) {
       console.error('Error sending ticket resolved notification:', error);
-    }
-  }
-
-  /**
-   * Send a task due soon reminder
-   */
-  async sendTaskDueSoonNotification(context: NotificationContext): Promise<void> {
-    const { task, project, user } = context;
-    
-    if (!task || !project || !user) {
-      console.error('Missing required context for task due soon notification');
-      return;
-    }
-
-    try {
-      const preferences = await this.getUserNotificationPreferences(user.id);
-      
-      // Send in-app notification if enabled
-      if (preferences.inAppTaskDueSoon) {
-        await this.createInAppNotification({
-          userId: user.id,
-          title: 'Task Due Soon',
-          message: `Reminder: ${task.name} is due ${this.formatDueDate(task.dueDate)}`,
-          type: NotificationType.TASK_DUE_SOON,
-          relatedId: task.id
-        });
-      }
-
-      // Send email notification if enabled
-      if (preferences.emailTaskDueSoon) {
-        const emailData = this.buildTaskDueSoonEmailData(context, preferences);
-        await this.emailSvc.sendTaskDueSoonEmail(emailData);
-      }
-
-
-    } catch (error) {
-      console.error('Error sending task due soon notification:', error);
-    }
-  }
-
-  /**
-   * Send an overdue task alert
-   */
-  async sendTaskOverdueNotification(context: NotificationContext): Promise<void> {
-    const { task, project, user } = context;
-    
-    if (!task || !project || !user) {
-      console.error('Missing required context for task overdue notification');
-      return;
-    }
-
-    try {
-      const preferences = await this.getUserNotificationPreferences(user.id);
-      
-      // Send in-app notification if enabled
-      if (preferences.inAppTaskOverdue) {
-        await this.createInAppNotification({
-          userId: user.id,
-          title: 'Task Overdue',
-          message: `URGENT: ${task.name} is now overdue and requires immediate attention`,
-          type: NotificationType.TASK_OVERDUE,
-          relatedId: task.id
-        });
-      }
-
-      // Send email notification if enabled
-      if (preferences.emailTaskOverdue) {
-        const emailData = this.buildTaskOverdueEmailData(context, preferences);
-        await this.emailSvc.sendTaskOverdueEmail(emailData);
-      }
-
-
-    } catch (error) {
-      console.error('Error sending task overdue notification:', error);
     }
   }
 
@@ -279,273 +283,6 @@ export class NotificationService {
 
     } catch (error) {
       console.error('Error sending project deadline notification:', error);
-    }
-  }
-
-  /**
-   * Check for due soon tasks and send notifications based on smart deadline calculation
-   */
-  async checkAndSendDueSoonNotifications(): Promise<void> {
-    try {
-      // Get all active users
-      const users = await this.storageInstance.getUsers();
-      
-      for (const user of users) {
-        if (!user.isActive) continue;
-        
-        const preferences = await this.getUserNotificationPreferences(user.id);
-        if (!preferences.emailTaskDueSoon && !preferences.inAppTaskDueSoon) continue;
-        
-        // Get all billing items (milestones) on projects this user has access to that are not yet paid
-        const userTasks = (await this.storageInstance.getBillingItemsForUser(user.id)).map(item => this.billingItemToTaskLike(item));
-
-        for (const task of userTasks) {
-          if (task.status === 'done') continue;
-
-          // Calculate if task needs a due soon notification
-          if (this.shouldSendDueSoonNotification(task)) {
-            // Check if we already sent a reminder for this task recently
-            const recentNotifications = await this.storageInstance.getNotifications(user.id);
-            const hasRecentReminder = recentNotifications.some(n => 
-              n.type === NotificationType.TASK_DUE_SOON && 
-              n.relatedId === task.id &&
-              new Date().getTime() - (task.completedAt ? new Date(task.completedAt).getTime() : 0) < 7 * 24 * 60 * 60 * 1000 // 7 days
-            );
-            
-            if (!hasRecentReminder) {
-              await this.sendTaskDueSoonNotification({
-                task: task,
-                project: task.project,
-                user: user
-              });
-            }
-          }
-        }
-      }
-      
-
-    } catch (error) {
-      console.error('Error checking due soon notifications:', error);
-    }
-  }
-
-  /**
-   * Check for overdue tasks and send notifications
-   */
-  async checkAndSendOverdueNotifications(): Promise<void> {
-    try {
-      // Get all active users
-      const users = await this.storageInstance.getUsers();
-      
-      for (const user of users) {
-        if (!user.isActive) continue;
-        
-        const preferences = await this.getUserNotificationPreferences(user.id);
-        if (!preferences.emailTaskOverdue && !preferences.inAppTaskOverdue) continue;
-        
-        // Get all billing items (milestones) on projects this user has access to
-        const userTasks = (await this.storageInstance.getBillingItemsForUser(user.id)).map(item => this.billingItemToTaskLike(item));
-
-        for (const task of userTasks) {
-          if (task.status === 'done') continue;
-
-          // Check if task is overdue
-          if (this.isTaskOverdue(task)) {
-            // Check if we already sent an overdue alert recently
-            const recentNotifications = await this.storageInstance.getNotifications(user.id);
-            const hasRecentAlert = recentNotifications.some(n => 
-              n.type === NotificationType.TASK_OVERDUE && 
-              n.relatedId === task.id &&
-              new Date().getTime() - (n.createdAt ? new Date(n.createdAt).getTime() : 0) < 24 * 60 * 60 * 1000 // 24 hours
-            );
-            
-            if (!hasRecentAlert) {
-              // Get project details for the task
-              const project = await this.storageInstance.getProject(task.projectId);
-              if (project) {
-                await this.sendTaskOverdueNotification({
-                  task: task,
-                  project: project,
-                  user: user
-                });
-              }
-            }
-          }
-        }
-      }
-      
-      console.log('Smart overdue notification check completed');
-    } catch (error) {
-      console.error('Error checking overdue notifications:', error);
-    }
-  }
-
-  /**
-   * Manual trigger for due soon notification check (API endpoint can call this)
-   */
-  async manualDueSoonCheck(): Promise<{ processed: number; sent: number }> {
-    
-    
-    let processed = 0;
-    let sent = 0;
-    
-    try {
-      const users = await this.storageInstance.getUsers();
-      
-      for (const user of users) {
-        if (!user.isActive) continue;
-        
-        const preferences = await this.getUserNotificationPreferences(user.id);
-        if (!preferences.emailTaskDueSoon && !preferences.inAppTaskDueSoon) continue;
-        
-        const userTasks = (await this.storageInstance.getBillingItemsForUser(user.id)).map(item => this.billingItemToTaskLike(item));
-
-        for (const task of userTasks) {
-          if (task.status === 'done') continue;
-          processed++;
-
-          if (this.shouldSendDueSoonNotification(task)) {
-            const recentNotifications = await this.storageInstance.getNotifications(user.id);
-            const hasRecentReminder = recentNotifications.some(n => 
-              n.type === NotificationType.TASK_DUE_SOON && 
-              n.relatedId === task.id &&
-              new Date().getTime() - (task.completedAt ? new Date(task.completedAt).getTime() : 0) < 7 * 24 * 60 * 60 * 1000
-            );
-            
-            if (!hasRecentReminder) {
-              await this.sendTaskDueSoonNotification({
-                task: task,
-                project: task.project,
-                user: user
-              });
-              sent++;
-            }
-          }
-        }
-      }
-      
-
-      return { processed, sent };
-    } catch (error) {
-      console.error('Error in manual due soon check:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Manual trigger for overdue notification check (API endpoint can call this)
-   */
-  async manualOverdueCheck(): Promise<{ processed: number; sent: number }> {
-    
-    
-    let processed = 0;
-    let sent = 0;
-    
-    try {
-      const users = await this.storageInstance.getUsers();
-      
-      for (const user of users) {
-        if (!user.isActive) continue;
-        
-        const preferences = await this.getUserNotificationPreferences(user.id);
-        if (!preferences.emailTaskOverdue && !preferences.inAppTaskOverdue) continue;
-        
-        const userTasks = (await this.storageInstance.getBillingItemsForUser(user.id)).map(item => this.billingItemToTaskLike(item));
-
-        for (const task of userTasks) {
-          if (task.status === 'done') continue;
-          processed++;
-
-          if (this.isTaskOverdue(task)) {
-            const recentNotifications = await this.storageInstance.getNotifications(user.id);
-            const hasRecentAlert = recentNotifications.some(n => 
-              n.type === NotificationType.TASK_OVERDUE && 
-              n.relatedId === task.id &&
-              new Date().getTime() - (n.createdAt ? new Date(n.createdAt).getTime() : 0) < 24 * 60 * 60 * 1000
-            );
-            
-            if (!hasRecentAlert) {
-              await this.sendTaskOverdueNotification({
-                task: task,
-                project: task.project,
-                user: user
-              });
-              sent++;
-            }
-          }
-        }
-      }
-      
-
-      return { processed, sent };
-    } catch (error) {
-      console.error('Error in manual overdue check:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Check notifications for a specific user (called on dashboard load)
-   */
-  async checkUserNotifications(userId: string): Promise<{ dueSoon: number; overdue: number }> {
-    try {
-      const user = await this.storageInstance.getUser(userId);
-      if (!user || !user.isActive) {
-        return { dueSoon: 0, overdue: 0 };
-      }
-
-      const preferences = await this.getUserNotificationPreferences(userId);
-      const userTasks = (await this.storageInstance.getBillingItemsForUser(userId)).map(item => this.billingItemToTaskLike(item));
-      
-      let dueSoonCount = 0;
-      let overdueCount = 0;
-
-      for (const task of userTasks) {
-        if (task.status === 'done') continue;
-
-        // Check for due soon notifications
-        if (this.shouldSendDueSoonNotification(task)) {
-          const recentNotifications = await this.storageInstance.getNotifications(userId);
-          const hasRecentReminder = recentNotifications.some(n => 
-            n.type === NotificationType.TASK_DUE_SOON && 
-            n.relatedId === task.id &&
-            new Date().getTime() - (task.completedAt ? new Date(task.completedAt).getTime() : 0) < 7 * 24 * 60 * 60 * 1000
-          );
-
-          if (!hasRecentReminder && (preferences.emailTaskDueSoon || preferences.inAppTaskDueSoon)) {
-            await this.sendTaskDueSoonNotification({
-              task: task,
-              project: task.project,
-              user: user
-            });
-            dueSoonCount++;
-          }
-        }
-
-        // Check for overdue notifications
-        if (this.isTaskOverdue(task)) {
-          const recentNotifications = await this.storageInstance.getNotifications(userId);
-          const hasRecentAlert = recentNotifications.some(n => 
-            n.type === NotificationType.TASK_OVERDUE && 
-            n.relatedId === task.id &&
-            new Date().getTime() - (n.createdAt ? new Date(n.createdAt).getTime() : 0) < 24 * 60 * 60 * 1000
-          );
-
-          if (!hasRecentAlert && (preferences.emailTaskOverdue || preferences.inAppTaskOverdue)) {
-            await this.sendTaskOverdueNotification({
-              task: task,
-              project: task.project,
-              user: user
-            });
-            overdueCount++;
-          }
-        }
-      }
-
-      return { dueSoon: dueSoonCount, overdue: overdueCount };
-    } catch (error) {
-      console.error(`Error checking notifications for user ${userId}:`, error);
-      return { dueSoon: 0, overdue: 0 };
     }
   }
 
@@ -617,64 +354,6 @@ export class NotificationService {
   }
 
   /**
-   * Build email data for task due soon notification
-   */
-  private buildTaskDueSoonEmailData(context: NotificationContext, preferences: any): EmailNotificationData {
-    const { task, project, user } = context;
-    const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
-    
-    return {
-      to: user.email,
-      userName: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.email,
-      taskName: task.name,
-      taskDescription: task.description,
-      taskUrl: `${baseUrl}/tasks?taskId=${task.id}`,
-      updateUrl: `${baseUrl}/tasks?taskId=${task.id}&action=update`,
-      projectName: project.name,
-      priority: task.priority,
-      priorityLabel: task.priority ? task.priority.charAt(0).toUpperCase() + task.priority.slice(1) : 'Medium',
-      dueDate: new Date(task.dueDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      }),
-      feeAmount: task.feeAmount ? parseFloat(task.feeAmount).toLocaleString() : undefined,
-      progressPercent: task.progressPercent || 0,
-      isUrgent: true // All due soon notifications are urgent
-    };
-  }
-
-  /**
-   * Build email data for task overdue notification
-   */
-  private buildTaskOverdueEmailData(context: NotificationContext, preferences: any): EmailNotificationData {
-    const { task, project, user } = context;
-    const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || '';
-    
-    return {
-      to: user.email,
-      userName: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.email,
-      taskName: task.name,
-      taskDescription: task.description,
-      taskUrl: `${baseUrl}/tasks?taskId=${task.id}`,
-      updateUrl: `${baseUrl}/tasks?taskId=${task.id}&action=update`,
-      projectName: project.name,
-      priority: 'critical', // All overdue tasks are critical
-      priorityLabel: 'OVERDUE',
-      dueDate: new Date(task.dueDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      }),
-      feeAmount: task.feeAmount ? parseFloat(task.feeAmount).toLocaleString() : undefined,
-      progressPercent: task.progressPercent || 0,
-      isUrgent: true
-    };
-  }
-
-  /**
    * Build email data for project deadline notification
    */
   private buildProjectDeadlineEmailData(context: NotificationContext, preferences: any): EmailNotificationData {
@@ -698,72 +377,6 @@ export class NotificationService {
       progressPercent: project.progress || 0,
       isUrgent: true
     };
-  }
-
-  /**
-   * Adapt a billing item (the flat replacement for the old per-user "task"/module
-   * concept) into the task-like shape the due-soon/overdue notification helpers below
-   * expect (id, name, dueDate, priority, status, project, completedAt, feeAmount).
-   */
-  private billingItemToTaskLike(item: any): any {
-    return {
-      id: item.id,
-      name: item.name,
-      description: item.description,
-      dueDate: item.expectedCollectionDate || item.expectedInvoiceDate,
-      priority: item.overdueFlag ? 'high' : 'medium',
-      status: item.billingStatus === 'paid' ? 'done' : 'in_progress',
-      completedAt: item.paymentReceivedAt,
-      project: item.project,
-      projectId: item.projectId,
-      feeAmount: item.feeAmount,
-    };
-  }
-
-  /**
-   * Smart calculation: Should we send a due soon notification for this task?
-   */
-  private shouldSendDueSoonNotification(task: any): boolean {
-    return shouldSendDueSoonNotification(task.dueDate, task.priority);
-  }
-
-  /**
-   * Check if a task is overdue
-   */
-  private isTaskOverdue(task: any): boolean {
-    const now = new Date();
-    const dueDate = new Date(task.dueDate);
-    
-    // Task is overdue if current time is past the due date
-    return now.getTime() > dueDate.getTime();
-  }
-
-  /**
-   * Get notification threshold based on task priority
-   */
-  private getNotificationThreshold(priority: string): number {
-    return getNotificationThreshold(priority);
-  }
-
-  /**
-   * Check if we should send a notification today for this task
-   * (Prevents sending the same notification multiple times)
-   */
-  private shouldSendNotificationToday(task: any, lastNotificationDate?: Date): boolean {
-    if (!lastNotificationDate) return true;
-    
-    const now = new Date();
-    const daysSinceLastNotification = Math.floor(
-      (now.getTime() - lastNotificationDate.getTime()) / (1000 * 60 * 60 * 24)
-    );
-    
-    // For critical tasks, send reminders every 3 days within the notification period
-    if (task.priority?.toLowerCase() === 'critical') {
-      return daysSinceLastNotification >= 3;
-    }
-    
-    // For other tasks, send reminder once per week
-    return daysSinceLastNotification >= 7;
   }
 
   /**

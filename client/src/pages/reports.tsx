@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Download, BarChart3, TrendingUp, Users, Calendar, Loader2 } from "lucide-react";
+import { Download, BarChart3, TrendingUp, Users, Ticket, Loader2 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
 import PageHeader from "@/components/layout/page-header";
@@ -47,13 +47,13 @@ export default function Reports() {
     enabled: !!isAuthenticated,
   });
 
-  const { data: workload = [], isLoading: workloadLoading, error: workloadError } = useQuery<any[]>({
-    queryKey: ['/api/dashboard/workload'],
+  const { data: teamPerformance = [], isLoading: teamPerformanceLoading, error: teamPerformanceError } = useQuery<any[]>({
+    queryKey: ['/api/dashboard/team-performance'],
     enabled: !!isAuthenticated,
   });
 
   useEffect(() => {
-    const errors = [metricsError, projectsError, workloadError].filter(Boolean);
+    const errors = [metricsError, projectsError, teamPerformanceError].filter(Boolean);
     errors.forEach(error => {
       if (error && isUnauthorizedError(error)) {
         toast({
@@ -66,7 +66,7 @@ export default function Reports() {
         }, 500);
       }
     });
-  }, [metricsError, projectsError, workloadError, toast]);
+  }, [metricsError, projectsError, teamPerformanceError, toast]);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -76,16 +76,16 @@ export default function Reports() {
     );
   }
 
-  const isDataLoading = metricsLoading || projectsLoading || workloadLoading;
+  const isDataLoading = metricsLoading || projectsLoading || teamPerformanceLoading;
 
   const handleViewReport = (reportType: string) => {
     // Map display names to URL report types
     const reportTypeMap: Record<string, string> = {
       'Project Summary': 'projects',
-      'Task List': 'milestones', 
+      'Task List': 'milestones',
       'Team Performance': 'performance',
       'Workload Analysis': 'workload',
-      'Financial Report': 'financial',
+      'Tickets Report': 'tickets',
       'Complete': 'complete',
       'Gantt Chart': 'gantt'
     };
@@ -108,10 +108,10 @@ export default function Reports() {
       // Map display names to API report types
       const reportTypeMap: Record<string, string> = {
         'Project Summary': 'projects',
-        'Task List': 'milestones', 
+        'Task List': 'milestones',
         'Team Performance': 'performance',
         'Workload Analysis': 'workload',
-        'Financial Report': 'financial',
+        'Tickets Report': 'tickets',
         'Complete': 'complete',
         'Gantt Chart': 'gantt'
       };
@@ -144,7 +144,7 @@ export default function Reports() {
       // Get the filename from response headers
       const contentDisposition = response.headers.get('Content-Disposition');
       const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
-      const filename = filenameMatch?.[1] || `AppKings-Solutions-${apiReportType}-${new Date().toISOString().split('T')[0]}.${fileExtension}`;
+      const filename = filenameMatch?.[1] || `Ecorenet-Business-Solutions-${apiReportType}-${new Date().toISOString().split('T')[0]}.${fileExtension}`;
 
       // Convert response to blob and trigger download
       const blob = await response.blob();
@@ -245,7 +245,7 @@ export default function Reports() {
               <ReportCard
                 icon={TrendingUp}
                 title="Team Performance"
-                description="Individual team member performance metrics"
+                description="Ticket resolution performance by team"
                 onViewDetails={() => handleViewReport('Team Performance')}
                 onExportPdf={() => handleExportReport('Team Performance')}
                 isExporting={exportingStates.team_performance}
@@ -254,20 +254,20 @@ export default function Reports() {
               <ReportCard
                 icon={Users}
                 title="Workload Analysis"
-                description="Team workload distribution and analysis"
+                description="Individual ticket workload by team member"
                 onViewDetails={() => handleViewReport('Workload Analysis')}
                 onExportPdf={() => handleExportReport('Workload Analysis')}
                 isExporting={exportingStates.workload_analysis}
                 testIdSuffix="workload"
               />
               <ReportCard
-                icon={Calendar}
-                title="Financial Report"
-                description="Financial overview and milestone billing"
-                onViewDetails={() => handleViewReport('Financial Report')}
-                onExportPdf={() => handleExportReport('Financial Report')}
-                isExporting={exportingStates.financial_report}
-                testIdSuffix="financial"
+                icon={Ticket}
+                title="Tickets Report"
+                description="Support ticket volume, status and resolution times"
+                onViewDetails={() => handleViewReport('Tickets Report')}
+                onExportPdf={() => handleExportReport('Tickets Report')}
+                isExporting={exportingStates.tickets_report}
+                testIdSuffix="tickets"
               />
             </div>
 
@@ -280,68 +280,55 @@ export default function Reports() {
                   </div>
                   Team Performance Overview
                 </CardTitle>
-                <CardDescription className="text-gray-600 text-base">Individual team member workload and performance metrics</CardDescription>
+                <CardDescription className="text-gray-600 text-base">Ticket resolution performance for each team</CardDescription>
               </CardHeader>
               <CardContent className="p-6">
-                {workload.length === 0 ? (
-                  <div className="text-center py-12 text-gray-500" data-testid="text-no-workload">
+                {teamPerformance.length === 0 ? (
+                  <div className="text-center py-12 text-gray-500" data-testid="text-no-team-performance">
                     <div className="p-4 bg-gray-100 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
                       <Users className="h-8 w-8 text-gray-400" />
                     </div>
                     <p className="text-lg font-medium">No team performance data available</p>
-                    <p className="text-sm">Team members will appear here once they have assigned subtasks</p>
+                    <p className="text-sm">Teams will appear here once they exist and have assigned tickets</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {workload.map((member: any) => (
-                      <div key={member.userId} className="group flex items-center justify-between p-6 border border-gray-200 rounded-xl hover:border-accent-brand hover:shadow-lg transition-all duration-300 bg-white" data-testid={`member-${member.userId}`}>
+                    {teamPerformance.map((team: any) => (
+                      <div key={team.id} className="group flex items-center justify-between p-6 border border-gray-200 rounded-xl hover:border-accent-brand hover:shadow-lg transition-all duration-300 bg-white" data-testid={`team-${team.id}`}>
                         <div className="flex items-center space-x-4">
-                          {member.user.profileImageUrl ? (
-                            <img 
-                              src={member.user.profileImageUrl} 
-                              alt="Profile" 
-                              className="w-12 h-12 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary/30 transition-colors"
-                            />
-                          ) : (
-                            <div className="w-12 h-12 bg-gradient-to-br from-primary/20 to-primary/10 rounded-full flex items-center justify-center group-hover:from-primary/30 group-hover:to-primary/20 transition-all duration-300">
-                              <span className="text-lg font-bold text-primary">
-                                {member.user.firstName?.charAt(0) || member.user.email?.charAt(0) || '?'}
-                              </span>
-                            </div>
-                          )}
+                          <div className="w-12 h-12 bg-gradient-to-br from-primary/20 to-primary/10 rounded-full flex items-center justify-center group-hover:from-primary/30 group-hover:to-primary/20 transition-all duration-300">
+                            <Users className="h-5 w-5 text-primary" />
+                          </div>
                           <div>
-                            <p className="font-semibold text-gray-900 text-lg" data-testid={`text-member-name-${member.userId}`}>
-                              {member.user.firstName && member.user.lastName 
-                                ? `${member.user.firstName} ${member.user.lastName}`
-                                : member.user.email
-                              }
+                            <p className="font-semibold text-gray-900 text-lg" data-testid={`text-team-name-${team.id}`}>
+                              {team.name}
                             </p>
-                            <p className="text-sm text-gray-600 font-medium" data-testid={`text-member-role-${member.userId}`}>
-                              {member.user.role}
+                            <p className="text-sm text-gray-600 font-medium" data-testid={`text-team-members-${team.id}`}>
+                              {team.memberCount} member{team.memberCount === 1 ? '' : 's'}
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center space-x-6">
                           <div className="text-center">
-                            <p className="text-2xl font-bold text-gray-900" data-testid={`text-member-tasks-${member.userId}`}>
-                              {member.totalTasks || 0}
+                            <p className="text-2xl font-bold text-gray-900" data-testid={`text-team-tickets-${team.id}`}>
+                              {team.totalTickets || 0}
                             </p>
-                            <p className="text-sm text-gray-600">Total Tasks</p>
+                            <p className="text-sm text-gray-600">Total Tickets</p>
                           </div>
                           <div className="text-center">
                             <p className="text-2xl font-bold text-green-600">
-                              {member.completedTasks || 0}
+                              {team.resolvedTickets || 0}
                             </p>
-                            <p className="text-sm text-gray-600">Completed</p>
+                            <p className="text-sm text-gray-600">Resolved</p>
                           </div>
                           <div className="text-center">
                             <p className="text-2xl font-bold text-accent-brand">
-                              {member.workloadPercentage || 0}%
+                              {team.resolutionRate || 0}%
                             </p>
-                            <p className="text-sm text-gray-600">Complete</p>
+                            <p className="text-sm text-gray-600">Resolution Rate</p>
                           </div>
                           <div className="w-24">
-                            <Progress value={member.workloadPercentage} className="h-3 bg-gray-200" />
+                            <Progress value={team.resolutionRate} className="h-3 bg-gray-200" />
                           </div>
                         </div>
                       </div>

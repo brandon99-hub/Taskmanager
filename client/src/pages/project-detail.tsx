@@ -227,20 +227,6 @@ export default function ProjectDetail() {
     refetchOnWindowFocus: true,
   });
 
-  // Fetch segment leader based on project segment
-  const { data: segmentLeader } = useQuery<any>({
-    queryKey: ['/api/segment-leaders', project?.segmentId],
-    queryFn: async () => {
-      if (!project?.segmentId) return null;
-      const res = await fetch(`/api/segment-leaders/${project.segmentId}`, {
-        credentials: 'include'
-      });
-      if (!res.ok) return null;
-      return res.json();
-    },
-    enabled: !!isAuthenticated && !!project?.segmentId,
-  });
-
   // Fetch tickets specifically logged for this project
   const { data: projectTickets = [], isLoading: ticketsLoading } = useQuery<any[]>({
     queryKey: ['/api/tickets', 'project', projectId],
@@ -554,22 +540,19 @@ export default function ProjectDetail() {
       
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         
-        {/* Header with breadcrumb and actions */}
+        {/* Header with actions */}
         <div className="flex items-center justify-between mb-6 sm:mb-8">
           <div className="flex items-center space-x-4">
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               onClick={() => setLocation('/projects')}
               className="text-gray-600 hover:text-gray-900"
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back to Projects
             </Button>
-            <div className="text-xs sm:text-sm text-gray-500">
-              Projects / {project.client || project.name}
-            </div>
           </div>
-          
+
           {canEditProject && (
             <div className="flex space-x-2">
               <Button
@@ -716,27 +699,18 @@ export default function ProjectDetail() {
 
               {/* Column 3: Team Information */}
               <div className="space-y-3">
-                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Account & Support Lead</h4>
-                
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Team</h4>
+
                 <div className="space-y-2">
-                  {segmentLeader && (
-                    <div className="flex items-center space-x-3">
-                      <Avatar className="w-8 h-8">
-                        <AvatarFallback className="text-xs bg-primary/10 text-primary">
-                          {getInitials(segmentLeader.leaderName || 'SL')}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">
-                          {segmentLeader.leaderName}
-                        </p>
-                        <p className="text-xs text-gray-500">Sector Leader</p>
-                      </div>
+                  {project.team && (
+                    <div className="text-sm">
+                      <span className="text-xs text-gray-500">Assigned Team:</span>
+                      <p className="font-medium text-gray-800">{project.team.name}</p>
                     </div>
                   )}
 
-                  {project.manager && !segmentLeader && (
-                    <div className="flex items-center space-x-3">
+                  {project.manager && (
+                    <div className="flex items-center space-x-3 pt-1">
                       <Avatar className="w-8 h-8">
                         <AvatarFallback className="text-xs bg-primary/10 text-primary">
                           {getInitials(project.manager.firstName ? `${project.manager.firstName} ${project.manager.lastName || ''}` : project.manager.email)}
@@ -746,15 +720,8 @@ export default function ProjectDetail() {
                         <p className="text-sm font-medium text-gray-900">
                           {project.manager.firstName ? `${project.manager.firstName} ${project.manager.lastName || ''}` : project.manager.email}
                         </p>
-                        <p className="text-xs text-gray-500">Project Manager</p>
+                        <p className="text-xs text-gray-500">Project Leader</p>
                       </div>
-                    </div>
-                  )}
-
-                  {project.team && (
-                    <div className="text-sm pt-1">
-                      <span className="text-xs text-gray-500">Assigned Team:</span>
-                      <p className="font-medium text-gray-800">{project.team.name}</p>
                     </div>
                   )}
                 </div>
@@ -769,7 +736,7 @@ export default function ProjectDetail() {
             <nav className="flex" aria-label="Tabs">
               {[
                 { id: 'tickets', name: 'Tickets', description: `Support tickets logged for this project (${projectTickets.length})` },
-                { id: 'milestones', name: 'Milestones', description: 'Track and manage project milestones' },
+                { id: 'milestones', name: 'Billing', description: 'Track and manage project milestones' },
                 { id: 'gantt', name: 'Gantt Chart', description: 'Visualize project timeline' },
               ].map((tab, index) => (
                 <button

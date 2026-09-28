@@ -92,8 +92,7 @@ function getAllowedOrigins(): (string | RegExp)[] {
     // Production: Only allow specific domains
     return [
       process.env.FRONTEND_URL || 'https://taskflow.example.com',
-      'https://project.appkings.co.ke',
-      'https://appkings.co.ke',
+      'https://support.ecorenet.co.ke',
       // Add your production domain(s) here
     ].filter(Boolean);
   } else if (nodeEnv === 'development') {

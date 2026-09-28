@@ -9,22 +9,24 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { 
-  Download, 
-  ArrowLeft, 
-  Search, 
-  Filter, 
-  Loader2, 
-  FileText, 
-  BarChart3, 
-  TrendingUp, 
-  Users, 
+import {
+  Download,
+  ArrowLeft,
+  Search,
+  Filter,
+  Loader2,
+  FileText,
+  BarChart3,
+  TrendingUp,
+  Users,
   Calendar,
+  Ticket,
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { format } from "date-fns";
+import PageHeader from "@/components/layout/page-header";
 
 interface ReportDetailProps {
   reportType: string;
@@ -84,21 +86,21 @@ export default function ReportDetail() {
     },
     'performance': {
       title: 'Team Performance',
-      description: 'Individual team member performance metrics',
+      description: 'Ticket resolution performance by team',
       icon: TrendingUp,
       apiType: 'performance'
     },
     'workload': {
       title: 'Workload Analysis',
-      description: 'Team workload distribution and analysis',
+      description: 'Individual ticket workload by team member',
       icon: Users,
       apiType: 'workload'
     },
-    'financial': {
-      title: 'Financial Report',
-      description: 'Financial overview and milestone billing',
-      icon: Calendar,
-      apiType: 'financial'
+    'tickets': {
+      title: 'Tickets Report',
+      description: 'Support ticket volume, status and resolution times',
+      icon: Ticket,
+      apiType: 'tickets'
     },
     'complete': {
       title: 'Complete Report',
@@ -344,36 +346,30 @@ export default function ReportDetail() {
     );
   }
 
-  const IconComponent = config.icon;
-
   return (
     <div className="min-h-screen bg-background-page">
-      
+
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
-        
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
-          <div className="flex items-center space-x-4 mb-4 md:mb-0">
-            <Button 
-              variant="ghost" 
-              onClick={() => setLocation('/reports')}
-              className="p-2"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <div>
-              <h2 className="text-3xl font-medium text-gray-900 flex items-center">
-                <IconComponent className="h-8 w-8 mr-3 text-primary" />
-                {config.title}
-              </h2>
-              <p className="text-gray-600 mt-1">{config.description}</p>
-            </div>
-          </div>
-          <div className="flex space-x-3">
-            <Button 
+
+        <Button
+          variant="ghost"
+          onClick={() => setLocation('/reports')}
+          className="mb-3 -ml-2 text-gray-600"
+          data-testid="button-back-to-reports"
+        >
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to Reports
+        </Button>
+
+        <PageHeader
+          icon={config.icon}
+          title={config.title}
+          description={config.description}
+          actions={
+            <Button
               onClick={handleExport}
               disabled={exporting || loading}
-              className="flex items-center"
+              data-testid="button-export-report"
             >
               {exporting ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -382,8 +378,8 @@ export default function ReportDetail() {
               )}
               {exporting ? 'Exporting...' : (config.apiType === 'gantt' ? 'Export Excel' : 'Export PDF')}
             </Button>
-          </div>
-        </div>
+          }
+        />
 
         {/* Filters and Search */}
         <Card className="mb-6 border-0 shadow-sm">

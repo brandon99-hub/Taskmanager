@@ -277,7 +277,7 @@ ${task.feeAmount ? `Fee: KSh ${task.feeAmount}` : ''}
 
 View task details: ${taskUrl}
 
-Managed by TaskFlow - AppKings Solutions Limited
+Managed by TaskFlow - Ecorenet Business Solutions Limited
     `.trim();
 
     return {
@@ -319,7 +319,7 @@ This milestone is due in 1 week. Please review and update progress.
 
 View milestone details: ${taskUrl}
 
-Managed by TaskFlow - AppKings Solutions Limited
+Managed by TaskFlow - Ecorenet Business Solutions Limited
     `.trim();
 
     return {
@@ -339,11 +339,12 @@ Managed by TaskFlow - AppKings Solutions Limited
     if (!process.env.JWT_SECRET) {
       throw new Error('JWT_SECRET required for token encryption');
     }
-    
-    const cipher = crypto.createCipher('aes-256-cbc', process.env.JWT_SECRET);
-    let encrypted = cipher.update(token, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return encrypted;
+
+    const key = crypto.createHash('sha256').update(process.env.JWT_SECRET).digest();
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    const encrypted = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
   }
 
   /**
@@ -353,11 +354,15 @@ Managed by TaskFlow - AppKings Solutions Limited
     if (!process.env.JWT_SECRET) {
       throw new Error('JWT_SECRET required for token decryption');
     }
-    
-    const decipher = crypto.createDecipher('aes-256-cbc', process.env.JWT_SECRET);
-    let decrypted = decipher.update(encryptedToken, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
+
+    const [ivHex, dataHex] = encryptedToken.split(':');
+    if (!ivHex || !dataHex) {
+      throw new Error('Malformed encrypted token');
+    }
+    const key = crypto.createHash('sha256').update(process.env.JWT_SECRET).digest();
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, Buffer.from(ivHex, 'hex'));
+    const decrypted = Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]);
+    return decrypted.toString('utf8');
   }
 }
 

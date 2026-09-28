@@ -7,39 +7,35 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Users, Mail, UserPlus, Calendar } from "lucide-react";
+import { Users, Mail, UserPlus, Calendar, Check, ChevronsUpDown } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
-interface Segment {
+interface TeamProjectOption {
   id: string;
   name: string;
+  segmentId?: string | null;
 }
 
 const createTeamSchema = z.object({
   name: z.string().min(1, "Team name is required").max(100, "Team name too long"),
-  description: z.string().optional(),
-  sectorId: z.string().min(1, "Sector is required"),
+  projectId: z.string().optional().or(z.literal("none")),
   members: z.array(z.string()).optional(),
   bcDevs: z.array(z.string()).min(1, "At least 1 BC Developer is required"),
-  consultants: z.array(z.string()).length(2, "Exactly 2 Functional Consultants are required"),
+  consultants: z.array(z.string()).min(1, "At least 1 Functional Consultant is required"),
   portalDev: z.string().min(1, "Portal Developer is required"),
-  accountManager: z.string().min(1, "Account Manager is required"),
   projectLeader: z.string().min(1, "Project Leader is required"),
-  sendCredentials: z.boolean().default(true),
-  financeNotifications: z.boolean().default(true),
-  accountManagerNotifications: z.boolean().default(true),
-  financeEmail: z.string().email("Invalid finance email").optional(),
-  accountManagerEmail: z.string().email("Invalid account manager email").optional(),
 });
 
 type CreateTeamData = z.infer<typeof createTeamSchema>;
@@ -59,28 +55,23 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
 
   const teamQuery = search;
 
-  const { data: sectors = [] } = useQuery<Segment[]>({
-    queryKey: ['/api/segments'],
-    staleTime: 20 * 60 * 1000,
-  });
-
-  const { data: systemEmails } = useQuery({
-    queryKey: ['/api/system-config/emails'],
+  const { data: teamProjects = [] } = useQuery<TeamProjectOption[]>({
+    queryKey: ['/api/projects'],
     queryFn: async () => {
-      const res = await fetch('/api/system-config/emails', {
-        credentials: 'include'
-      });
-      if (!res.ok) return { financeEmail: '', accountManagerEmail: '' };
-      return res.json();
+      const res = await fetch('/api/projects', { credentials: 'include' });
+      if (!res.ok) return [];
+      const all = await res.json();
+      return (Array.isArray(all) ? all : []).filter((p: any) => p.status !== 'inactive' && p.status !== 'support_closed');
     },
     enabled: !!isAuthenticated,
+    staleTime: 5 * 60 * 1000,
   });
 
   const [bcDevSearch, setBcDevSearch] = useState("");
   const [consultantSearch, setConsultantSearch] = useState("");
   const [portalDevSearch, setPortalDevSearch] = useState("");
-  const [accountManagerSearch, setAccountManagerSearch] = useState("");
   const [projectLeaderSearch, setProjectLeaderSearch] = useState("");
+  const [projectPopoverOpen, setProjectPopoverOpen] = useState(false);
 
   const filterEmployeesByRoleAndSearch = (role: string, searchTerm: string) => {
     // Show all employees since job functions are assigned during team creation
@@ -143,28 +134,50 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
     resolver: zodResolver(createTeamSchema),
     defaultValues: {
       name: "",
-      description: "",
-      sectorId: "",
+      projectId: "none",
       bcDevs: [],
       consultants: [],
       portalDev: "",
-      accountManager: "",
       projectLeader: "",
-      sendCredentials: true,
-      financeNotifications: true,
-      accountManagerNotifications: true,
-      financeEmail: "",
-      accountManagerEmail: "",
     },
   });
 
   const createTeamMutation = useMutation({
     mutationFn: async (data: CreateTeamData) => {
-      const response = await apiRequest("POST", "/api/teams", data);
-      return response.json();
+      const selectedProject = data.projectId && data.projectId !== 'none'
+        ? teamProjects.find((p) => p.id === data.projectId)
+        : undefined;
+
+      const allMembers = [
+        ...data.bcDevs,
+        ...data.consultants,
+        data.portalDev,
+        data.projectLeader
+      ].filter(Boolean) as string[];
+
+      const response = await apiRequest("POST", "/api/teams", {
+        name: data.name,
+        sectorId: selectedProject?.segmentId || undefined,
+        projectId: selectedProject?.id,
+        members: allMembers,
+        roleAssignments: {
+          bcDevs: data.bcDevs,
+          consultants: data.consultants,
+          portalDev: data.portalDev,
+          projectLeader: data.projectLeader,
+        },
+      });
+      const newTeam = await response.json();
+
+      if (selectedProject) {
+        await apiRequest("PUT", `/api/projects/${selectedProject.id}`, { teamId: newTeam.id });
+      }
+
+      return newTeam;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/teams"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       onCreateOpenChange(false);
       form.reset();
       toast({
@@ -192,49 +205,14 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
     },
   });
 
-  useEffect(() => {
-    if (createOpen && systemEmails) {
-      form.setValue('financeEmail', systemEmails.financeEmail || '');
-      form.setValue('accountManagerEmail', systemEmails.accountManagerEmail || '');
-    }
-  }, [createOpen, systemEmails, form]);
-
   const onSubmit = (data: CreateTeamData) => {
-    const allMembers = [
-      ...data.bcDevs,
-      ...data.consultants,
-      data.portalDev,
-      data.accountManager,
-      data.projectLeader !== 'segment_leader' ? data.projectLeader : null
-    ].filter(Boolean) as string[];
-
-    const payload = {
-      ...data,
-      members: allMembers,
-      roleAssignments: {
-        bcDevs: data.bcDevs,
-        consultants: data.consultants,
-        portalDev: data.portalDev,
-        accountManager: data.accountManager,
-        projectLeader: data.projectLeader
-      },
-      notifications: {
-        sendCredentials: data.sendCredentials,
-        financeNotifications: data.financeNotifications,
-        accountManagerNotifications: data.accountManagerNotifications,
-        financeEmail: data.financeEmail,
-        accountManagerEmail: data.accountManagerEmail
-      }
-    };
-
-    createTeamMutation.mutate(payload);
+    createTeamMutation.mutate(data);
   };
 
   const clearAllSearches = () => {
     setBcDevSearch("");
     setConsultantSearch("");
     setPortalDevSearch("");
-    setAccountManagerSearch("");
     setProjectLeaderSearch("");
   };
 
@@ -295,46 +273,68 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
 
                         <FormField
                           control={form.control}
-                          name="sectorId"
+                          name="projectId"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel className="text-sm font-medium text-gray-700">Sector *</FormLabel>
+                              <FormLabel className="text-sm font-medium text-gray-700">Project (optional)</FormLabel>
                               <FormControl>
-                                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                  <SelectTrigger className="h-11" data-testid="select-team-segment">
-                                    <SelectValue placeholder="Select sector" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {sectors.map((sector) => (
-                                      <SelectItem key={sector.id} value={sector.id}>{sector.name}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <Popover open={projectPopoverOpen} onOpenChange={setProjectPopoverOpen}>
+                                  <PopoverTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      role="combobox"
+                                      aria-expanded={projectPopoverOpen}
+                                      className="w-full h-11 justify-between font-normal"
+                                      data-testid="select-team-project"
+                                    >
+                                      {field.value && field.value !== 'none'
+                                        ? teamProjects.find((p) => p.id === field.value)?.name || "No project (assign later)"
+                                        : "No project (assign later)"}
+                                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                                    <Command>
+                                      <CommandInput placeholder="Search projects..." />
+                                      <CommandList>
+                                        <CommandEmpty>No project found.</CommandEmpty>
+                                        <CommandGroup>
+                                          <CommandItem
+                                            value="none"
+                                            onSelect={() => {
+                                              field.onChange("none");
+                                              setProjectPopoverOpen(false);
+                                            }}
+                                          >
+                                            <Check className={cn("h-4 w-4 mr-2", (!field.value || field.value === 'none') ? "opacity-100" : "opacity-0")} />
+                                            No project (assign later)
+                                          </CommandItem>
+                                          {teamProjects.map((project) => (
+                                            <CommandItem
+                                              key={project.id}
+                                              value={project.name}
+                                              onSelect={() => {
+                                                field.onChange(project.id);
+                                                setProjectPopoverOpen(false);
+                                              }}
+                                            >
+                                              <Check className={cn("h-4 w-4 mr-2", field.value === project.id ? "opacity-100" : "opacity-0")} />
+                                              {project.name}
+                                            </CommandItem>
+                                          ))}
+                                        </CommandGroup>
+                                      </CommandList>
+                                    </Command>
+                                  </PopoverContent>
+                                </Popover>
                               </FormControl>
+                              <p className="text-xs text-gray-500">Linking a project sets this team's sector automatically and assigns the team to that project.</p>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
                       </div>
-
-                      <FormField
-                        control={form.control}
-                        name="description"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-sm font-medium text-gray-700">Description</FormLabel>
-                            <FormControl>
-                              <Textarea
-                                placeholder="Describe the team's purpose and responsibilities"
-                                className="min-h-[80px] resize-none"
-                                {...field}
-                                data-testid="textarea-team-description"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
                     </div>
 
                     <div className="bg-gray-50 rounded-lg p-6 space-y-6">
@@ -351,9 +351,8 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
                             const filteredBcDevs = filterEmployeesByRoleAndSearch('bc_dev', bcDevSearch);
                             return (
                               <FormItem>
-                                <FormLabel className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                                  <Badge variant="secondary" className="text-xs">Required</Badge>
-                                  BC Developers * (Select at least 1)
+                                <FormLabel className="text-sm font-medium text-gray-700">
+                                  BC Developers *
                                 </FormLabel>
                                 <FormControl>
                                   <div className="space-y-3">
@@ -415,9 +414,8 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
                             const filteredConsultants = filterEmployeesByRoleAndSearch('consultant', consultantSearch);
                             return (
                               <FormItem>
-                                <FormLabel className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                                  <Badge variant="secondary" className="text-xs">Required</Badge>
-                                  Functional Consultants * (Select exactly 2)
+                                <FormLabel className="text-sm font-medium text-gray-700">
+                                  Functional Consultants *
                                 </FormLabel>
                                 <FormControl>
                                   <div className="space-y-3">
@@ -437,15 +435,11 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
                                       ) : (
                                         filteredConsultants.map((emp: any) => {
                                           const checked = field.value.includes(emp.id);
-                                          const disabled = !checked && field.value.length >= 2;
                                           return (
-                                            <label key={emp.id} className={`flex items-center space-x-3 p-2 rounded-md cursor-pointer ${
-                                              disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
-                                            }`}>
+                                            <label key={emp.id} className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50 cursor-pointer">
                                               <input
                                                 type="checkbox"
                                                 checked={checked}
-                                                disabled={disabled}
                                                 onChange={(e) => {
                                                   if (e.target.checked) {
                                                     field.onChange([...field.value, emp.id]);
@@ -485,8 +479,7 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
                             const filteredPortalDevs = filterEmployeesByRoleAndSearch('portal_dev', portalDevSearch);
                             return (
                               <FormItem>
-                                <FormLabel className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                                  <Badge variant="secondary" className="text-xs">Required</Badge>
+                                <FormLabel className="text-sm font-medium text-gray-700">
                                   Portal Developer *
                                 </FormLabel>
                                 <FormControl>
@@ -538,67 +531,8 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
 
                         <FormField
                           control={form.control}
-                          name="accountManager"
+                          name="projectLeader"
                           render={({ field }) => {
-                            const filteredAccountManagers = filterEmployeesByRoleAndSearch('account_manager', accountManagerSearch);
-                            return (
-                              <FormItem>
-                                <FormLabel className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                                  <Badge variant="secondary" className="text-xs">Required</Badge>
-                                  Account Manager *
-                                </FormLabel>
-                                <FormControl>
-                                  <div className="space-y-3">
-                                    <Input
-                                      placeholder="Search Account Managers..."
-                                      value={accountManagerSearch}
-                                      onChange={(e) => setAccountManagerSearch(e.target.value)}
-                                      className="h-9 text-sm"
-                                    />
-                                    <div className="max-h-32 overflow-auto border rounded-md p-3 bg-white">
-                                      {employeesLoading ? (
-                                        <div className="text-sm text-gray-500 text-center py-4">Loading employees...</div>
-                                      ) : filteredAccountManagers.length === 0 ? (
-                                        <div className="text-sm text-gray-500 text-center py-4">
-                                          {accountManagerSearch ? `No Account Managers found matching "${accountManagerSearch}"` : "No Account Managers found"}
-                                        </div>
-                                      ) : (
-                                        filteredAccountManagers.map((emp: any) => {
-                                          const selected = field.value === emp.id;
-                                          return (
-                                            <label key={emp.id} className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50 cursor-pointer">
-                                              <input
-                                                type="radio"
-                                                checked={selected}
-                                                onChange={() => field.onChange(emp.id)}
-                                                className="rounded-full border-gray-300 text-primary focus:ring-primary"
-                                              />
-                                              <div className="flex-1">
-                                                <span className="text-sm font-medium text-gray-900">
-                                                  {emp.firstName && emp.lastName ? `${emp.firstName} ${emp.lastName}` : emp.email}
-                                                </span>
-                                                {emp.email && (
-                                                  <p className="text-xs text-gray-500">{emp.email}</p>
-                                                )}
-                                              </div>
-                                            </label>
-                                          );
-                                        })
-                                      )}
-                                    </div>
-                                  </div>
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            );
-                          }}
-                        />
-                      </div>
-
-                      <FormField
-                        control={form.control}
-                        name="projectLeader"
-                        render={({ field }) => {
                           const filteredProjectLeaders = filterEmployeesByRoleAndSearch('all', projectLeaderSearch).filter((emp: any) =>
                             emp.role === 'bc_dev' ||
                             emp.role === 'consultant' ||
@@ -608,8 +542,7 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
 
                           return (
                             <FormItem>
-                              <FormLabel className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                                <Badge variant="secondary" className="text-xs">Required</Badge>
+                              <FormLabel className="text-sm font-medium text-gray-700">
                                 Project Leader *
                               </FormLabel>
                               <FormControl>
@@ -621,21 +554,6 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
                                     className="h-9 text-sm"
                                   />
                                   <div className="max-h-32 overflow-auto border rounded-md p-3 bg-white">
-                                    <label className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50 cursor-pointer border-b border-gray-100 mb-2">
-                                      <input
-                                        type="radio"
-                                        checked={field.value === "segment_leader"}
-                                        onChange={() => field.onChange("segment_leader")}
-                                        className="rounded-full border-gray-300 text-primary focus:ring-primary"
-                                      />
-                                      <div className="flex-1">
-                                        <span className="text-sm font-medium text-gray-900">
-                                          Segment Leader (Auto-assigned)
-                                        </span>
-                                        <p className="text-xs text-gray-500">Automatically assigned based on project segment</p>
-                                      </div>
-                                    </label>
-
                                     {employeesLoading ? (
                                       <div className="text-sm text-gray-500 text-center py-4">Loading employees...</div>
                                     ) : filteredProjectLeaders.length === 0 ? (
@@ -678,133 +596,6 @@ export default function TeamsTab({ search = "", segmentFilter = "all", createOpe
                           );
                         }}
                       />
-                    </div>
-
-                    <div className="bg-green-50 rounded-lg p-6 space-y-6">
-                      <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                        <Mail className="h-5 w-5 text-green-600" />
-                        Credential Management
-                      </h3>
-
-                      <FormField
-                        control={form.control}
-                        name="sendCredentials"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                            <FormControl>
-                              <input
-                                type="checkbox"
-                                checked={field.value}
-                                onChange={field.onChange}
-                                className="mt-1 rounded border-gray-300 text-primary focus:ring-primary"
-                              />
-                            </FormControl>
-                            <div className="space-y-1 leading-none">
-                              <FormLabel className="text-sm font-medium text-gray-700">Send temporary credentials to new team members</FormLabel>
-                              <p className="text-sm text-gray-600">
-                                Automatically generate and email temporary passwords to selected team members
-                              </p>
-                            </div>
-                          </FormItem>
-                        )}
-                      />
-
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <FormField
-                          control={form.control}
-                          name="financeNotifications"
-                          render={({ field }) => (
-                            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                              <FormControl>
-                                <input
-                                  type="checkbox"
-                                  checked={field.value}
-                                  onChange={field.onChange}
-                                  className="mt-1 rounded border-gray-300 text-primary focus:ring-primary"
-                                />
-                              </FormControl>
-                              <div className="space-y-1 leading-none">
-                                <FormLabel className="text-sm font-medium text-gray-700">Enable Finance Team Notifications</FormLabel>
-                                <p className="text-sm text-gray-600">
-                                  Finance team will receive notifications for overdue milestones and payment reminders
-                                </p>
-                              </div>
-                            </FormItem>
-                          )}
-                        />
-
-                        {form.watch('financeNotifications') && (
-                          <FormField
-                            control={form.control}
-                            name="financeEmail"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="text-sm font-medium text-gray-700">
-                                  Finance Team Email
-                                  {!systemEmails && <span className="text-xs text-gray-500 ml-2">(Loading...)</span>}
-                                  {systemEmails?.financeEmail && <span className="text-xs text-green-600 ml-2">(Auto-filled)</span>}
-                                </FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder="finance@company.com"
-                                    className="h-11"
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <FormField
-                          control={form.control}
-                          name="accountManagerNotifications"
-                          render={({ field }) => (
-                            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                              <FormControl>
-                                <input
-                                  type="checkbox"
-                                  checked={field.value}
-                                  onChange={field.onChange}
-                                  className="mt-1 rounded border-gray-300 text-primary focus:ring-primary"
-                                />
-                              </FormControl>
-                              <div className="space-y-1 leading-none">
-                                <FormLabel className="text-sm font-medium text-gray-700">Enable Account Manager Notifications</FormLabel>
-                                <p className="text-sm text-gray-600">
-                                  Account managers will receive project completion forecasts and client updates
-                                </p>
-                              </div>
-                            </FormItem>
-                          )}
-                        />
-
-                        {form.watch('accountManagerNotifications') && (
-                          <FormField
-                            control={form.control}
-                            name="accountManagerEmail"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="text-sm font-medium text-gray-700">
-                                  Account Manager Email
-                                  {!systemEmails && <span className="text-xs text-gray-500 ml-2">(Loading...)</span>}
-                                  {systemEmails?.accountManagerEmail && <span className="text-xs text-green-600 ml-2">(Auto-filled)</span>}
-                                </FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder="accountmanager@company.com"
-                                    className="h-11"
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
                       </div>
                     </div>
 

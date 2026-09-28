@@ -36,7 +36,7 @@ export function setupSecurityHeaders(app: Express) {
           "'self'",
           ...(process.env.NODE_ENV === 'development' ? ["ws://localhost:*"] : []),
           // Explicitly allow your deployed origin (redundant with 'self' when same-origin, but harmless)
-          "https://project.appkings.co.ke"
+          "https://support.ecorenet.co.ke"
         ],
         frameSrc: ["'none'"],
         objectSrc: ["'none'"],

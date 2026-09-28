@@ -21,6 +21,9 @@ import { users } from "../shared/schema";
 import { registerMarketingRoutes } from "./routes/marketing";
 import { registerRoleRoutes } from "./routes/roles";
 import { registerTicketRoutes } from "./routes/tickets";
+import { registerMicrosoftAuthRoutes } from "./routes/auth-microsoft";
+import { registerInboxRoutes } from "./routes/inbox";
+import { startEmailTicketingPoll } from "./services/emailTicketingService";
 import { logProjectAction, logUserManagementAction, logTeamAction, logBillingItemAction, logInvoiceAction } from "./middleware/comprehensiveAudit";
 import { userHasPermission, requirePermission } from "./utils/permissions";
 
@@ -87,6 +90,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Tickets / SLA support + service categories
   registerTicketRoutes(app);
+
+  // Microsoft 365 inbox: OAuth connection + thread/reply routes, plus the auto-ticketing poll
+  registerMicrosoftAuthRoutes(app);
+  registerInboxRoutes(app);
+  if (process.env.MICROSOFT_CLIENT_ID) {
+    startEmailTicketingPoll();
+  }
 
   // Comprehensive Audit Middleware - Apply to all routes
   const { comprehensiveAuditMiddleware } = await import('./middleware/comprehensiveAudit');
@@ -254,6 +264,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching team workload:", error);
       res.status(500).json({ message: "Failed to fetch team workload" });
+    }
+  });
+
+  app.get('/api/dashboard/team-performance', isAuthenticated, async (req: any, res) => {
+    try {
+      const performance = await storage.getTeamPerformance();
+      res.json(performance);
+    } catch (error) {
+      console.error("Error fetching team performance:", error);
+      res.status(500).json({ message: "Failed to fetch team performance" });
     }
   });
 
@@ -510,17 +530,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       const reportNames = {
         projects: 'Project Summary',
-        milestones: 'Milestone List', 
+        milestones: 'Milestone List',
         performance: 'Team Performance',
         workload: 'Workload Analysis',
-        financial: 'Financial Report',
+        tickets: 'Tickets Report',
         complete: 'Complete Report',
         gantt: 'Gantt Chart'
       };
-      
+
       const reportName = reportNames[reportType as keyof typeof reportNames] || 'Report';
       const fileExtension = format === 'pdf' ? 'pdf' : 'xlsx';
-      const filename = `AppKings Solutions Limited - ${reportName} - ${timestamp}.${fileExtension}`;
+      const filename = `Ecorenet Business Solutions Limited - ${reportName} - ${timestamp}.${fileExtension}`;
 
       // Get export data based on report type
       let exportData;
@@ -540,11 +560,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         case 'workload':
           exportData = await getWorkloadExportData(storage, filters);
           break;
-        case 'financial':
-          exportData = {
-            financial: await getFinancialExportData(storage, filters),
-            milestones: await getMilestonesExportData(storage, filters)
-          };
+        case 'tickets':
+          exportData = await getTicketsExportData(storage, filters);
           break;
         case 'complete':
           exportData = await getCompleteExportData(storage, filters);
@@ -564,10 +581,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // For projects report, return structured data with projects and milestones
         if (reportType === 'projects' && typeof exportData === 'object' && exportData.projects && exportData.milestones) {
           res.json(exportData);
-        }
-        // For financial report, only return the financial array
-        else if (reportType === 'financial' && typeof exportData === 'object' && exportData.financial) {
-          res.json(exportData.financial);
         }
         // For complete report, return only the projects array (most comprehensive view)
         else if (reportType === 'complete' && typeof exportData === 'object' && exportData.projects) {
@@ -1125,39 +1138,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Forbidden' });
       }
 
-      const { members, ...rest } = req.body || {};
+      const { members, roleAssignments, projectId, ...rest } = req.body || {};
       const teamData = insertTeamSchema.parse(rest);
       const team = await storage.createTeam(teamData);
 
-      // Add team members with specific roles
-      const { roleAssignments } = req.body;
-      
+      // Add team members with specific roles, collecting each one for the assignment email below
+      const addedMembers: { userId: string; role: string }[] = [];
+
       if (roleAssignments) {
-        const { bcDevs, consultants, portalDev, accountManager, projectLeader } = roleAssignments;
-        
+        const { bcDevs, consultants, portalDev, projectLeader } = roleAssignments;
+
         if (Array.isArray(bcDevs) && bcDevs.length > 0) {
           for (const userId of bcDevs) {
             await storage.addTeamMember({ teamId: team.id, userId, role: 'BC Developer' });
+            addedMembers.push({ userId, role: 'BC Developer' });
           }
         }
-        
+
         if (Array.isArray(consultants) && consultants.length > 0) {
           for (const userId of consultants) {
             await storage.addTeamMember({ teamId: team.id, userId, role: 'Functional Consultant' });
+            addedMembers.push({ userId, role: 'Functional Consultant' });
           }
         }
-        
+
         if (portalDev) {
           await storage.addTeamMember({ teamId: team.id, userId: portalDev, role: 'Portal Developer' });
+          addedMembers.push({ userId: portalDev, role: 'Portal Developer' });
         }
-        
-        if (accountManager) {
-          await storage.addTeamMember({ teamId: team.id, userId: accountManager, role: 'Account Manager' });
-        }
-        
+
         if (projectLeader && projectLeader !== 'segment_leader') {
           await storage.addTeamMember({ teamId: team.id, userId: projectLeader, role: 'Project Leader' });
+          addedMembers.push({ userId: projectLeader, role: 'Project Leader' });
         }
+      }
+
+      // Notify every assigned member who else is on the team and what role they hold.
+      // Fire-and-forget — never block or fail team creation on email delivery.
+      if (addedMembers.length > 0) {
+        (async () => {
+          try {
+            const users = await Promise.all(addedMembers.map((m) => storage.getUser(m.userId)));
+            const membersWithDetails = addedMembers
+              .map((m, i) => {
+                const u = users[i];
+                if (!u) return null;
+                return {
+                  userId: m.userId,
+                  role: m.role,
+                  name: u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.email,
+                  email: u.email,
+                };
+              })
+              .filter(Boolean) as { userId: string; role: string; name: string; email: string }[];
+
+            const project = projectId ? await storage.getProject(projectId) : undefined;
+            await notificationService.sendTeamAssignmentNotification(team, membersWithDetails, project?.name);
+          } catch (err) {
+            console.error('Failed to send team assignment notifications:', err);
+          }
+        })();
       }
 
       res.status(201).json(team);
@@ -2303,43 +2343,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Manual notification check endpoints
-  app.post('/api/notifications/check-due-soon', isAuthenticated, async (req: any, res) => {
-    try {
-      if (!(await userHasPermission(req.user, 'system.manage'))) {
-        return res.status(403).json({ message: 'Only managers and admins can trigger notification checks' });
-      }
-      
-      const result = await notificationService.manualDueSoonCheck();
-      res.json({ 
-        message: 'Due soon notification check completed', 
-        processed: result.processed, 
-        sent: result.sent 
-      });
-    } catch (error) {
-      console.error("Error checking due soon notifications:", error);
-      res.status(500).json({ message: "Failed to check due soon notifications" });
-    }
-  });
-
-  app.post('/api/notifications/check-overdue', isAuthenticated, async (req: any, res) => {
-    try {
-      if (!(await userHasPermission(req.user, 'system.manage'))) {
-        return res.status(403).json({ message: 'Only managers and admins can trigger notification checks' });
-      }
-      
-      const result = await notificationService.manualOverdueCheck();
-      res.json({ 
-        message: 'Overdue notification check completed', 
-        processed: result.processed, 
-        sent: result.sent 
-      });
-    } catch (error) {
-      console.error("Error checking overdue notifications:", error);
-      res.status(500).json({ message: "Failed to check overdue notifications" });
-    }
-  });
-
   // User notification preferences routes
   app.get('/api/user/notification-preferences', isAuthenticated, async (req: any, res) => {
     try {
@@ -2702,12 +2705,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Manual automation trigger endpoints
   // Contract expiration check automation endpoint
-  app.post('/api/automation/check-contract-expirations', async (req, res) => {
+  app.post('/api/automation/check-contract-expirations', isAuthenticated, async (req, res) => {
     try {
       if (!(await userHasPermission((req as any).user, 'system.manage'))) {
         return res.status(403).json({ message: 'Only managers and admins can trigger contract expiration checks' });
       }
-      
+
       await storage.checkContractExpirations();
       res.json({ message: 'Contract expiration check completed successfully' });
     } catch (error) {
@@ -2717,7 +2720,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Comprehensive automation endpoint - runs all automation checks
-  app.post('/api/automation/run-all-checks', async (req, res) => {
+  app.post('/api/automation/run-all-checks', isAuthenticated, async (req, res) => {
     try {
       if (!(await userHasPermission((req as any).user, 'system.manage'))) {
         return res.status(403).json({ message: 'Only managers and admins can trigger automation checks' });
@@ -2757,8 +2760,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/automation/trigger-project-update/:projectId', async (req, res) => {
+  app.post('/api/automation/trigger-project-update/:projectId', isAuthenticated, async (req, res) => {
     try {
+      if (!(await userHasPermission((req as any).user, 'system.manage'))) {
+        return res.status(403).json({ message: 'Only managers and admins can trigger project automation' });
+      }
       const { projectId } = req.params;
       await storage.updateProjectStatusBasedOnBillingItems(projectId);
       res.json({ message: 'Project automation triggered successfully' });
@@ -3093,75 +3099,62 @@ async function getMilestonesExportData(storage: any, filters: any) {
   return allMilestones;
 }
 
+// Team Performance: one row per TEAM (not per user), ticket-based.
 async function getPerformanceExportData(storage: any, filters: any) {
-  const workload = await storage.getTeamWorkload();
-  
-  return workload.map((member: any) => ({
-    'Team Member': member.user.firstName && member.user.lastName 
-      ? `${member.user.firstName} ${member.user.lastName}`
-      : member.user.email,
-    'Email': member.user.email,
-    'Role': member.user.role,
-    'Total Tasks': member.totalTasks,
-    'Completed Tasks': member.completedTasks,
-    'Completion Rate (%)': member.workloadPercentage,
-    'Pending Tasks': member.totalTasks - member.completedTasks,
-    'Performance Level': member.workloadPercentage >= 90 ? 'Excellent' : 
-                        member.workloadPercentage >= 75 ? 'Good' : 
-                        member.workloadPercentage >= 50 ? 'Average' : 'Below Average',
-    'Last Active': new Date(member.user.lastLogin || member.user.createdAt).toLocaleDateString()
+  const teams = await storage.getTeamPerformance();
+
+  return teams.map((team: any) => ({
+    'Team': team.name,
+    'Members': team.memberCount,
+    'Total Tickets': team.totalTickets,
+    'Resolved Tickets': team.resolvedTickets,
+    'Resolution Rate (%)': team.resolutionRate,
   }));
 }
 
+// Workload Analysis: one row per person, ticket-assignment based.
 async function getWorkloadExportData(storage: any, filters: any) {
   const workload = await storage.getTeamWorkload();
-  
+
   return workload.map((member: any) => ({
-    'Team Member': member.user.firstName && member.user.lastName 
+    'Team Member': member.user.firstName && member.user.lastName
       ? `${member.user.firstName} ${member.user.lastName}`
       : member.user.email,
     'Email': member.user.email,
     'Role': member.user.role,
-    'Total Subtasks': member.totalTasks,
-    'Completed Subtasks': member.completedTasks,
-    'Pending Subtasks': member.totalTasks - member.completedTasks,
+    'Total Tickets': member.totalTasks,
+    'Completed Tickets': member.completedTasks,
+    'Pending Tickets': member.totalTasks - member.completedTasks,
     'Completion Rate (%)': member.workloadPercentage,
-    'Workload Status': member.workloadPercentage >= 80 ? 'High' : 
+    'Workload Status': member.workloadPercentage >= 80 ? 'High' :
                         member.workloadPercentage >= 50 ? 'Medium' : 'Low',
     'Last Active': new Date(member.user.lastLogin || member.user.createdAt).toLocaleDateString()
   }));
 }
 
-async function getFinancialExportData(storage: any, filters: any) {
-  const projects = await storage.getProjects();
-  const financialData = [];
-  
-  for (const project of projects) {
-    const projectMilestones = await storage.getBillingItemsByProject(project.id);
+// Tickets Report: one row per ticket.
+async function getTicketsExportData(storage: any, filters: any) {
+  const tickets = await storage.getTickets({});
 
-    const totalFees = projectMilestones.reduce((sum: number, milestone: any) => sum + parseFloat(milestone.feeAmount || 0), 0);
-    const paidFees = projectMilestones.filter((milestone: any) => milestone.billingStatus === 'paid').reduce((sum: number, milestone: any) => sum + parseFloat(milestone.feeAmount || 0), 0);
-    const pendingFees = projectMilestones.filter((milestone: any) => ['to_send', 'sent'].includes(milestone.billingStatus)).reduce((sum: number, milestone: any) => sum + parseFloat(milestone.feeAmount || 0), 0);
-    
-    financialData.push({
-      'Project Name': project.name,
-      'Client': project.client || 'N/A',
-      'Project Status': project.status,
-      'Total Project Value (KSh)': totalFees.toLocaleString(),
-      'Paid Amount (KSh)': paidFees.toLocaleString(),
-      'Pending Payment (KSh)': pendingFees.toLocaleString(),
-      'Outstanding (KSh)': (totalFees - paidFees).toLocaleString(),
-      'Payment Completion (%)': totalFees > 0 ? Math.round((paidFees / totalFees) * 100) : 0,
-      'Milestones Count': projectMilestones.length,
-      'Paid Milestones': projectMilestones.filter((milestone: any) => milestone.billingStatus === 'paid').length,
-      'Invoices to Send': projectMilestones.filter((milestone: any) => milestone.billingStatus === 'to_send').length,
-      'Invoices Sent': projectMilestones.filter((milestone: any) => milestone.billingStatus === 'sent').length,
-      'Project Start': project.startDate ? new Date(project.startDate).toLocaleDateString() : 'N/A',
-      'Project End': project.endDate ? new Date(project.endDate).toLocaleDateString() : 'N/A'
-    });
-  }
-  
-  return financialData;
+  return tickets.map((ticket: any) => {
+    const resolutionDays = ticket.resolvedAt && ticket.createdAt
+      ? Math.round((new Date(ticket.resolvedAt).getTime() - new Date(ticket.createdAt).getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
+    return {
+      'Ticket #': ticket.ticketNumber,
+      'Type': ticket.type,
+      'Category': ticket.category?.name || 'N/A',
+      'Status': ticket.status,
+      'Priority': ticket.priority,
+      'Project': ticket.project?.name || 'N/A',
+      'Company': ticket.company?.name || 'N/A',
+      'Assigned To': ticket.assignedTo?.firstName ? `${ticket.assignedTo.firstName} ${ticket.assignedTo.lastName || ''}`.trim() : 'Unassigned',
+      'Created Date': ticket.createdAt ? new Date(ticket.createdAt).toLocaleDateString() : 'N/A',
+      'Resolved Date': ticket.resolvedAt ? new Date(ticket.resolvedAt).toLocaleDateString() : 'N/A',
+      'Resolution Time (days)': resolutionDays ?? '-',
+    };
+  });
 }
 
 async function getCompleteExportData(storage: any, filters: any) {
@@ -3170,7 +3163,7 @@ async function getCompleteExportData(storage: any, filters: any) {
     milestones: await getMilestonesExportData(storage, filters),
     performance: await getPerformanceExportData(storage, filters),
     workload: await getWorkloadExportData(storage, filters),
-    financial: await getFinancialExportData(storage, filters)
+    tickets: await getTicketsExportData(storage, filters)
   };
 }
 

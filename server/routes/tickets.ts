@@ -5,6 +5,106 @@ import { insertTicketSchema, insertServiceCategorySchema } from "../../shared/sc
 import { z } from "zod";
 import { requirePermission, userHasPermission } from "../utils/permissions";
 import { notificationService } from "../services/notificationService";
+import { classifyTicket } from "../services/aiClassificationService";
+import { createCustomRateLimiter } from "../middleware/rateLimit";
+
+// Dedicated, stricter-than-generic-guest-tier limit: each submission also triggers a paid
+// AI classification call, so this route needs its own bound independent of general API traffic.
+const publicTicketLimiter = createCustomRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 8,
+  message: 'Too many ticket submissions from this address. Please try again later.',
+});
+
+const MAX_SCREENSHOTS = 5;
+const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
+const SCREENSHOT_DATA_URI = /^data:image\/(png|jpe?g|webp|gif);base64,/i;
+
+/** Throws with a user-facing message if any screenshot fails validation. */
+function validateScreenshots(screenshots: unknown): string[] {
+  if (screenshots === undefined || screenshots === null) return [];
+  if (!Array.isArray(screenshots)) throw new Error('Screenshots must be a list of images');
+  if (screenshots.length > MAX_SCREENSHOTS) throw new Error(`Maximum ${MAX_SCREENSHOTS} screenshots allowed`);
+  for (const img of screenshots) {
+    if (typeof img !== 'string' || !SCREENSHOT_DATA_URI.test(img)) {
+      throw new Error('Screenshots must be valid PNG, JPG, WEBP, or GIF images');
+    }
+    const base64Data = img.slice(img.indexOf(',') + 1);
+    const sizeBytes = Math.ceil((base64Data.length * 3) / 4);
+    if (sizeBytes > MAX_SCREENSHOT_BYTES) throw new Error('Each screenshot must be 5MB or smaller');
+  }
+  return screenshots;
+}
+
+const publicTicketSchema = z.object({
+  projectId: z.string().min(1, 'Please select a project'),
+  type: z.enum(['complaint', 'suggestion', 'enquiry', 'compliment']),
+  subject: z.string().trim().min(1, 'Issue title/subject is required').max(200, 'Subject is too long'),
+  description: z.string().trim().min(1, 'Issue description is required').max(5000, 'Description is too long'),
+  contactName: z.string().trim().max(200, 'Name is too long').optional().or(z.literal('')),
+  contactEmail: z.string().trim().email('A valid contact email is required').max(255),
+  contactPhone: z.string().trim().max(50, 'Phone number is too long').optional().or(z.literal('')),
+});
+
+const AI_CLASSIFICATION_CONFIDENCE_THRESHOLD = process.env.AI_CLASSIFICATION_CONFIDENCE_THRESHOLD
+  ? Number(process.env.AI_CLASSIFICATION_CONFIDENCE_THRESHOLD)
+  : 0.6;
+
+/**
+ * Fire-and-forget background classification: never awaited by the caller, so it can never
+ * delay or fail a ticket creation response. Only complaint/enquiry types carry a category.
+ */
+function classifyTicketInBackground(
+  ticket: { id: string; type: string; subject: string; description: string },
+  opts: { applyToCategoryAndPriority: boolean } = { applyToCategoryAndPriority: true }
+) {
+  setImmediate(async () => {
+    try {
+      const allCategories = await storage.getServiceCategories();
+      const availableCategories = allCategories
+        .filter((c: any) => c.isActive && (ticket.type === 'complaint' || ticket.type === 'enquiry') && c.type === ticket.type)
+        .map((c: any) => ({ id: c.id, name: c.name, type: c.type }));
+
+      const result = await classifyTicket({
+        subject: ticket.subject,
+        description: ticket.description,
+        availableCategories,
+      });
+      if (!result) return;
+
+      const applyToCategoryAndPriority = opts.applyToCategoryAndPriority && result.confidence >= AI_CLASSIFICATION_CONFIDENCE_THRESHOLD;
+      await storage.updateTicketClassification(ticket.id, result as any, {
+        applyToCategoryAndPriority,
+        categoryId: applyToCategoryAndPriority ? result.suggestedCategoryId : undefined,
+        priority: applyToCategoryAndPriority ? result.suggestedPriority : undefined,
+      });
+    } catch (error) {
+      console.error('[classifyTicketInBackground] failed:', error);
+    }
+  });
+}
+
+/**
+ * Resolves who should be notified about a ticket — an internal user (in-app + email) for
+ * tickets created via the authenticated route, or the public submitter's contact info
+ * (email-only, no account to attach an in-app notification to) for public tickets.
+ */
+async function resolveTicketRecipient(ticket: { createdByUserId?: string | null; contactEmail?: string | null; contactName?: string | null }): Promise<{ userId?: string; email: string; name: string } | null> {
+  if (ticket.createdByUserId) {
+    const user = await storage.getUser(ticket.createdByUserId);
+    if (user) {
+      return {
+        userId: user.id,
+        email: user.email,
+        name: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.email,
+      };
+    }
+  }
+  if (ticket.contactEmail) {
+    return { email: ticket.contactEmail, name: ticket.contactName || ticket.contactEmail };
+  }
+  return null;
+}
 
 const assignTicketSchema = z.object({
   assignedToUserId: z.string().nullable().optional(),
@@ -47,33 +147,19 @@ export function registerTicketRoutes(app: Express) {
   });
 
   // Public endpoint: Submit support ticket from landing page / public form
-  app.post('/api/public/tickets', async (req, res) => {
+  app.post('/api/public/tickets', publicTicketLimiter, async (req, res) => {
     try {
-      const {
-        projectId,
-        type,
-        subject,
-        description,
-        contactName,
-        contactEmail,
-        contactPhone,
-        screenshots,
-      } = req.body;
+      const parsed = publicTicketSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0]?.message || 'Invalid request' });
+      }
+      const { projectId, type, subject, description, contactName, contactEmail, contactPhone } = parsed.data;
 
-      if (!projectId) {
-        return res.status(400).json({ message: 'Please select a project' });
-      }
-      if (!subject || !subject.trim()) {
-        return res.status(400).json({ message: 'Issue title/subject is required' });
-      }
-      if (!description || !description.trim()) {
-        return res.status(400).json({ message: 'Issue description is required' });
-      }
-      if (!['complaint', 'suggestion', 'enquiry', 'compliment'].includes(type)) {
-        return res.status(400).json({ message: 'Invalid ticket type' });
-      }
-      if (!contactEmail || !contactEmail.trim()) {
-        return res.status(400).json({ message: 'Contact email is required' });
+      let screenshots: string[];
+      try {
+        screenshots = validateScreenshots(req.body.screenshots);
+      } catch (validationError: any) {
+        return res.status(400).json({ message: validationError.message });
       }
 
       const project = await storage.getProject(projectId);
@@ -81,20 +167,9 @@ export function registerTicketRoutes(app: Express) {
         return res.status(404).json({ message: 'Project not found' });
       }
 
-      // Assign to a system creator ID
-      let defaultUserId = project.managerId;
-      if (!defaultUserId) {
-        const users = await storage.getUsers();
-        defaultUserId = users[0]?.id;
-      }
-
-      if (!defaultUserId) {
-        return res.status(500).json({ message: 'System configuration error: No user available to log ticket' });
-      }
-
       // Append screenshot markdown to description if provided
-      let enrichedDescription = description.trim();
-      if (Array.isArray(screenshots) && screenshots.length > 0) {
+      let enrichedDescription = description;
+      if (screenshots.length > 0) {
         enrichedDescription += '\n\n---\n### Attached Screenshots:';
         screenshots.forEach((img: string, idx: number) => {
           enrichedDescription += `\n\n![Screenshot ${idx + 1}](${img})`;
@@ -109,18 +184,29 @@ export function registerTicketRoutes(app: Express) {
         projectId,
         companyId: project.companyId || (await storage.getCompanies())[0]?.id,
         type,
-        subject: subject.trim(),
+        subject,
         description: enrichedDescription,
         status: 'open',
         priority: 'medium',
-        contactName: contactName ? contactName.trim() : undefined,
-        contactEmail: contactEmail.trim(),
-        contactPhone: contactPhone ? contactPhone.trim() : undefined,
-        createdByUserId: defaultUserId,
+        contactName: contactName || undefined,
+        contactEmail,
+        contactPhone: contactPhone || undefined,
+        createdByUserId: null,
         assignedToUserId: project.managerId || null,
         assignedTeamId: project.teamId || null,
         categoryId: null,
       } as any);
+
+      classifyTicketInBackground({
+        id: newTicket.id,
+        type: newTicket.type,
+        subject: newTicket.subject,
+        description: newTicket.description,
+      });
+
+      resolveTicketRecipient(newTicket)
+        .then((recipient) => recipient && notificationService.sendTicketCreatedNotification(newTicket, recipient))
+        .catch((err) => console.error('Failed to send ticket created notification:', err));
 
       res.status(201).json({
         success: true,
@@ -218,11 +304,19 @@ export function registerTicketRoutes(app: Express) {
     }
   });
 
-  app.get('/api/tickets/:id', isAuthenticated, async (req, res) => {
+  app.get('/api/tickets/:id', isAuthenticated, async (req: any, res) => {
     try {
       const ticket = await storage.getTicket(req.params.id);
       if (!ticket) {
         return res.status(404).json({ message: 'Ticket not found' });
+      }
+      // Feedback tickets (compliment/suggestion) carry no sensitive case data and are visible
+      // to everyone, matching the list route's design; complaint/enquiry tickets require the
+      // requester, the assignee, or tickets.view_all.
+      const isFeedback = ticket.type === 'compliment' || ticket.type === 'suggestion';
+      const isOwnerOrAssignee = ticket.createdByUserId === req.user.id || ticket.assignedToUserId === req.user.id;
+      if (!isFeedback && !isOwnerOrAssignee && !(await userHasPermission(req.user, 'tickets.view_all'))) {
+        return res.status(403).json({ message: 'Forbidden' });
       }
       const comments = await storage.getTicketComments(req.params.id);
       res.json({ ...ticket, comments });
@@ -276,6 +370,19 @@ export function registerTicketRoutes(app: Express) {
           await notificationService.sendTicketAssignedNotification(ticket, assignee);
         }
       }
+
+      resolveTicketRecipient(ticket)
+        .then((recipient) => recipient && notificationService.sendTicketCreatedNotification(ticket, recipient))
+        .catch((err) => console.error('Failed to send ticket created notification:', err));
+
+      // Staff already picked type/category/priority here, so classification is recorded as a
+      // suggestion only (visible in the ticket detail view) and never overwrites their choice.
+      classifyTicketInBackground({
+        id: ticket.id,
+        type: ticket.type,
+        subject: ticket.subject,
+        description: ticket.description,
+      }, { applyToCategoryAndPriority: false });
 
       res.status(201).json(ticket);
     } catch (error) {
@@ -389,9 +496,9 @@ export function registerTicketRoutes(app: Express) {
       });
 
       if (isNewlyResolved) {
-        const requester = await storage.getUser(ticket.createdByUserId);
-        if (requester) {
-          await notificationService.sendTicketResolvedNotification(ticket, requester);
+        const recipient = await resolveTicketRecipient(ticket);
+        if (recipient) {
+          await notificationService.sendTicketResolvedNotification(ticket, recipient);
         }
       }
 
@@ -407,6 +514,16 @@ export function registerTicketRoutes(app: Express) {
 
   app.post('/api/tickets/:id/comments', isAuthenticated, async (req: any, res) => {
     try {
+      const ticket = await storage.getTicket(req.params.id);
+      if (!ticket) {
+        return res.status(404).json({ message: 'Ticket not found' });
+      }
+      const isFeedback = ticket.type === 'compliment' || ticket.type === 'suggestion';
+      const isOwnerOrAssignee = ticket.createdByUserId === req.user.id || ticket.assignedToUserId === req.user.id;
+      if (!isFeedback && !isOwnerOrAssignee && !(await userHasPermission(req.user, 'tickets.view_all'))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
       const { comment } = addCommentSchema.parse(req.body);
       const created = await storage.addTicketComment({
         ticketId: req.params.id,

@@ -26,6 +26,17 @@ export interface EmailNotificationData {
   unsubscribeUrl?: string;
   preferencesUrl?: string;
   logoUrl?: string;
+  ticketNumber?: string;
+  ticketSubject?: string;
+  ticketDescription?: string;
+  ticketUrl?: string;
+  ticketType?: string;
+  teamName?: string;
+  teamUrl?: string;
+  ownRole?: string;
+  roster?: { name: string; role: string; isSelf: boolean }[];
+  escalatedByName?: string;
+  escalationReason?: string;
 }
 
 export interface EmailTemplate {
@@ -106,16 +117,22 @@ export class EmailService {
     switch (type) {
       case 'taskAssigned':
         return `New Task Assigned: ${data.taskName} - Due ${data.dueDate}`;
-      case 'taskDueSoon':
-        return `⏰ Reminder: ${data.taskName} due ${data.dueDate}`;
-      case 'taskOverdue':
-        return `🚨 OVERDUE: ${data.taskName} requires immediate attention`;
       case 'projectDeadline':
         return `📅 Project Deadline Approaching: ${data.projectName}`;
       case 'passwordReset':
         return `🔐 Password Reset Request - TaskFlow`;
       case 'userCredentials':
         return `🎉 Welcome to TaskFlow - Your Account Credentials`;
+      case 'ticketCreated':
+        return `Ticket ${data.ticketNumber} received: ${data.ticketSubject}`;
+      case 'ticketResolved':
+        return `Ticket ${data.ticketNumber} resolved: ${data.ticketSubject}`;
+      case 'ticketAssigned':
+        return `Ticket ${data.ticketNumber} assigned to you: ${data.ticketSubject}`;
+      case 'ticketEscalated':
+        return `Ticket ${data.ticketNumber} escalated to you: ${data.ticketSubject}`;
+      case 'teamAssignment':
+        return `You've been added to ${data.teamName}`;
       default:
         return `TaskFlow Notification`;
     }
@@ -126,7 +143,7 @@ export class EmailService {
     
     return {
       ...data,
-      logoUrl: baseUrl ? `${baseUrl}/assets/taskflow-logo.png` : undefined,
+      logoUrl: baseUrl ? `${baseUrl}/logo.png` : undefined,
       unsubscribeUrl: data.unsubscribeUrl || (baseUrl ? `${baseUrl}/unsubscribe` : undefined),
       preferencesUrl: data.preferencesUrl || (baseUrl ? `${baseUrl}/home` : undefined),
       priorityLabel: data.priority ? data.priority.charAt(0).toUpperCase() + data.priority.slice(1) : 'Medium',
@@ -142,14 +159,6 @@ export class EmailService {
     return this.sendTemplatedEmail('taskAssigned', data);
   }
 
-  async sendTaskDueSoonEmail(data: EmailNotificationData): Promise<boolean> {
-    return this.sendTemplatedEmail('taskDueSoon', data);
-  }
-
-  async sendTaskOverdueEmail(data: EmailNotificationData): Promise<boolean> {
-    return this.sendTemplatedEmail('taskOverdue', data);
-  }
-
   async sendProjectDeadlineEmail(data: EmailNotificationData): Promise<boolean> {
     return this.sendTemplatedEmail('projectDeadline', data);
   }
@@ -160,6 +169,26 @@ export class EmailService {
 
   async sendUserCredentialsEmail(data: EmailNotificationData & { temporaryPassword: string; loginUrl: string }): Promise<boolean> {
     return this.sendTemplatedEmail('userCredentials', data);
+  }
+
+  async sendTicketCreatedEmail(data: EmailNotificationData): Promise<boolean> {
+    return this.sendTemplatedEmail('ticketCreated', data);
+  }
+
+  async sendTicketResolvedEmail(data: EmailNotificationData): Promise<boolean> {
+    return this.sendTemplatedEmail('ticketResolved', data);
+  }
+
+  async sendTicketAssignedEmail(data: EmailNotificationData): Promise<boolean> {
+    return this.sendTemplatedEmail('ticketAssigned', data);
+  }
+
+  async sendTicketEscalatedEmail(data: EmailNotificationData): Promise<boolean> {
+    return this.sendTemplatedEmail('ticketEscalated', data);
+  }
+
+  async sendTeamAssignmentEmail(data: EmailNotificationData): Promise<boolean> {
+    return this.sendTemplatedEmail('teamAssignment', data);
   }
 
   private async sendTemplatedEmail(templateName: string, data: EmailNotificationData): Promise<boolean> {
@@ -212,34 +241,6 @@ Description: ${data.taskDescription}
 
 View task details: ${data.taskUrl}
 Update progress: ${data.updateUrl}
-
-Best regards,
-TaskFlow Team
-        `.trim();
-      
-      case 'taskDueSoon':
-        return `
-Hi ${data.userName}!
-
-Reminder: Your task "${data.taskName}" is due ${data.dueDate}.
-Project: ${data.projectName}
-Priority: ${data.priorityLabel}
-
-Please update your progress: ${data.updateUrl}
-
-Best regards,
-TaskFlow Team
-        `.trim();
-      
-      case 'taskOverdue':
-        return `
-Hi ${data.userName}!
-
-URGENT: Your task "${data.taskName}" is now overdue.
-Project: ${data.projectName}
-Original Due Date: ${data.dueDate}
-
-Please update this task immediately: ${data.updateUrl}
 
 Best regards,
 TaskFlow Team

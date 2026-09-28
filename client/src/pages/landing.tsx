@@ -7,25 +7,29 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  AlertTriangle, 
-  HelpCircle, 
-  Lightbulb, 
-  HeartHandshake, 
-  Upload, 
-  X, 
-  Check, 
-  Copy, 
-  ArrowRight, 
-  ShieldCheck, 
-  Clock, 
-  CheckCircle2, 
-  Sparkles, 
-  LogIn, 
-  Layers, 
-  LifeBuoy, 
-  Image as ImageIcon 
+import {
+  AlertTriangle,
+  HelpCircle,
+  Lightbulb,
+  HeartHandshake,
+  Upload,
+  X,
+  Check,
+  Copy,
+  ArrowRight,
+  ShieldCheck,
+  Clock,
+  CheckCircle2,
+  Sparkles,
+  LogIn,
+  Layers,
+  LifeBuoy,
+  Image as ImageIcon,
+  ChevronsUpDown,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 
 interface PublicProject {
   id: string;
@@ -36,7 +40,20 @@ interface PublicProject {
 
 type TicketType = "complaint" | "enquiry" | "suggestion" | "compliment";
 
-const TICKET_TYPES: { id: TicketType; label: string; description: string; icon: typeof AlertTriangle; color: string; activeBorder: string; activeBg: string }[] = [
+const TICKET_TYPES: {
+  id: TicketType;
+  label: string;
+  description: string;
+  icon: typeof AlertTriangle;
+  color: string;
+  activeBorder: string;
+  activeBg: string;
+  titleLabel: string;
+  titlePlaceholder: string;
+  descriptionLabel: string;
+  descriptionPlaceholder: string;
+  showScreenshots: boolean;
+}[] = [
   {
     id: "complaint",
     label: "Complaint",
@@ -45,6 +62,11 @@ const TICKET_TYPES: { id: TicketType; label: string; description: string; icon: 
     color: "text-rose-600",
     activeBorder: "border-rose-500 ring-2 ring-rose-200",
     activeBg: "bg-rose-50/70",
+    titleLabel: "Issue Title / Summary",
+    titlePlaceholder: "e.g., Unable to generate monthly billing PDF report",
+    descriptionLabel: "Detailed Description",
+    descriptionPlaceholder: "Describe what occurred, steps to reproduce, error codes or messages, and what you expected to see...",
+    showScreenshots: true,
   },
   {
     id: "enquiry",
@@ -54,6 +76,11 @@ const TICKET_TYPES: { id: TicketType; label: string; description: string; icon: 
     color: "text-sky-600",
     activeBorder: "border-sky-500 ring-2 ring-sky-200",
     activeBg: "bg-sky-50/70",
+    titleLabel: "Question / Request Summary",
+    titlePlaceholder: "e.g., How do I add a new team member?",
+    descriptionLabel: "Additional Details",
+    descriptionPlaceholder: "Provide any additional context for your question or request...",
+    showScreenshots: true,
   },
   {
     id: "suggestion",
@@ -63,6 +90,11 @@ const TICKET_TYPES: { id: TicketType; label: string; description: string; icon: 
     color: "text-amber-600",
     activeBorder: "border-amber-500 ring-2 ring-amber-200",
     activeBg: "bg-amber-50/70",
+    titleLabel: "Suggestion Summary",
+    titlePlaceholder: "e.g., Add dark mode to the dashboard",
+    descriptionLabel: "Describe Your Suggestion",
+    descriptionPlaceholder: "What would you like to see improved or added, and why?",
+    showScreenshots: false,
   },
   {
     id: "compliment",
@@ -72,6 +104,11 @@ const TICKET_TYPES: { id: TicketType; label: string; description: string; icon: 
     color: "text-emerald-600",
     activeBorder: "border-emerald-500 ring-2 ring-emerald-200",
     activeBg: "bg-emerald-50/70",
+    titleLabel: "What's This About?",
+    titlePlaceholder: "e.g., Great support from the team",
+    descriptionLabel: "Tell Us More",
+    descriptionPlaceholder: "Share your feedback or who deserves recognition...",
+    showScreenshots: false,
   },
 ];
 
@@ -89,6 +126,9 @@ export default function Landing() {
   const [contactEmail, setContactEmail] = useState<string>("");
   const [contactPhone, setContactPhone] = useState<string>("");
   const [screenshots, setScreenshots] = useState<{ name: string; size: number; base64: string }[]>([]);
+  const [projectPopoverOpen, setProjectPopoverOpen] = useState(false);
+
+  const selectedTypeConfig = TICKET_TYPES.find((t) => t.id === type) || TICKET_TYPES[0];
 
   // Submission result state
   const [submittedTicket, setSubmittedTicket] = useState<{ ticketNumber: string; email: string } | null>(null);
@@ -383,7 +423,10 @@ export default function Landing() {
                           <button
                             type="button"
                             key={item.id}
-                            onClick={() => setType(item.id)}
+                            onClick={() => {
+                              setType(item.id);
+                              if (!item.showScreenshots) setScreenshots([]);
+                            }}
                             className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between ${
                               isSelected
                                 ? `${item.activeBorder} ${item.activeBg} shadow-sm`
@@ -414,42 +457,68 @@ export default function Landing() {
 
                   {/* Step 2: Select Project */}
                   <div className="space-y-2">
-                    <label htmlFor="project-select" className="block text-sm font-semibold text-slate-900">
+                    <label className="block text-sm font-semibold text-slate-900">
                       2. Project / Application <span className="text-rose-500">*</span>
                     </label>
-                    <select
-                      id="project-select"
-                      value={projectId}
-                      onChange={(e) => setProjectId(e.target.value)}
-                      required
-                      className="w-full h-11 px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-primary focus:border-primary transition-colors shadow-2xs disabled:bg-slate-50"
-                      disabled={projectsLoading}
-                    >
-                      <option value="">
-                        {projectsLoading ? "Loading projects..." : "-- Select your project or application --"}
-                      </option>
-                      {projects.map((proj) => (
-                        <option key={proj.id} value={proj.id}>
-                          {proj.name} {proj.companyName && proj.companyName !== proj.name ? `(${proj.companyName})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                    <Popover open={projectPopoverOpen} onOpenChange={setProjectPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={projectPopoverOpen}
+                          disabled={projectsLoading}
+                          className="w-full h-11 justify-between font-normal border-slate-300 shadow-2xs disabled:bg-slate-50"
+                          data-testid="select-public-project"
+                        >
+                          {projectsLoading
+                            ? "Loading projects..."
+                            : projects.find((p) => p.id === projectId)
+                              ? `${projects.find((p) => p.id === projectId)!.name}${projects.find((p) => p.id === projectId)!.companyName && projects.find((p) => p.id === projectId)!.companyName !== projects.find((p) => p.id === projectId)!.name ? ` (${projects.find((p) => p.id === projectId)!.companyName})` : ''}`
+                              : "-- Select your project or application --"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search projects..." />
+                          <CommandList>
+                            <CommandEmpty>No project found.</CommandEmpty>
+                            <CommandGroup>
+                              {projects.map((proj) => (
+                                <CommandItem
+                                  key={proj.id}
+                                  value={`${proj.name} ${proj.companyName || ''}`}
+                                  onSelect={() => {
+                                    setProjectId(proj.id);
+                                    setProjectPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check className={cn("h-4 w-4 mr-2", projectId === proj.id ? "opacity-100" : "opacity-0")} />
+                                  {proj.name} {proj.companyName && proj.companyName !== proj.name ? `(${proj.companyName})` : ''}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                     <p className="text-xs text-slate-500">
                       Select the project currently under support that this ticket pertains to.
                     </p>
                   </div>
 
-                  {/* Step 3: Issue Title & Description */}
+                  {/* Step 3: Title & Description (labels adapt to the selected request type) */}
                   <div className="space-y-5">
                     <div className="space-y-2">
                       <label htmlFor="ticket-subject" className="block text-sm font-semibold text-slate-900">
-                        3. Issue Title / Summary <span className="text-rose-500">*</span>
+                        3. {selectedTypeConfig.titleLabel} <span className="text-rose-500">*</span>
                       </label>
                       <Input
                         id="ticket-subject"
                         value={subject}
                         onChange={(e) => setSubject(e.target.value)}
-                        placeholder="e.g., Unable to generate monthly billing PDF report"
+                        placeholder={selectedTypeConfig.titlePlaceholder}
                         required
                         className="h-11 border-slate-300 focus-visible:ring-primary text-sm shadow-2xs"
                       />
@@ -457,13 +526,13 @@ export default function Landing() {
 
                     <div className="space-y-2">
                       <label htmlFor="ticket-description" className="block text-sm font-semibold text-slate-900">
-                        4. Detailed Description <span className="text-rose-500">*</span>
+                        4. {selectedTypeConfig.descriptionLabel} <span className="text-rose-500">*</span>
                       </label>
                       <Textarea
                         id="ticket-description"
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
-                        placeholder="Describe what occurred, steps to reproduce, error codes or messages, and what you expected to see..."
+                        placeholder={selectedTypeConfig.descriptionPlaceholder}
                         rows={5}
                         required
                         className="border-slate-300 focus-visible:ring-primary text-sm resize-y leading-relaxed shadow-2xs"
@@ -471,78 +540,80 @@ export default function Landing() {
                     </div>
                   </div>
 
-                  {/* Step 4: Screenshot Uploads */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <label className="block text-sm font-semibold text-slate-900">
-                        5. Attach Screenshots <span className="text-xs font-normal text-slate-500">(Optional, max 5 images)</span>
-                      </label>
+                  {/* Step 5: Screenshot Uploads (Complaint/Enquiry only) */}
+                  {selectedTypeConfig.showScreenshots && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-sm font-semibold text-slate-900">
+                          5. Attach Screenshots <span className="text-xs font-normal text-slate-500">(Optional, max 5 images)</span>
+                        </label>
+                        {screenshots.length > 0 && (
+                          <Badge variant="outline" className="text-xs font-mono">
+                            {screenshots.length}/5 attached
+                          </Badge>
+                        )}
+                      </div>
+
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={(e) => handleFilesSelected(e.target.files)}
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                      />
+
+                      {/* Upload Drop Area */}
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className="border-2 border-dashed border-slate-300 hover:border-primary/60 hover:bg-slate-50/80 rounded-xl p-6 text-center cursor-pointer transition-colors group"
+                      >
+                        <div className="w-10 h-10 rounded-full bg-slate-100 group-hover:bg-primary/10 text-slate-600 group-hover:text-primary mx-auto flex items-center justify-center mb-2 transition-colors">
+                          <Upload className="w-5 h-5" />
+                        </div>
+                        <div className="text-sm font-medium text-slate-700">
+                          Click or drag images here to attach screenshots
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1">
+                          Supports PNG, JPG, or WEBP (up to 5MB each)
+                        </div>
+                      </div>
+
+                      {/* Previews */}
                       {screenshots.length > 0 && (
-                        <Badge variant="outline" className="text-xs font-mono">
-                          {screenshots.length}/5 attached
-                        </Badge>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 pt-2">
+                          {screenshots.map((img, idx) => (
+                            <div
+                              key={idx}
+                              className="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-100 aspect-video flex items-center justify-center shadow-2xs"
+                            >
+                              <img
+                                src={img.base64}
+                                alt={img.name}
+                                className="w-full h-full object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeScreenshot(idx)}
+                                className="absolute top-1 right-1 p-1 bg-rose-600 text-white rounded-full opacity-90 hover:opacity-100 hover:scale-105 transition-all shadow-md"
+                                title="Remove image"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                              <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[10px] text-white px-1.5 py-0.5 truncate text-center">
+                                {img.name}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
+                  )}
 
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={(e) => handleFilesSelected(e.target.files)}
-                      accept="image/*"
-                      multiple
-                      className="hidden"
-                    />
-
-                    {/* Upload Drop Area */}
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className="border-2 border-dashed border-slate-300 hover:border-primary/60 hover:bg-slate-50/80 rounded-xl p-6 text-center cursor-pointer transition-colors group"
-                    >
-                      <div className="w-10 h-10 rounded-full bg-slate-100 group-hover:bg-primary/10 text-slate-600 group-hover:text-primary mx-auto flex items-center justify-center mb-2 transition-colors">
-                        <Upload className="w-5 h-5" />
-                      </div>
-                      <div className="text-sm font-medium text-slate-700">
-                        Click or drag images here to attach screenshots
-                      </div>
-                      <div className="text-xs text-slate-400 mt-1">
-                        Supports PNG, JPG, or WEBP (up to 5MB each)
-                      </div>
-                    </div>
-
-                    {/* Previews */}
-                    {screenshots.length > 0 && (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 pt-2">
-                        {screenshots.map((img, idx) => (
-                          <div
-                            key={idx}
-                            className="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-100 aspect-video flex items-center justify-center shadow-2xs"
-                          >
-                            <img
-                              src={img.base64}
-                              alt={img.name}
-                              className="w-full h-full object-cover"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => removeScreenshot(idx)}
-                              className="absolute top-1 right-1 p-1 bg-rose-600 text-white rounded-full opacity-90 hover:opacity-100 hover:scale-105 transition-all shadow-md"
-                              title="Remove image"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                            <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[10px] text-white px-1.5 py-0.5 truncate text-center">
-                              {img.name}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Step 5: Submitter Contact Information */}
+                  {/* Step: Submitter Contact Information */}
                   <div className="space-y-4 pt-4 border-t border-slate-100">
                     <label className="block text-sm font-semibold text-slate-900">
-                      6. Your Contact Details
+                      {selectedTypeConfig.showScreenshots ? "6" : "5"}. Your Contact Details
                     </label>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

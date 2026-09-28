@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Send, ArrowUpCircle } from "lucide-react";
+import { Send, ArrowUpCircle, BrainCircuit } from "lucide-react";
+import ResolveTicketModal from "./resolve-ticket-modal";
+import EscalateTicketModal from "./escalate-ticket-modal";
 
 const STATUS_LABELS: Record<string, string> = {
   open: "Open",
@@ -23,13 +25,6 @@ const STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "des
   in_progress: "default",
   resolved: "secondary",
   closed: "outline",
-};
-
-const PRIORITY_VARIANTS: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  low: "outline",
-  medium: "secondary",
-  high: "default",
-  urgent: "destructive",
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -46,18 +41,16 @@ const TYPE_VARIANTS: Record<string, "default" | "secondary" | "outline" | "destr
   suggestion: "outline",
 };
 
+const ESCALATE_OPTION = "__escalate__";
+
 export default function TicketDetailDialog({ ticketId, onClose }: { ticketId: string; onClose: () => void }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const auth = useAuth() as any;
   const { user, isAdminRole } = auth;
   const [comment, setComment] = useState("");
-  const [resolvingOpen, setResolvingOpen] = useState(false);
-  const [rootCause, setRootCause] = useState("");
-  const [resolutionNotes, setResolutionNotes] = useState("");
-  const [escalateOpen, setEscalateOpen] = useState(false);
-  const [escalateToUserId, setEscalateToUserId] = useState("");
-  const [escalateReason, setEscalateReason] = useState("");
+  const [resolveModalOpen, setResolveModalOpen] = useState(false);
+  const [escalateModalOpen, setEscalateModalOpen] = useState(false);
 
   const { data: ticket, isLoading } = useQuery<any>({
     queryKey: ['/api/tickets', ticketId],
@@ -81,41 +74,24 @@ export default function TicketDetailDialog({ ticketId, onClose }: { ticketId: st
   });
 
   const statusMutation = useMutation({
-    mutationFn: async (payload: { status: string; rootCause?: string; resolutionNotes?: string }) => {
+    mutationFn: async (payload: { status: string }) => {
       await apiRequest('PUT', `/api/tickets/${ticketId}/status`, payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/tickets', ticketId] });
       queryClient.invalidateQueries({ queryKey: ['/api/tickets'] });
       toast({ title: "Status updated" });
-      setResolvingOpen(false);
-      setRootCause("");
-      setResolutionNotes("");
     },
     onError: (error: any) => toast({ title: "Error", description: error?.message || "Failed to update status", variant: "destructive" }),
   });
 
-  const escalateMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest('POST', `/api/tickets/${ticketId}/escalate`, {
-        escalatedToUserId: escalateToUserId,
-        reason: escalateReason,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/tickets', ticketId] });
-      queryClient.invalidateQueries({ queryKey: ['/api/tickets'] });
-      toast({ title: "Ticket escalated" });
-      setEscalateOpen(false);
-      setEscalateToUserId("");
-      setEscalateReason("");
-    },
-    onError: (error: any) => toast({ title: "Error", description: error?.message || "Failed to escalate ticket", variant: "destructive" }),
-  });
-
   const handleStatusChange = (status: string) => {
+    if (status === ESCALATE_OPTION) {
+      setEscalateModalOpen(true);
+      return;
+    }
     if (status === 'resolved' && ticket?.status !== 'resolved' && ticket?.status !== 'closed') {
-      setResolvingOpen(true);
+      setResolveModalOpen(true);
       return;
     }
     statusMutation.mutate({ status });
@@ -150,7 +126,8 @@ export default function TicketDetailDialog({ ticketId, onClose }: { ticketId: st
   const canManage = isAdminRole() || ticket?.createdByUserId === user?.id || ticket?.assignedToUserId === user?.id;
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+    <>
+    <Dialog open={!resolveModalOpen && !escalateModalOpen} onOpenChange={(open) => { if (!open && !resolveModalOpen && !escalateModalOpen) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         {isLoading || !ticket ? (
           <div className="py-12 text-center text-gray-500">Loading ticket...</div>
@@ -161,10 +138,22 @@ export default function TicketDetailDialog({ ticketId, onClose }: { ticketId: st
                 <span>{ticket.ticketNumber}</span>
                 <Badge variant={TYPE_VARIANTS[ticket.type]}>{TYPE_LABELS[ticket.type] || ticket.type}</Badge>
                 <Badge variant={STATUS_VARIANTS[ticket.status]}>{STATUS_LABELS[ticket.status]}</Badge>
-                <Badge variant={PRIORITY_VARIANTS[ticket.priority]} className="capitalize">{ticket.priority}</Badge>
               </DialogTitle>
               <DialogDescription>{ticket.subject}</DialogDescription>
             </DialogHeader>
+
+            {ticket.aiClassification && (
+              (ticket.aiClassification.suggestedCategoryName && ticket.aiClassification.suggestedCategoryName !== ticket.category?.name) ||
+              ticket.aiClassification.suggestedPriority !== ticket.priority
+            ) && (
+              <div className="flex items-start gap-2 rounded-md border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+                <BrainCircuit className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  AI suggested: {ticket.aiClassification.suggestedCategoryName || 'no category'} · {ticket.aiClassification.suggestedPriority} priority
+                  {typeof ticket.aiClassification.confidence === 'number' && ` (confidence ${Math.round(ticket.aiClassification.confidence * 100)}%)`}
+                </span>
+              </div>
+            )}
 
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
@@ -210,45 +199,19 @@ export default function TicketDetailDialog({ ticketId, onClose }: { ticketId: st
                       <SelectItem value="in_progress">In Progress</SelectItem>
                       <SelectItem value="resolved">Resolved</SelectItem>
                       <SelectItem value="closed">Closed</SelectItem>
+                      {canManage && ticket.assignedToUserId && (
+                        <>
+                          <SelectSeparator />
+                          <SelectItem value={ESCALATE_OPTION}>
+                            <span className="flex items-center gap-1.5 text-amber-700">
+                              <ArrowUpCircle className="h-3.5 w-3.5" />
+                              Escalate
+                            </span>
+                          </SelectItem>
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
-
-                  {resolvingOpen && (
-                    <div className="mt-3 space-y-2 border rounded-md p-3 bg-gray-50">
-                      <p className="text-xs font-medium text-gray-700">Resolving requires a root cause and what was done</p>
-                      <div>
-                        <label className="text-xs text-gray-600 mb-1 block">Root Cause *</label>
-                        <Textarea
-                          value={rootCause}
-                          onChange={(e) => setRootCause(e.target.value)}
-                          placeholder="What caused this issue?"
-                          className="min-h-[60px] text-sm"
-                          data-testid="textarea-root-cause"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 mb-1 block">Resolution Notes *</label>
-                        <Textarea
-                          value={resolutionNotes}
-                          onChange={(e) => setResolutionNotes(e.target.value)}
-                          placeholder="What was done to resolve it?"
-                          className="min-h-[60px] text-sm"
-                          data-testid="textarea-resolution-notes"
-                        />
-                      </div>
-                      <div className="flex justify-end gap-2">
-                        <Button variant="outline" size="sm" onClick={() => setResolvingOpen(false)}>Cancel</Button>
-                        <Button
-                          size="sm"
-                          disabled={!rootCause.trim() || !resolutionNotes.trim() || statusMutation.isPending}
-                          onClick={() => statusMutation.mutate({ status: 'resolved', rootCause, resolutionNotes })}
-                          data-testid="button-confirm-resolve"
-                        >
-                          {statusMutation.isPending ? "Saving..." : "Mark Resolved"}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-700 mb-1">Assigned to</p>
@@ -268,56 +231,6 @@ export default function TicketDetailDialog({ ticketId, onClose }: { ticketId: st
                       ))}
                     </SelectContent>
                   </Select>
-                  {canManage && ticket.assignedToUserId && !escalateOpen && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2"
-                      onClick={() => setEscalateOpen(true)}
-                      data-testid="button-escalate-ticket"
-                    >
-                      <ArrowUpCircle className="h-4 w-4 mr-2" />
-                      Escalate
-                    </Button>
-                  )}
-                  {escalateOpen && (
-                    <div className="mt-3 space-y-2 border rounded-md p-3 bg-gray-50">
-                      <p className="text-xs font-medium text-gray-700">Escalate to</p>
-                      <Select value={escalateToUserId} onValueChange={setEscalateToUserId}>
-                        <SelectTrigger data-testid="select-escalate-to">
-                          <SelectValue placeholder="Choose someone" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {teamMembers.filter((m: any) => m.id !== ticket.assignedToUserId).map((m: any) => (
-                            <SelectItem key={m.id} value={m.id}>
-                              {m.firstName && m.lastName ? `${m.firstName} ${m.lastName}` : m.email}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <div>
-                        <label className="text-xs text-gray-600 mb-1 block">Reason *</label>
-                        <Textarea
-                          value={escalateReason}
-                          onChange={(e) => setEscalateReason(e.target.value)}
-                          placeholder="Why is this being escalated?"
-                          className="min-h-[60px] text-sm"
-                          data-testid="textarea-escalate-reason"
-                        />
-                      </div>
-                      <div className="flex justify-end gap-2">
-                        <Button variant="outline" size="sm" onClick={() => setEscalateOpen(false)}>Cancel</Button>
-                        <Button
-                          size="sm"
-                          disabled={!escalateToUserId || !escalateReason.trim() || escalateMutation.isPending}
-                          onClick={() => escalateMutation.mutate()}
-                          data-testid="button-confirm-escalate"
-                        >
-                          {escalateMutation.isPending ? "Escalating..." : "Escalate"}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -328,7 +241,7 @@ export default function TicketDetailDialog({ ticketId, onClose }: { ticketId: st
                     <p className="font-medium whitespace-pre-wrap">{ticket.rootCause || '—'}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500">Resolution Notes</p>
+                    <p className="text-gray-500">Steps taken to resolve the issue</p>
                     <p className="font-medium whitespace-pre-wrap">{ticket.resolutionNotes || '—'}</p>
                   </div>
                 </div>
@@ -375,5 +288,18 @@ export default function TicketDetailDialog({ ticketId, onClose }: { ticketId: st
         )}
       </DialogContent>
     </Dialog>
+    {resolveModalOpen && (
+      <ResolveTicketModal ticketId={ticketId} open={resolveModalOpen} onClose={() => setResolveModalOpen(false)} />
+    )}
+    {escalateModalOpen && ticket && (
+      <EscalateTicketModal
+        ticketId={ticketId}
+        teamId={ticket.project?.teamId}
+        currentAssigneeId={ticket.assignedToUserId}
+        open={escalateModalOpen}
+        onClose={() => setEscalateModalOpen(false)}
+      />
+    )}
+    </>
   );
 }

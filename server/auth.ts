@@ -438,6 +438,15 @@ export async function setupAuth(app: Express) {
         return res.status(400).json({ message: "Token and new password are required" });
       }
 
+      const passwordStrength = assessPasswordStrength(newPassword);
+      if (!passwordStrength.isValid) {
+        return res.status(400).json({
+          message: "Password does not meet security requirements",
+          feedback: passwordStrength.feedback,
+          score: passwordStrength.score
+        });
+      }
+
       // Verify token and update password
       const user = await storage.getUserByResetToken(token);
       if (!user || !user.resetTokenExpiry || user.resetTokenExpiry < new Date()) {
@@ -465,6 +474,15 @@ export async function setupAuth(app: Express) {
       
       if (!currentPassword || !newPassword) {
         return res.status(400).json({ message: "Current password and new password are required" });
+      }
+
+      const passwordStrength = assessPasswordStrength(newPassword);
+      if (!passwordStrength.isValid) {
+        return res.status(400).json({
+          message: "Password does not meet security requirements",
+          feedback: passwordStrength.feedback,
+          score: passwordStrength.score
+        });
       }
 
       // Verify current password

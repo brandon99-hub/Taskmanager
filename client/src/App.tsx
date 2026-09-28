@@ -1,4 +1,5 @@
-import { Switch, Route } from "wouter";
+import { useEffect } from "react";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -17,17 +18,23 @@ import Reports from "@/pages/reports";
 import ReportDetail from "@/pages/report-detail";
 import Team from "@/pages/team";
 import TeamDetail from "@/pages/team-detail";
-import ExecutiveDashboard from "@/pages/executive-dashboard";
-import MarketingLogin from "@/pages/marketing-login";
-import MarketingDashboard from "@/pages/marketing-dashboard";
-import MarketingResetPassword from "@/pages/marketing-reset-password";
 import Logs from "@/pages/logs";
 import Tickets from "@/pages/tickets";
+import Inbox from "@/pages/inbox";
 import Companies from "@/pages/companies";
 import ServiceCategories from "@/pages/service-categories";
 import Segments from "@/pages/segments";
 import AuthenticatedLayout from "@/components/layout/authenticated-layout";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+
+function RedirectMarketing() {
+  const [, setLocation] = useLocation();
+  const { isAuthenticated } = useAuth();
+  useEffect(() => {
+    setLocation(isAuthenticated ? "/" : "/login", { replace: true });
+  }, [isAuthenticated, setLocation]);
+  return null;
+}
 
 function Router() {
   const { isAuthenticated, isLoading, user, isAdminRole } = useAuth();
@@ -42,11 +49,13 @@ function Router() {
 
   return (
     <Switch>
-      {/* Marketing Pipeline Routes - Independent System */}
-      <Route path="/marketing/login" component={MarketingLogin} />
-      <Route path="/marketing/reset-password" component={MarketingResetPassword} />
-      <Route path="/marketing/dashboard" component={MarketingDashboard} />
-      <Route path="/marketing/admin" component={MarketingDashboard} />
+      {/* Marketing Subsystem Disabled: redirect all legacy marketing traffic */}
+      <Route path="/marketing/:rest*">
+        <RedirectMarketing />
+      </Route>
+      <Route path="/marketing">
+        <RedirectMarketing />
+      </Route>
       
       {!isAuthenticated ? (
         <>
@@ -67,6 +76,7 @@ function Router() {
                 <Route path="/projects/:id" component={ProjectDetail} />
                 <Route path="/tasks" component={Tasks} />
                 <Route path="/tickets" component={Tickets} />
+                <Route path="/inbox" component={Inbox} />
                 <Route path="/companies" component={Companies} />
                 <Route path="/segments" component={Segments} />
                 <Route path="/sectors" component={Segments} />
@@ -75,7 +85,6 @@ function Router() {
                   <>
                     <Route path="/reports" component={Reports} />
                     <Route path="/reports/detail" component={ReportDetail} />
-                    <Route path="/executive-dashboard" component={ExecutiveDashboard} />
                     <Route path="/logs" component={Logs} />
                   </>
                 )}

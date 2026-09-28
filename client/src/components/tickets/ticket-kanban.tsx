@@ -3,23 +3,27 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Ticket as TicketIcon } from "lucide-react";
+import { Ticket as TicketIcon, Clock, Building2 } from "lucide-react";
 import CreateTicketDialog from "./create-ticket-dialog";
 import TicketDetailDialog from "./ticket-detail-dialog";
+import { TYPE_LABELS, TYPE_VARIANTS } from "@/lib/ticket-constants";
 
 const COLUMNS = [
-  { id: 'open', title: 'Open', color: 'bg-red-50' },
-  { id: 'in_progress', title: 'In Progress', color: 'bg-slate-100' },
-  { id: 'resolved', title: 'Resolved', color: 'bg-amber-50' },
-  { id: 'closed', title: 'Closed', color: 'bg-green-50' },
+  { id: 'open', title: 'Open', color: 'bg-rose-50/60 border border-rose-200', accent: 'border-l-4 border-l-rose-500', badgeColor: 'bg-rose-100 text-rose-800' },
+  { id: 'in_progress', title: 'In Progress', color: 'bg-amber-50/60 border border-amber-200', accent: 'border-l-4 border-l-amber-500', badgeColor: 'bg-amber-100 text-amber-800' },
+  { id: 'resolved', title: 'Resolved', color: 'bg-emerald-50/60 border border-emerald-200', accent: 'border-l-4 border-l-emerald-500', badgeColor: 'bg-emerald-100 text-emerald-800' },
 ];
 
-const PRIORITY_VARIANTS: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  low: "outline",
-  medium: "secondary",
-  high: "default",
-  urgent: "destructive",
-};
+function relativeTime(dateStr?: string) {
+  if (!dateStr) return '';
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 export default function TicketKanban() {
   const auth = useAuth() as any;
@@ -53,7 +57,7 @@ export default function TicketKanban() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
           {COLUMNS.map((col) => (
             <div key={col.id} className={`rounded-lg p-4 ${col.color} min-h-[200px] animate-pulse`} />
           ))}
@@ -67,28 +71,37 @@ export default function TicketKanban() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
           {COLUMNS.map((col) => (
             <div key={col.id} className={`rounded-lg p-4 ${col.color} min-h-[200px]`} data-testid={`ticket-kanban-column-${col.id}`}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-gray-900">{col.title}</h3>
-                <Badge variant="secondary">{byStatus[col.id].length}</Badge>
+                <Badge className={col.badgeColor}>{byStatus[col.id].length}</Badge>
               </div>
               <div className="space-y-3">
                 {byStatus[col.id].map((ticket: any) => (
                   <Card
                     key={ticket.id}
-                    className="cursor-pointer hover:shadow-md transition-shadow"
+                    className={`cursor-pointer transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 ${col.accent}`}
                     onClick={() => setOpenTicketId(ticket.id)}
                     data-testid={`ticket-kanban-card-${ticket.id}`}
                   >
-                    <CardContent className="p-3 space-y-1.5">
+                    <CardContent className="p-3 space-y-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-mono text-gray-500">{ticket.ticketNumber}</span>
-                        <Badge variant={PRIORITY_VARIANTS[ticket.priority]} className="capitalize text-xs">{ticket.priority}</Badge>
+                        <span className="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded text-slate-700">{ticket.ticketNumber}</span>
+                        <Badge variant={TYPE_VARIANTS[ticket.type]} className="text-xs">{TYPE_LABELS[ticket.type] || ticket.type}</Badge>
                       </div>
-                      <p className="text-sm font-medium text-gray-900 truncate">{ticket.subject}</p>
-                      <p className="text-xs text-gray-500 truncate">{ticket.project?.name || 'Unknown project'}</p>
+                      <p className="font-medium text-slate-900 text-sm line-clamp-2">{ticket.subject}</p>
+                      <div className="flex items-center justify-between gap-2 text-xs text-gray-500">
+                        <span className="flex items-center gap-1 truncate">
+                          <Building2 className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{ticket.project?.name || 'Unknown project'}</span>
+                        </span>
+                        <span className="flex items-center gap-1 shrink-0">
+                          <Clock className="w-3 h-3" />
+                          {relativeTime(ticket.createdAt)}
+                        </span>
+                      </div>
                     </CardContent>
                   </Card>
                 ))}

@@ -22,6 +22,7 @@ interface Company {
   primaryContactEmail?: string | null;
   primaryContactPhone?: string | null;
   address?: string | null;
+  emailDomain?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -32,6 +33,7 @@ const companyFormSchema = z.object({
   primaryContactEmail: z.string().email("Invalid email").max(200, "Email too long").optional().or(z.literal("")),
   primaryContactPhone: z.string().max(50, "Phone too long").optional(),
   address: z.string().max(500, "Address too long").optional(),
+  emailDomain: z.string().max(255, "Domain too long").regex(/^[a-zA-Z0-9.-]*$/, "Enter a bare domain, e.g. ecorenet.co.ke").optional(),
 });
 
 type CompanyFormData = z.infer<typeof companyFormSchema>;
@@ -42,6 +44,7 @@ const emptyFormValues: CompanyFormData = {
   primaryContactEmail: "",
   primaryContactPhone: "",
   address: "",
+  emailDomain: "",
 };
 
 export default function Companies() {
@@ -83,6 +86,7 @@ export default function Companies() {
       primaryContactEmail: company.primaryContactEmail || "",
       primaryContactPhone: company.primaryContactPhone || "",
       address: company.address || "",
+      emailDomain: company.emailDomain || "",
     });
     setIsFormOpen(true);
   };
@@ -95,6 +99,7 @@ export default function Companies() {
         primaryContactEmail: data.primaryContactEmail?.trim() || undefined,
         primaryContactPhone: data.primaryContactPhone?.trim() || undefined,
         address: data.address?.trim() || undefined,
+        emailDomain: data.emailDomain?.trim().toLowerCase().replace(/^@/, '') || undefined,
       };
       const response = editing
         ? await apiRequest('PUT', `/api/companies/${editing.id}`, payload)
@@ -207,6 +212,22 @@ export default function Companies() {
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="emailDomain"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email Domain</FormLabel>
+                      <FormControl>
+                        <Input placeholder="ecorenet.co.ke" {...field} data-testid="input-company-email-domain" />
+                      </FormControl>
+                      <p className="text-xs text-gray-500">
+                        Support emails from this domain (e.g. someone@{field.value || "ecorenet.co.ke"}) are auto-matched to this company for the AI inbox.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <div className="flex justify-end gap-3 pt-2">
                   <Button type="button" variant="outline" onClick={() => setIsFormOpen(false)}>Cancel</Button>
                   <Button type="submit" disabled={saveMutation.isPending} data-testid="button-save-company">
@@ -263,6 +284,7 @@ export default function Companies() {
                   <TableHead>Email</TableHead>
                   <TableHead>Phone</TableHead>
                   <TableHead>Address</TableHead>
+                  <TableHead>Email Domain</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -274,6 +296,7 @@ export default function Companies() {
                     <TableCell>{company.primaryContactEmail || <span className="text-sm text-gray-400 italic">Not provided</span>}</TableCell>
                     <TableCell>{company.primaryContactPhone || <span className="text-sm text-gray-400 italic">Not provided</span>}</TableCell>
                     <TableCell className="max-w-xs truncate">{company.address || <span className="text-sm text-gray-400 italic">Not provided</span>}</TableCell>
+                    <TableCell className="font-mono text-xs">{company.emailDomain || <span className="text-sm text-gray-400 italic font-sans">Not set</span>}</TableCell>
                     <TableCell className="text-right">
                       {canManage && (
                         <Button

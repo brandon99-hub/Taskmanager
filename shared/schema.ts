@@ -81,6 +81,7 @@ export const ticketPriorityEnum = pgEnum("ticket_priority", [
   "high",
   "urgent",
 ]);
+export const TICKET_PRIORITY_VALUES = ["low", "medium", "high", "urgent"] as const;
 
 // Top-level classification for every support contact. Complaint/Enquiry go through the
 // full ticket workflow (category, assignment, status lifecycle); Compliment/Suggestion
@@ -91,6 +92,7 @@ export const ticketTypeEnum = pgEnum("ticket_type", [
   "compliment",
   "suggestion",
 ]);
+export const TICKET_TYPE_VALUES = ["complaint", "enquiry", "compliment", "suggestion"] as const;
 
 // Service categories only make sense as a breakdown of Complaint or Enquiry tickets.
 export const serviceCategoryTypeEnum = pgEnum("service_category_type", [
@@ -262,10 +264,14 @@ export const companies = pgTable("companies", {
   primaryContactEmail: varchar("primary_contact_email", { length: 255 }),
   primaryContactPhone: varchar("primary_contact_phone", { length: 50 }),
   address: text("address"),
+  // Domain used to match inbound support emails (e.g. "ecorenet.co.ke") to this company for
+  // the Microsoft 365 auto-ticketing pipeline. Admin-entered when defining the company.
+  emailDomain: varchar("email_domain", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
   nameIdx: index("idx_companies_name").on(table.name),
+  emailDomainIdx: index("idx_companies_email_domain").on(table.emailDomain),
 }));
 
 // Segments table: admin-managed replacement for the hardcoded academic/parastals/private
@@ -384,7 +390,9 @@ export const tickets = pgTable("tickets", {
   contactName: varchar("contact_name", { length: 200 }),
   contactEmail: varchar("contact_email", { length: 255 }),
   contactPhone: varchar("contact_phone", { length: 50 }),
-  createdByUserId: varchar("created_by_user_id").references(() => users.id).notNull(),
+  // Nullable: public/unauthenticated ticket submissions have no staff creator; identity
+  // for those is carried by contactName/contactEmail/contactPhone instead.
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
   assignedToUserId: varchar("assigned_to_user_id").references(() => users.id),
   assignedTeamId: varchar("assigned_team_id").references(() => teams.id),
   escalatedFromUserId: varchar("escalated_from_user_id").references(() => users.id),
@@ -393,6 +401,15 @@ export const tickets = pgTable("tickets", {
   rootCause: text("root_cause"),
   resolutionNotes: text("resolution_notes"),
   resolvedAt: timestamp("resolved_at"),
+  // AI-suggested classification: { suggestedType, suggestedCategoryId, suggestedCategoryName,
+  // suggestedPriority, confidence, reasoning, model, classifiedAt }. Written once by the
+  // background classification pass after ticket creation; never blocks ticket creation itself.
+  aiClassification: jsonb("ai_classification"),
+  // The original Microsoft Graph conversation/message that created this ticket (auto-ticketing
+  // pipeline). Further conversationIds later linked to this same ticket (cross-sender duplicates,
+  // same-sender follow-ups on a new thread) are tracked in ticketEmailLinks, not here.
+  emailConversationId: varchar("email_conversation_id", { length: 255 }),
+  sourceMessageId: varchar("source_message_id", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
@@ -401,13 +418,48 @@ export const tickets = pgTable("tickets", {
   assignedToIdx: index("idx_tickets_assigned_to").on(table.assignedToUserId),
   createdByIdx: index("idx_tickets_created_by").on(table.createdByUserId),
   statusIdx: index("idx_tickets_status").on(table.status),
+  emailConversationIdx: index("idx_tickets_email_conversation_id").on(table.emailConversationId),
 }));
+
+// Every Microsoft Graph conversationId ever matched to a ticket by the email auto-ticketing
+// pipeline — the original one, plus any later cross-sender or same-sender-follow-up matches.
+// A ticket can have many linked conversations; dedup lookups check this table.
+export const ticketEmailLinks = pgTable("ticket_email_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticketId: varchar("ticket_id").references(() => tickets.id, { onDelete: 'cascade' }).notNull(),
+  conversationId: varchar("conversation_id", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  conversationIdx: index("idx_ticket_email_links_conversation_id").on(table.conversationId),
+  ticketIdx: index("idx_ticket_email_links_ticket_id").on(table.ticketId),
+}));
+
+// Per-user Microsoft 365/Outlook mailbox connection for the AI auto-ticketing inbox. Mirrors
+// the userCalendarSettings pattern used for Google Calendar (a separate settings table keyed
+// by userId, upserted via onConflictDoUpdate), not flat columns on users.
+export const userMicrosoftSettings = pgTable("user_microsoft_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique().references(() => users.id, { onDelete: 'cascade' }),
+  connected: boolean("connected").notNull().default(false),
+  mailboxEmail: varchar("mailbox_email", { length: 255 }),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  tokenExpiry: timestamp("token_expiry"),
+  // Graph delta query link for incremental sync; null means "no sync has run yet, bound the
+  // first sync to the last 24-48h rather than the full mailbox history".
+  deltaLink: text("delta_link"),
+  lastSyncAt: timestamp("last_sync_at"),
+  lastSyncError: text("last_sync_error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
 
 // Comment / audit thread on a ticket (status changes, assignment notes, internal comments)
 export const ticketComments = pgTable("ticket_comments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   ticketId: varchar("ticket_id").references(() => tickets.id, { onDelete: 'cascade' }).notNull(),
-  userId: varchar("user_id").references(() => users.id).notNull(),
+  // Nullable: comments added by the email auto-ticketing pipeline have no staff author.
+  userId: varchar("user_id").references(() => users.id),
   comment: text("comment").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => ({
@@ -920,6 +972,12 @@ export type InsertTicket = z.infer<typeof insertTicketSchema>;
 
 export type TicketComment = typeof ticketComments.$inferSelect;
 export type InsertTicketComment = z.infer<typeof insertTicketCommentSchema>;
+
+export type TicketEmailLink = typeof ticketEmailLinks.$inferSelect;
+export type InsertTicketEmailLink = typeof ticketEmailLinks.$inferInsert;
+
+export type UserMicrosoftSettings = typeof userMicrosoftSettings.$inferSelect;
+export type InsertUserMicrosoftSettings = typeof userMicrosoftSettings.$inferInsert;
 
 // Invoice reports table for tracking sent invoices
 export const invoiceReports = pgTable("invoice_reports", {

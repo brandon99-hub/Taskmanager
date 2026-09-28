@@ -40,8 +40,8 @@ export function generateExcelBuffer(options: ExcelExportOptions): Buffer {
 function createSingleReport(workbook: XLSX.WorkBook, data: any, reportType: string) {
   let sheetData: any[] = [];
   let sheetName = 'Report';
-  let title = 'AppKings Solutions Limited - Report';
-  
+  let title = 'Ecorenet Business Solutions Limited - Report';
+
   // Determine report type and prepare data
   switch (reportType) {
     case 'projects':
@@ -51,49 +51,45 @@ function createSingleReport(workbook: XLSX.WorkBook, data: any, reportType: stri
         sheetData = data || [];
       }
       sheetName = 'Project Summary';
-      title = 'AppKings Solutions Limited - Project Summary Report';
+      title = 'Ecorenet Business Solutions Limited - Project Summary Report';
       break;
-      
-    case 'financial':
-      if (data.financial && data.milestones) {
-        sheetData = createFinancialWithMilestones(data.financial, data.milestones);
-      } else {
-        sheetData = data || [];
-      }
-      sheetName = 'Financial Report';
-      title = 'AppKings Solutions Limited - Financial Report';
+
+    case 'tickets':
+      sheetData = data || [];
+      sheetName = 'Tickets Report';
+      title = 'Ecorenet Business Solutions Limited - Tickets Report';
       break;
-      
+
     case 'milestones':
       sheetData = data || [];
       sheetName = 'Milestone List';
-      title = 'AppKings Solutions Limited - Milestone List Report';
+      title = 'Ecorenet Business Solutions Limited - Milestone List Report';
       break;
-      
+
     case 'performance':
       sheetData = data || [];
       sheetName = 'Team Performance';
-      title = 'AppKings Solutions Limited - Team Performance Report';
+      title = 'Ecorenet Business Solutions Limited - Team Performance Report';
       break;
-      
+
     case 'workload':
       sheetData = data || [];
       sheetName = 'Workload Analysis';
-      title = 'AppKings Solutions Limited - Workload Analysis Report';
+      title = 'Ecorenet Business Solutions Limited - Workload Analysis Report';
       break;
-      
+
     case 'gantt':
       sheetData = data || [];
       sheetName = 'GanttChart';
-      title = 'AppKings Solutions Limited - Gantt Chart Report';
+      title = 'Ecorenet Business Solutions Limited - Gantt Chart Report';
       break;
-      
+
     case 'logs':
       sheetData = data || [];
       sheetName = 'System Logs';
-      title = 'AppKings Solutions Limited - System Audit Logs';
+      title = 'Ecorenet Business Solutions Limited - System Audit Logs';
       break;
-      
+
     default:
       sheetData = data || [];
   }
@@ -116,37 +112,32 @@ function createCompleteReport(workbook: XLSX.WorkBook, data: any) {
   // Add summary sheet first
   if (data) {
     const summaryData = createSummaryData(data);
-    const summarySheet = createWorksheetWithHeader(summaryData, 'AppKings Solutions Limited - Complete Report Summary');
+    const summarySheet = createWorksheetWithHeader(summaryData, 'Ecorenet Business Solutions Limited - Complete Report Summary');
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
   }
-  
+
   // Add individual report sheets
   const reports = [
     { name: 'Projects', data: data.projects, milestones: data.milestones, type: 'projects' },
     { name: 'Milestones', data: data.milestones, type: 'milestones' },
     { name: 'Performance', data: data.performance, type: 'performance' },
     { name: 'Workload', data: data.workload, type: 'workload' },
-    { name: 'Financial', data: data.financial, milestones: data.milestones, type: 'financial' }
+    { name: 'Tickets', data: data.tickets, type: 'tickets' }
   ];
-  
+
   reports.forEach(report => {
     if (report.data && report.data.length > 0) {
       let sheetData;
       let title;
-      
-      if ((report.type === 'projects' || report.type === 'financial') && report.milestones) {
-        if (report.type === 'projects') {
-          sheetData = createProjectsWithMilestones(report.data, report.milestones);
-          title = 'AppKings Solutions Limited - Project Summary Report';
-        } else {
-          sheetData = createFinancialWithMilestones(report.data, report.milestones);
-          title = 'AppKings Solutions Limited - Financial Report';
-        }
+
+      if (report.type === 'projects' && report.milestones) {
+        sheetData = createProjectsWithMilestones(report.data, report.milestones);
+        title = 'Ecorenet Business Solutions Limited - Project Summary Report';
       } else {
         sheetData = report.data;
-        title = `AppKings Solutions Limited - ${report.name} Report`;
+        title = `Ecorenet Business Solutions Limited - ${report.name} Report`;
       }
-      
+
       const worksheet = createWorksheetWithHeader(sheetData, title);
       XLSX.utils.book_append_sheet(workbook, worksheet, report.name);
     }
@@ -209,68 +200,14 @@ function createProjectsWithMilestones(projects: any[], milestones: any[]): any[]
   return result;
 }
 
-function createFinancialWithMilestones(financialData: any[], milestones: any[]): any[] {
-  const result: any[] = [];
-  
-  financialData.forEach(project => {
-    // Add project financial summary
-    result.push({
-      'Project/Milestone': `📁 ${project['Project Name']}`,
-      'Type': 'PROJECT',
-      'Status': project['Project Status'],
-      'Total Value (KSh)': project['Total Project Value (KSh)'],
-      'Paid (KSh)': project['Paid Amount (KSh)'],
-      'Outstanding (KSh)': project['Outstanding (KSh)'],
-      'Payment %': project['Payment Completion (%)'] + '%',
-      'Client': project['Client'],
-      'Invoices to Send': project['Invoices to Send'],
-      'Invoices Sent': project['Invoices Sent']
-    });
-    
-    // Add milestone financial details
-    const projectMilestones = milestones.filter(m => m['Project'] === project['Project Name']);
-    projectMilestones.forEach(milestone => {
-      result.push({
-        'Project/Milestone': `    └─ ${milestone['Milestone Name']}`,
-        'Type': 'MILESTONE',
-        'Status': milestone['Status'],
-        'Total Value (KSh)': milestone['Fee Amount (KSh)'],
-        'Paid (KSh)': milestone['Billing Status'] === 'paid' ? milestone['Fee Amount (KSh)'] : '0',
-        'Outstanding (KSh)': milestone['Billing Status'] !== 'paid' ? milestone['Fee Amount (KSh)'] : '0',
-        'Payment %': milestone['Billing Status'] === 'paid' ? '100%' : '0%',
-        'Client': '',
-        'Invoices to Send': milestone['Billing Status'] === 'to_send' ? '1' : '0',
-        'Invoices Sent': milestone['Billing Status'] === 'sent' ? '1' : '0'
-      });
-    });
-    
-    // Add spacing row
-    result.push({
-      'Project/Milestone': '',
-      'Type': '',
-      'Status': '',
-      'Total Value (KSh)': '',
-      'Paid (KSh)': '',
-      'Outstanding (KSh)': '',
-      'Payment %': '',
-      'Client': '',
-      'Invoices to Send': '',
-      'Invoices Sent': ''
-    });
-  });
-  
-  return result;
-}
-
 function createSummaryData(data: any): any[] {
   return [
     { 'Report Section': 'Projects', 'Count': data.projects?.length || 0 },
     { 'Report Section': 'Milestones', 'Count': data.milestones?.length || 0 },
-    { 'Report Section': 'Team Members', 'Count': data.performance?.length || 0 },
-    { 'Report Section': 'Teams', 'Count': data.workload?.length || 0 },
+    { 'Report Section': 'Teams', 'Count': data.performance?.length || 0 },
+    { 'Report Section': 'Team Members (Workload)', 'Count': data.workload?.length || 0 },
+    { 'Report Section': 'Tickets', 'Count': data.tickets?.length || 0 },
     { 'Report Section': '', 'Count': '' },
-    { 'Report Section': 'Total Project Value (KSh)', 'Count': calculateTotalValue(data.financial) },
-    { 'Report Section': 'Total Paid Amount (KSh)', 'Count': calculateTotalPaid(data.financial) },
     { 'Report Section': 'Average Progress (%)', 'Count': calculateAverageProgress(data.projects) }
   ];
 }
@@ -1093,28 +1030,6 @@ function applyGanttFormattingForScreenshot(worksheet: WorkSheet, range: XLSX.Ran
 }
 
 // Helper calculation functions
-function calculateTotalValue(financialData: any[]): string {
-  if (!financialData || financialData.length === 0) return '0';
-  
-  const total = financialData.reduce((sum, project) => {
-    const value = String(project['Total Project Value (KSh)'] || '0').replace(/,/g, '');
-    return sum + (parseFloat(value) || 0);
-  }, 0);
-  
-  return total.toLocaleString();
-}
-
-function calculateTotalPaid(financialData: any[]): string {
-  if (!financialData || financialData.length === 0) return '0';
-  
-  const total = financialData.reduce((sum, project) => {
-    const value = String(project['Paid Amount (KSh)'] || '0').replace(/,/g, '');
-    return sum + (parseFloat(value) || 0);
-  }, 0);
-  
-  return total.toLocaleString();
-}
-
 function calculateAverageProgress(projectsData: any[]): string {
   if (!projectsData || projectsData.length === 0) return '0';
   

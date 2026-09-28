@@ -122,6 +122,7 @@ export function setupRateLimiting(app: Express) {
     '/api/auth/login': { windowMs: 900000, max: 10 },         // Increased for admin multitasking
     '/api/auth/register': { windowMs: 3600000, max: 3 },
     '/api/auth/reset-password': { windowMs: 3600000, max: 3 },
+    '/api/auth/forgot-password': { windowMs: 3600000, max: 3 },
     '/api/projects': { windowMs: 900000, max: 100 },         // Increased from 50
     '/api/dashboard/metrics': { windowMs: 60000, max: 60 },   // Increased to handle refreshing
     '/api/reports/export': { windowMs: 3600000, max: 10 },

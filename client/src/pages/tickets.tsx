@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Ticket, Search } from "lucide-react";
+import { Ticket, Search, Inbox, UserCheck, HeartHandshake } from "lucide-react";
 import PageHeader from "@/components/layout/page-header";
 import TicketList from "@/components/tickets/ticket-list";
 import CreateTicketDialog from "@/components/tickets/create-ticket-dialog";
@@ -61,19 +61,26 @@ export default function Tickets() {
         }
       />
 
-      <Tabs defaultValue="created">
+      <Tabs defaultValue="assigned">
         <TabsList variant="underline" className="justify-center">
-          <TabsTrigger value="created" data-testid="tab-created-by-me">Created by Me</TabsTrigger>
-          <TabsTrigger value="assigned" data-testid="tab-assigned-tickets">
-            {canViewAll ? "All Tickets" : "Assigned to Me"}
+          <TabsTrigger value="assigned" data-testid="tab-assigned-tickets" className="flex items-center gap-2">
+            <Inbox className="w-4 h-4 text-primary" />
+            <span>{canViewAll ? "All Tickets" : "Assigned to Me"}</span>
           </TabsTrigger>
-          <TabsTrigger value="feedback" data-testid="tab-feedback">Suggestions & Compliments</TabsTrigger>
+          <TabsTrigger value="created" data-testid="tab-created-by-me" className="flex items-center gap-2">
+            <UserCheck className="w-4 h-4 text-primary" />
+            <span>Created by Me</span>
+          </TabsTrigger>
+          <TabsTrigger value="feedback" data-testid="tab-feedback" className="flex items-center gap-2">
+            <HeartHandshake className="w-4 h-4 text-primary" />
+            <span>Suggestions & Compliments</span>
+          </TabsTrigger>
         </TabsList>
-        <TabsContent value="created" className="pt-6">
-          <TicketList view="mine" search={search} type={type} status={status} />
-        </TabsContent>
         <TabsContent value="assigned" className="pt-6">
           <TicketList view={canViewAll ? "all" : "assigned"} search={search} type={type} status={status} />
+        </TabsContent>
+        <TabsContent value="created" className="pt-6">
+          <TicketList view="mine" search={search} type={type} status={status} />
         </TabsContent>
         <TabsContent value="feedback" className="pt-6">
           <TicketList view="feedback" search={search} />

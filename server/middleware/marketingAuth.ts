@@ -21,7 +21,14 @@ declare global {
   }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || "marketing-pipeline-secret-key";
+// Lazily evaluated (not at module load) so an unrelated import can't crash the process, but
+// fails closed the moment a token is actually signed/verified — no hardcoded fallback secret.
+function getJwtSecret(): string {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET environment variable is required");
+  }
+  return process.env.JWT_SECRET;
+}
 
 export interface MarketingJWTPayload {
   userId: string;
@@ -38,7 +45,7 @@ export const marketingAuth = async (req: Request, res: Response, next: NextFunct
       return res.status(401).json({ error: 'Access denied. No token provided.' });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET) as MarketingJWTPayload;
+    const decoded = jwt.verify(token, getJwtSecret()) as MarketingJWTPayload;
     
     // Get user from database
     const user = await db
@@ -106,7 +113,7 @@ export const generateMarketingToken = (user: {
       email: user.email,
       role: user.role,
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: '24h' }
   );
 };

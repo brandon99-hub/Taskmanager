@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ticket Assigned - TaskFlow</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }
+        .email-container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px 20px; text-align: center; color: white; }
+        .logo { height: 40px; margin-bottom: 15px; }
+        .header h1 { font-size: 28px; font-weight: 600; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .header p { font-size: 16px; opacity: 0.9; margin-top: 8px; }
+        .content { padding: 30px 20px; }
+        .greeting { font-size: 20px; color: #333; margin-bottom: 20px; font-weight: 500; }
+        .intro { font-size: 16px; color: #666; margin-bottom: 30px; line-height: 1.6; }
+        .task-card { background: #f8fafc; border-radius: 12px; padding: 25px; margin: 25px 0; border-left: 5px solid #667eea; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .task-title { font-size: 22px; font-weight: 600; color: #1f2937; margin: 0 0 15px; }
+        .detail-item { background: white; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb; }
+        .detail-label { font-size: 14px; font-weight: 600; color: #6b7280; margin-bottom: 5px; }
+        .detail-value { font-size: 16px; font-weight: 500; color: #1f2937; }
+        .action-buttons { text-align: center; margin: 30px 0; }
+        .action-button { display: inline-block; padding: 14px 28px; margin: 8px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px; min-width: 150px; }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); }
+        .footer { background: #f9fafb; padding: 30px 20px; text-align: center; border-top: 1px solid #e5e7eb; }
+        .footer-brand { font-size: 18px; font-weight: 600; color: #374151; margin-bottom: 10px; }
+        .footer-text { font-size: 14px; color: #6b7280; margin: 5px 0; }
+        .footer-links { margin-top: 15px; }
+        .footer-link { color: #667eea; text-decoration: none; font-size: 14px; margin: 0 15px; }
+        @media (max-width: 600px) {
+            .email-container { margin: 10px; border-radius: 8px; }
+            .header { padding: 20px 15px; } .header h1 { font-size: 24px; }
+            .content { padding: 20px 15px; } .task-card { padding: 20px 15px; }
+            .action-button { display: block; margin: 10px 0; width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            {{#if logoUrl}}<img src="{{logoUrl}}" alt="TaskFlow" class="logo">{{/if}}
+            <h1>Ticket Assigned to You</h1>
+            <p>A ticket needs your attention</p>
+        </div>
+        <div class="content">
+            <div class="greeting">Hi {{userName}}! 👋</div>
+            <div class="intro">You've been assigned a support ticket. Here are the details.</div>
+            <div class="task-card">
+                <h3 class="task-title">{{ticketSubject}}</h3>
+                <div class="detail-item">
+                    <div class="detail-label">Ticket Number</div>
+                    <div class="detail-value">{{ticketNumber}}</div>
+                </div>
+            </div>
+            {{#if ticketUrl}}
+            <div class="action-buttons">
+                <a href="{{ticketUrl}}" class="action-button btn-primary">View Ticket</a>
+            </div>
+            {{/if}}
+        </div>
+        <div class="footer">
+            <div class="footer-brand">TaskFlow</div>
+            <div class="footer-text">Project Management Made Simple</div>
+            <div class="footer-text">© 2024 Ecorenet Business Solutions Limited</div>
+            <div class="footer-links">
+                {{#if preferencesUrl}}<a href="{{preferencesUrl}}" class="footer-link">Manage Preferences</a>{{/if}}
+                {{#if unsubscribeUrl}}<a href="{{unsubscribeUrl}}" class="footer-link">Unsubscribe</a>{{/if}}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

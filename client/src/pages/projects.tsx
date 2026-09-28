@@ -11,7 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangle, Search, Filter, Grid3X3, Table, Clock, FolderOpen, Building2 } from "lucide-react";
+import { Calendar, Users, DollarSign, MoreHorizontal, ExternalLink, AlertTriangle, Search, Filter, Grid3X3, Table, Clock, FolderOpen, Building2, Edit } from "lucide-react";
 import PageHeader from "@/components/layout/page-header";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -606,12 +606,10 @@ export default function Projects() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setLocation(`/projects/${project.id}`);
-                            }}
+                            onClick={(e) => handleEditProject(e, project)}
+                            data-testid={`button-edit-project-${project.id}`}
                           >
-                            View
+                            <Edit className="h-4 w-4" />
                           </Button>
                           {isAdminRole() && (
                             <Button
