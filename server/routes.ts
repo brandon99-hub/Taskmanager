@@ -26,6 +26,7 @@ import { registerInboxRoutes } from "./routes/inbox";
 import { startEmailTicketingPoll } from "./services/emailTicketingService";
 import { logProjectAction, logUserManagementAction, logTeamAction, logBillingItemAction, logInvoiceAction } from "./middleware/comprehensiveAudit";
 import { userHasPermission, requirePermission } from "./utils/permissions";
+import { normalizeEmailDomain, validateEmailDomain } from "./utils/emailDomain";
 
 // Utility function for date validation and conversion
 function validateAndConvertDates(data: any, dateFields: string[]): { cleanedData: any; errors: string[] } {
@@ -1581,6 +1582,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // The email domain is what routes an inbound support email to a company, so it is normalized,
+  // validated and kept unique here rather than trusting whatever the form sent.
+  const checkCompanyEmailDomain = async (
+    raw: unknown,
+    excludeCompanyId?: string
+  ): Promise<{ domain: string | null; error?: { status: number; message: string } }> => {
+    const domain = normalizeEmailDomain(raw);
+    if (!domain) return { domain: null };
+    const problem = validateEmailDomain(domain);
+    if (problem) return { domain, error: { status: 400, message: problem } };
+    const clash = (await storage.getCompanies()).find((c) => c.emailDomain === domain && c.id !== excludeCompanyId);
+    if (clash) {
+      return { domain, error: { status: 409, message: `${domain} is already assigned to ${clash.name}. A domain can identify only one company.` } };
+    }
+    return { domain };
+  };
+
   // Companies (the client/organization a project and its tickets belong to)
   app.get('/api/companies', isAuthenticated, async (_req, res) => {
     try {
@@ -1601,12 +1619,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!name) {
         return res.status(400).json({ message: 'Company name is required' });
       }
+      const { domain: emailDomain, error: domainError } = await checkCompanyEmailDomain(req.body.emailDomain);
+      if (domainError) {
+        return res.status(domainError.status).json({ message: domainError.message, field: 'emailDomain' });
+      }
       const company = await storage.createCompany({
         name,
         primaryContactName: req.body.primaryContactName || undefined,
         primaryContactEmail: req.body.primaryContactEmail || undefined,
         primaryContactPhone: req.body.primaryContactPhone || undefined,
         address: req.body.address || undefined,
+        emailDomain,
       });
       res.status(201).json(company);
     } catch (error) {
@@ -1648,6 +1671,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         primaryContactPhone: req.body.primaryContactPhone || undefined,
         address: req.body.address || undefined,
       };
+      // Unlike the other fields, an empty domain means "clear it", so it is set to null rather than dropped.
+      if (req.body.emailDomain !== undefined) {
+        const { domain: emailDomain, error: domainError } = await checkCompanyEmailDomain(req.body.emailDomain, existing.id);
+        if (domainError) {
+          return res.status(domainError.status).json({ message: domainError.message, field: 'emailDomain' });
+        }
+        payload.emailDomain = emailDomain;
+      }
       Object.keys(payload).forEach((key) => {
         if (payload[key] === undefined) {
           delete payload[key];

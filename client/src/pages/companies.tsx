@@ -99,7 +99,8 @@ export default function Companies() {
         primaryContactEmail: data.primaryContactEmail?.trim() || undefined,
         primaryContactPhone: data.primaryContactPhone?.trim() || undefined,
         address: data.address?.trim() || undefined,
-        emailDomain: data.emailDomain?.trim().toLowerCase().replace(/^@/, '') || undefined,
+        // Sent as "" (not undefined) when empty so editing a company can clear a previously set domain
+        emailDomain: data.emailDomain?.trim().toLowerCase().replace(/^@/, '') ?? "",
       };
       const response = editing
         ? await apiRequest('PUT', `/api/companies/${editing.id}`, payload)
@@ -112,7 +113,16 @@ export default function Companies() {
       setIsFormOpen(false);
     },
     onError: (error: any) => {
-      toast({ title: "Error", description: error?.message || "Failed to save company", variant: "destructive" });
+      // apiRequest errors look like `409: {"message":"...","field":"..."}`; show just the server message
+      let description = error?.message || "Failed to save company";
+      try {
+        const body = JSON.parse(description.slice(description.indexOf(':') + 1).trim());
+        if (body?.message) description = body.message;
+        if (body?.field === 'emailDomain') form.setError('emailDomain', { message: body.message });
+      } catch {
+        /* keep raw message */
+      }
+      toast({ title: "Error", description, variant: "destructive" });
     },
   });
 
@@ -136,7 +146,7 @@ export default function Companies() {
                 </Button>
               </DialogTrigger>
             )}
-            <DialogContent>
+            <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editing ? "Edit Company" : "New Company"}</DialogTitle>
               <DialogDescription>
@@ -222,7 +232,8 @@ export default function Companies() {
                         <Input placeholder="ecorenet.co.ke" {...field} data-testid="input-company-email-domain" />
                       </FormControl>
                       <p className="text-xs text-gray-500">
-                        Support emails from this domain (e.g. someone@{field.value || "ecorenet.co.ke"}) are auto-matched to this company for the AI inbox.
+                        Support emails from this domain (e.g. someone@{field.value || "ecorenet.co.ke"}) and its subdomains are auto-matched to this company for the AI inbox.
+                        Each domain can belong to one company, and free providers like gmail.com are not allowed.
                       </p>
                       <FormMessage />
                     </FormItem>

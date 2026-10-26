@@ -29,6 +29,7 @@ const PERMISSIONS = [
   { key: 'executive_dashboard.view', label: 'View the Executive Dashboard', category: 'Reports' },
   { key: 'system_logs.view', label: 'View system logs', category: 'Admin' },
   { key: 'system.manage', label: 'Trigger automation & manual notification checks', category: 'Admin' },
+  { key: 'inbox.manage', label: 'Connect the Microsoft 365 mailbox, read the inbox & reply to emails', category: 'Tickets' },
 ];
 
 async function seed() {

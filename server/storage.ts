@@ -71,6 +71,7 @@ import {
   type UserMicrosoftSettings,
 } from "../shared/schema";
 import { db } from "./db";
+import { domainLookupCandidates } from "./utils/emailDomain";
 import { eq, desc, asc, and, or, sql, count, avg, inArray, gt, lte, ne } from "drizzle-orm";
 
 export interface IStorage {
@@ -855,11 +856,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCompanyByEmailDomain(domain: string): Promise<Company | undefined> {
-    const [company] = await db
-      .select()
-      .from(companies)
-      .where(eq(companies.emailDomain, domain.toLowerCase()));
-    return company;
+    // Exact domain first, then parent domains (billing.kasneb.or.ke -> kasneb.or.ke); the most
+    // specific stored domain wins. Free-mail senders yield no candidates and never match.
+    const candidates = domainLookupCandidates(domain);
+    if (candidates.length === 0) return undefined;
+    const rows = await db.select().from(companies).where(inArray(companies.emailDomain, candidates));
+    return rows.sort((a, b) => (b.emailDomain?.length ?? 0) - (a.emailDomain?.length ?? 0))[0];
   }
 
   async getOpenTicketsForProject(projectId: string): Promise<any[]> {
