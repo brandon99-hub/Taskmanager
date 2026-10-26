@@ -26,7 +26,7 @@ import {
 import PasswordChangeModal from "@/components/profile/password-change-modal";
 import NotificationPreferences from "@/components/profile/notification-preferences";
 import GoogleCalendarIntegration from "@/components/profile/google-calendar-integration";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, logout } from "@/lib/queryClient";
 
 export default function Home() {
   const auth = useAuth() as any;
@@ -49,18 +49,7 @@ export default function Home() {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { 
-        method: 'POST', 
-        credentials: 'include' 
-      });
-      setLocation('/login');
-    } catch (error) {
-      console.error('Logout error:', error);
-      setLocation('/login');
-    }
-  };
+  const handleLogout = () => logout();
 
   // Test notification function
   const createTestNotifications = useMutation({

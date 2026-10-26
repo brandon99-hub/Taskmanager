@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { logout } from "@/lib/queryClient";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -104,15 +105,7 @@ export default function AuthenticatedLayout({ children }: { children: ReactNode 
                   </>
                 )}
                 <DropdownMenuItem
-                  onClick={async () => {
-                    try {
-                      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-                      window.location.href = '/login';
-                    } catch (error) {
-                      console.error('Logout error:', error);
-                      window.location.href = '/login';
-                    }
-                  }}
+                  onClick={() => logout()}
                   data-testid="menu-logout"
                 >
                   <LogOut className="mr-2 h-4 w-4" />

@@ -86,6 +86,21 @@ export async function apiRequest(
   return res;
 }
 
+/**
+ * Ends the session on the server, then does a full reload at /login so no cached user state
+ * survives. Goes through apiRequest so the CSRF token is sent (a bare fetch is rejected with
+ * 403 and the session would silently stay alive). Redirects even if the request fails.
+ */
+export async function logout(): Promise<void> {
+  try {
+    await apiRequest('POST', '/api/auth/logout');
+  } catch (error) {
+    console.error('Logout error:', error);
+  }
+  csrfToken = null;
+  window.location.replace('/login');
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;

@@ -36,6 +36,16 @@ function RedirectMarketing() {
   return null;
 }
 
+// Signed-out visitors hitting any private URL (e.g. /teams after logging out) get the login page
+// instead of a 404.
+function RedirectToLogin() {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation("/login", { replace: true });
+  }, [setLocation]);
+  return null;
+}
+
 function Router() {
   const { isAuthenticated, isLoading, user, isAdminRole } = useAuth();
 
@@ -63,6 +73,7 @@ function Router() {
           <Route path="/support" component={Landing} />
           <Route path="/login" component={Login} />
           <Route path="/reset-password" component={ResetPassword} />
+          <Route component={RedirectToLogin} />
         </>
       ) : (
         <Route>
