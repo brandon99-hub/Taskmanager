@@ -21,8 +21,7 @@ export function setupSecurityHeaders(app: Express) {
         ],
         scriptSrc: [
           "'self'",
-          process.env.NODE_ENV === 'development' ? "'unsafe-eval'" : "'none'",
-          "'strict-dynamic'", // Allow dynamic script loading with nonce
+          ...(process.env.NODE_ENV === 'development' ? ["'unsafe-eval'"] : []),
           "https://cdn.jsdelivr.net"
         ],
         imgSrc: [
@@ -48,15 +47,13 @@ export function setupSecurityHeaders(app: Express) {
         manifestSrc: ["'self'"],
         prefetchSrc: ["'self'"],
         navigateTo: ["'self'"],
-        requireTrustedTypesFor: ["'script'"],
       },
       reportOnly: process.env.NODE_ENV === 'development',
     },
     
     // Cross-Origin Embedder Policy - Enhanced
-    crossOriginEmbedderPolicy: {
-      policy: "require-corp"
-    },
+    // Disabled: require-corp blocks cross-origin fonts/images that lack CORP headers
+    crossOriginEmbedderPolicy: false,
     
     // DNS Prefetch Control - Enhanced
     dnsPrefetchControl: {
