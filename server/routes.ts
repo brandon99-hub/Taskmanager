@@ -149,14 +149,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { emailService } = await import('./services/emailService');
       const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || `${req.protocol}://${req.get('host')}`;
-      await emailService.sendUserCredentialsEmail({
+      const emailSent = await emailService.sendUserCredentialsEmail({
         to: user.email,
         userName: (user.firstName && user.lastName) ? `${user.firstName} ${user.lastName}` : user.email,
         temporaryPassword,
         loginUrl: `${baseUrl}/login`,
-      });
+      }).catch(() => false);
 
-      res.status(201).json({ user, message: 'User created and invite email sent' });
+      // If the email could not be sent (e.g. email not configured), hand the temporary password
+      // back to the admin so the new user isn't locked out. Only users.manage callers reach here.
+      if (!emailSent) {
+        return res.status(201).json({
+          user,
+          emailSent: false,
+          temporaryPassword,
+          message: 'User created, but the invite email could not be sent',
+        });
+      }
+      res.status(201).json({ user, emailSent: true, message: 'User created and invite email sent' });
     } catch (error) {
       console.error('Error creating user:', error);
       res.status(500).json({ message: 'Failed to create user' });
@@ -193,14 +203,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { emailService } = await import('./services/emailService');
       const baseUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || `${req.protocol}://${req.get('host')}`;
-      await emailService.sendUserCredentialsEmail({
+      const emailSent = await emailService.sendUserCredentialsEmail({
         to: user.email,
         userName: (user.firstName && user.lastName) ? `${user.firstName} ${user.lastName}` : user.email,
         temporaryPassword,
         loginUrl: `${baseUrl}/login`,
-      });
+      }).catch(() => false);
 
-      res.json({ message: 'Password reset and new credentials sent' });
+      if (!emailSent) {
+        return res.json({
+          emailSent: false,
+          temporaryPassword,
+          message: 'Password reset, but the email could not be sent',
+        });
+      }
+      res.json({ emailSent: true, message: 'Password reset and new credentials sent' });
     } catch (error) {
       console.error('Error resetting user password:', error);
       res.status(500).json({ message: 'Failed to reset password' });

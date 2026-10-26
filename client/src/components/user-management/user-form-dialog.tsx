@@ -38,6 +38,8 @@ export default function UserFormDialog({ mode, user, open, onOpenChange }: UserF
   const [email, setEmail] = useState("");
   const [roleId, setRoleId] = useState<string>("");
   const [confirmAction, setConfirmAction] = useState<"reset-password" | "deactivate" | "activate" | null>(null);
+  // Set when the credentials email could not be sent, so the admin can pass the password on manually
+  const [issuedCredentials, setIssuedCredentials] = useState<{ email: string; password: string } | null>(null);
 
   const { data: roles = [] } = useQuery<Role[]>({
     queryKey: ['/api/roles'],
@@ -66,9 +68,13 @@ export default function UserFormDialog({ mode, user, open, onOpenChange }: UserF
       const res = await apiRequest('POST', '/api/users', { firstName, lastName, email, roleId: roleId || null });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       invalidateUsers();
-      toast({ title: "User created", description: "An invite email with a temporary password has been sent." });
+      if (data?.emailSent === false && data?.temporaryPassword) {
+        setIssuedCredentials({ email, password: data.temporaryPassword });
+      } else {
+        toast({ title: "User created", description: "An invite email with a temporary password has been sent." });
+      }
       onOpenChange(false);
     },
     onError: (error: any) => {
@@ -100,8 +106,12 @@ export default function UserFormDialog({ mode, user, open, onOpenChange }: UserF
       const res = await apiRequest('POST', `/api/users/${user.id}/reset-password`, {});
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Password reset", description: "A new temporary password has been emailed to the user." });
+    onSuccess: (data: any) => {
+      if (data?.emailSent === false && data?.temporaryPassword && user) {
+        setIssuedCredentials({ email: user.email, password: data.temporaryPassword });
+      } else {
+        toast({ title: "Password reset", description: "A new temporary password has been emailed to the user." });
+      }
     },
     onError: (error: any) => {
       toast({ title: "Error", description: error?.message || "Failed to reset password", variant: "destructive" });
@@ -258,6 +268,41 @@ export default function UserFormDialog({ mode, user, open, onOpenChange }: UserF
             >
               Confirm
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={issuedCredentials !== null} onOpenChange={(o) => !o && setIssuedCredentials(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Email could not be sent</AlertDialogTitle>
+            <AlertDialogDescription>
+              The account is ready, but the credentials email did not go out (email may not be configured on the server).
+              Share these details with the user securely. This password is shown only once, and they must change it on first login.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1">
+            <div><span className="text-muted-foreground">Email:</span> {issuedCredentials?.email}</div>
+            <div>
+              <span className="text-muted-foreground">Temporary password:</span>{" "}
+              <span className="font-mono font-semibold" data-testid="text-temp-password">{issuedCredentials?.password}</span>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(issuedCredentials?.password || "");
+                  toast({ title: "Copied", description: "Temporary password copied to clipboard." });
+                } catch {
+                  toast({ title: "Copy failed", description: "Select and copy the password manually.", variant: "destructive" });
+                }
+              }}
+            >
+              Copy password
+            </Button>
+            <AlertDialogAction onClick={() => setIssuedCredentials(null)}>Done</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

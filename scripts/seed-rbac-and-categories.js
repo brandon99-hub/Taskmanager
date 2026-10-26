@@ -74,13 +74,13 @@ async function seed() {
     console.log(`Granted all ${allPerms.rows.length} permissions to Administrator role`);
     console.log('Employee role seeded with no permissions by default - grant what staff need via Roles & Permissions.');
 
-    // Migrate existing users onto the new role model based on their current legacy flags,
+    // Migrate existing users onto the new role model based on their current legacy role,
     // without touching the legacy `role` column (a later phase removes reliance on it).
     const adminMigration = await client.query(
       `UPDATE users
        SET role_id = $1
        WHERE role_id IS NULL
-         AND (role IN ('admin', 'manager') OR is_project_manager = true OR is_finance_head = true)`,
+         AND role IN ('admin', 'manager')`,
       [adminRoleId]
     );
     console.log(`Assigned Administrator role to ${adminMigration.rowCount} existing user(s)`);
