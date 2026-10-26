@@ -68,7 +68,15 @@ export class EmailService {
           auth: {
             user: process.env.GMAIL_USER,
             pass: process.env.GMAIL_APP_PASSWORD
-          }
+          },
+          // Fail fast: callers (e.g. user creation) await the send, and hosts that block
+          // outbound SMTP would otherwise hang for ~2 minutes before erroring.
+          connectionTimeout: 6000,
+          greetingTimeout: 6000,
+          socketTimeout: 10000,
+          // Force IPv4: smtp.gmail.com resolves to IPv6 first, which fails with ENETUNREACH on
+          // hosts without IPv6 egress (e.g. Render).
+          ...({ family: 4 } as object)
         });
 
       } else {
@@ -85,7 +93,11 @@ export class EmailService {
           auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS
-          }
+          },
+          connectionTimeout: 6000,
+          greetingTimeout: 6000,
+          socketTimeout: 10000,
+          ...({ family: 4 } as object)
         });
       }
 
