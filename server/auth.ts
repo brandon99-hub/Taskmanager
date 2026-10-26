@@ -471,8 +471,18 @@ export async function setupAuth(app: Express) {
     try {
       const { currentPassword, newPassword } = req.body;
       const userId = req.user.id;
-      
-      if (!currentPassword || !newPassword) {
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // A forced change (mustChangePassword, e.g. right after logging in with a temporary
+      // password) doesn't ask for the current password: the user has just proven it by logging in.
+      // This is decided from the stored flag, never from anything the client sends.
+      const isFirstChange = user.mustChangePassword === true;
+
+      if (!newPassword || (!isFirstChange && !currentPassword)) {
         return res.status(400).json({ message: "Current password and new password are required" });
       }
 
@@ -485,20 +495,18 @@ export async function setupAuth(app: Express) {
         });
       }
 
-      // Verify current password
-      const user = await storage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      const isValidCurrentPassword = await verifyPassword(currentPassword, user.password);
-      if (!isValidCurrentPassword) {
-        return res.status(400).json({ message: "Current password is incorrect" });
+      if (isFirstChange) {
+        if (user.temporaryPassword && newPassword === user.temporaryPassword) {
+          return res.status(400).json({ message: "New password must be different from your temporary password" });
+        }
+      } else {
+        const isValidCurrentPassword = await verifyPassword(currentPassword, user.password);
+        if (!isValidCurrentPassword) {
+          return res.status(400).json({ message: "Current password is incorrect" });
+        }
       }
 
       // Update user password (password will be hashed in updateUserPassword)
-      // Check if this is a forced password change (user must change password)
-      const isFirstChange = user.mustChangePassword === true;
       await storage.updateUserPassword(userId, newPassword, isFirstChange);
 
       // Invalidate all existing sessions except current one

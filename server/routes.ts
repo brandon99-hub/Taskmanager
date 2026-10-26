@@ -242,6 +242,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Permanently delete an employee. Refused (409) when the user has ticket/project/etc. history,
+  // since that history references them; deactivate instead in that case.
+  app.delete('/api/users/:id', isAuthenticated, logUserManagementAction('delete'), async (req: any, res) => {
+    try {
+      if (!(await userHasPermission(req.user, 'users.manage'))) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      if (req.params.id === req.user.id) {
+        return res.status(400).json({ message: 'You cannot delete your own account' });
+      }
+      const target = await storage.getUser(req.params.id);
+      if (!target) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      const result = await storage.deleteUser(req.params.id);
+      if (result.blockedByHistory) {
+        return res.status(409).json({
+          message: 'This user has tickets, projects or other records linked to them and cannot be deleted. Deactivate the account instead to preserve history.',
+        });
+      }
+      res.json({ message: 'User deleted' });
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      res.status(500).json({ message: 'Failed to delete user' });
+    }
+  });
+
   // Dashboard routes
   app.get('/api/dashboard/metrics', isAuthenticated, async (req: any, res) => {
     try {

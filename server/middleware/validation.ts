@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 // Enhanced password validation schema
 export const enhancedPasswordSchema = z.string()
-  .min(12, 'Password must be at least 12 characters long')
+  .min(8, 'Password must be at least 8 characters long')
   .max(128, 'Password must not exceed 128 characters')
   .refine((password) => {
     // Check for at least one lowercase letter
@@ -135,8 +135,8 @@ export function assessPasswordStrength(password: string): {
   ];
   
   // Additional custom feedback
-  if (password.length < 12) {
-    feedback.push('Use at least 12 characters for better security');
+  if (password.length < 8) {
+    feedback.push('Use at least 8 characters');
   }
   
   if (!/[A-Z]/.test(password)) {
@@ -162,7 +162,15 @@ export function assessPasswordStrength(password: string): {
   return {
     score: result.score,
     feedback: Array.from(new Set(feedback)), // Remove duplicates
-    isValid: result.score >= 3 && password.length >= 12
+    // Deterministic rules only (so the UI checklist can mirror them exactly). The zxcvbn score is
+    // still returned for display/hints, but at 8 characters it is too strict to gate on.
+    isValid:
+      password.length >= 8 &&
+      /[A-Z]/.test(password) &&
+      /[a-z]/.test(password) &&
+      /\d/.test(password) &&
+      /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) &&
+      !isCommonPassword(password)
   };
 }
 

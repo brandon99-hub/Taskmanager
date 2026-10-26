@@ -85,6 +85,7 @@ export interface IStorage {
   createUserWithRole(userData: { email: string; firstName: string; lastName: string; roleId: string | null }, assignedBy: string): Promise<{ user: User; temporaryPassword: string }>;
   updateUserProfile(userId: string, data: { firstName?: string; lastName?: string; email?: string }): Promise<User>;
   setUserActive(userId: string, isActive: boolean): Promise<User>;
+  deleteUser(userId: string): Promise<{ deleted: boolean; blockedByHistory: boolean }>;
   getUserTicketCounts(): Promise<Record<string, { open: number; resolved: number }>>;
 
   // Companies operations
@@ -482,6 +483,25 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, userId))
       .returning();
     return updatedUser;
+  }
+
+  /**
+   * Permanently deletes a user. Tables that own per-user data (notifications, admin roles,
+   * settings) cascade, but anything the user created or was assigned (tickets, projects,
+   * comments, contracts...) references them without cascade, so Postgres refuses the delete
+   * (FK violation 23503). We surface that as blockedByHistory instead of erasing history.
+   */
+  async deleteUser(userId: string): Promise<{ deleted: boolean; blockedByHistory: boolean }> {
+    try {
+      const rows = await db.delete(users).where(eq(users.id, userId)).returning({ id: users.id });
+      return { deleted: rows.length > 0, blockedByHistory: false };
+    } catch (error: any) {
+      const code = error?.code ?? error?.cause?.code;
+      if (code === '23503') {
+        return { deleted: false, blockedByHistory: true };
+      }
+      throw error;
+    }
   }
 
   async getUserTicketCounts(): Promise<Record<string, { open: number; resolved: number }>> {

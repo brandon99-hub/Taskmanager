@@ -29,7 +29,7 @@ import { Eye, EyeOff, Lock, CheckCircle, AlertCircle } from "lucide-react";
 const passwordChangeSchema = z.object({
   currentPassword: z.string().min(1, "Current password is required"),
   newPassword: z.string()
-    .min(12, "Password must be at least 12 characters long")
+    .min(8, "Password must be at least 8 characters long")
     .regex(/[a-z]/, "Must contain at least one lowercase letter")
     .regex(/[A-Z]/, "Must contain at least one uppercase letter")
     .regex(/\d/, "Must contain at least one number")
@@ -71,7 +71,7 @@ export default function PasswordChangeModal({ open, onOpenChange }: PasswordChan
   const getPasswordStrength = (password: string) => {
     let strength = 0;
     const checks = [
-      password.length >= 12,
+      password.length >= 8,
       /[a-z]/.test(password),
       /[A-Z]/.test(password),
       /\d/.test(password),
@@ -286,7 +286,7 @@ export default function PasswordChangeModal({ open, onOpenChange }: PasswordChan
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription className="text-sm">
-                Password must contain at least 12 characters, including uppercase, lowercase, numbers, and special characters.
+                Password must contain at least 8 characters, including uppercase, lowercase, numbers, and special characters.
               </AlertDescription>
             </Alert>
 

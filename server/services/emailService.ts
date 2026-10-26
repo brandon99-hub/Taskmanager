@@ -2,6 +2,8 @@ import * as nodemailer from 'nodemailer';
 import * as handlebars from 'handlebars';
 import { readFile } from 'fs/promises';
 import * as path from 'path';
+import * as dns from 'dns';
+import * as net from 'net';
 import { fileURLToPath } from 'url';
 
 // Resolve templates relative to the project root
@@ -49,8 +51,54 @@ export class EmailService {
   private templates: Map<string, HandlebarsTemplateDelegate> = new Map();
   private isConfigured: boolean = false;
 
+  private smtpConfig?: {
+    hostname: string;
+    port: number;
+    secure: boolean;
+    auth: { user?: string; pass?: string };
+  };
+  private ipv4Pinned = false;
+
   constructor() {
     this.setupTransporter();
+  }
+
+  // `host` is either the SMTP hostname or an already-resolved IP (see getTransporter).
+  private buildTransportOptions(host: string): any {
+    const cfg = this.smtpConfig!;
+    return {
+      host,
+      port: cfg.port,
+      secure: cfg.secure,
+      auth: cfg.auth,
+      // Keep the TLS certificate check against the real hostname even when connecting by IP
+      tls: { servername: cfg.hostname },
+      // Fail fast: callers (e.g. user creation) await the send, and hosts that block
+      // outbound SMTP would otherwise hang for ~2 minutes before erroring.
+      connectionTimeout: 6000,
+      greetingTimeout: 6000,
+      socketTimeout: 10000,
+    };
+  }
+
+  /**
+   * Nodemailer resolves both A and AAAA records and connects to a random one, so on hosts with
+   * no IPv6 route (ENETUNREACH) a send can fail at random. Resolve the IPv4 address ourselves
+   * once and connect to that, keeping TLS verification on the original hostname.
+   */
+  private async getTransporter(): Promise<nodemailer.Transporter> {
+    if (!this.ipv4Pinned && this.smtpConfig && !net.isIP(this.smtpConfig.hostname)) {
+      this.ipv4Pinned = true;
+      try {
+        const [ip] = await dns.promises.resolve4(this.smtpConfig.hostname);
+        if (ip) {
+          this.transporter = nodemailer.createTransport(this.buildTransportOptions(ip));
+        }
+      } catch (error) {
+        console.warn('EmailService: could not resolve an IPv4 address, using default resolution:', error);
+      }
+    }
+    return this.transporter!;
   }
 
   private setupTransporter() {
@@ -63,21 +111,13 @@ export class EmailService {
           return;
         }
         
-        this.transporter = nodemailer.createTransport({
-          service: 'gmail',
-          auth: {
-            user: process.env.GMAIL_USER,
-            pass: process.env.GMAIL_APP_PASSWORD
-          },
-          // Fail fast: callers (e.g. user creation) await the send, and hosts that block
-          // outbound SMTP would otherwise hang for ~2 minutes before erroring.
-          connectionTimeout: 6000,
-          greetingTimeout: 6000,
-          socketTimeout: 10000,
-          // Force IPv4: smtp.gmail.com resolves to IPv6 first, which fails with ENETUNREACH on
-          // hosts without IPv6 egress (e.g. Render).
-          ...({ family: 4 } as object)
-        });
+        this.smtpConfig = {
+          hostname: 'smtp.gmail.com',
+          port: 465,
+          secure: true,
+          auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+        };
+        this.transporter = nodemailer.createTransport(this.buildTransportOptions(this.smtpConfig.hostname));
 
       } else {
         // SMTP configuration for other providers
@@ -86,19 +126,13 @@ export class EmailService {
           return;
         }
 
-        this.transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST,
+        this.smtpConfig = {
+          hostname: process.env.SMTP_HOST,
           port: parseInt(process.env.SMTP_PORT || '587'),
           secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
-          auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS
-          },
-          connectionTimeout: 6000,
-          greetingTimeout: 6000,
-          socketTimeout: 10000,
-          ...({ family: 4 } as object)
-        });
+          auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+        };
+        this.transporter = nodemailer.createTransport(this.buildTransportOptions(this.smtpConfig.hostname));
       }
 
       this.isConfigured = true;
@@ -229,7 +263,7 @@ export class EmailService {
         text: this.generateTextVersion(templateName, enhancedData)
       };
 
-      await this.transporter!.sendMail(mailOptions);
+      await (await this.getTransporter()).sendMail(mailOptions);
       return true;
     } catch (error) {
       console.error(`Failed to send ${templateName} email to ${data.to}:`, error);
@@ -306,7 +340,7 @@ TaskFlow Team
     }
 
     try {
-      await this.transporter!.verify();
+      await (await this.getTransporter()).verify();
       return true;
     } catch (error) {
       console.error('Email service connection failed:', error);
@@ -330,7 +364,7 @@ TaskFlow Team
         html: options.html
       };
 
-      await this.transporter!.sendMail(mailOptions);
+      await (await this.getTransporter()).sendMail(mailOptions);
       return true;
     } catch (error) {
       console.error(`Failed to send email to ${options.to}:`, error);

@@ -1,10 +1,13 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, Pencil } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Users, Pencil, Trash2 } from "lucide-react";
 import UserFormDialog from "./user-form-dialog";
 
 interface EmployeeUser {
@@ -27,6 +30,31 @@ interface EmployeesTabProps {
 
 export default function EmployeesTab({ search = "", createOpen, onCreateOpenChange }: EmployeesTabProps) {
   const [editingUser, setEditingUser] = useState<EmployeeUser | null>(null);
+  const [deletingUser, setDeletingUser] = useState<EmployeeUser | null>(null);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest('DELETE', `/api/users/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      toast({ title: "User deleted" });
+    },
+    onError: (error: any) => {
+      // apiRequest errors look like `409: {"message":"..."}`; show just the server message
+      let description = error?.message || "Failed to delete user";
+      try {
+        const body = JSON.parse(description.slice(description.indexOf(':') + 1).trim());
+        if (body?.message) description = body.message;
+      } catch {
+        /* keep raw message */
+      }
+      toast({ title: "Could not delete user", description, variant: "destructive" });
+    },
+    onSettled: () => setDeletingUser(null),
+  });
 
   const { data: employees = [], isLoading } = useQuery<EmployeeUser[]>({
     queryKey: ['/api/users'],
@@ -88,14 +116,25 @@ export default function EmployeesTab({ search = "", createOpen, onCreateOpenChan
                       <TableCell className="text-center font-semibold text-accent-brand">{emp.openTicketCount ?? 0}</TableCell>
                       <TableCell className="text-center font-semibold text-gray-700">{emp.resolvedTicketCount ?? 0}</TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setEditingUser(emp)}
-                          data-testid={`button-edit-employee-${emp.id}`}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditingUser(emp)}
+                            data-testid={`button-edit-employee-${emp.id}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => setDeletingUser(emp)}
+                            data-testid={`button-delete-employee-${emp.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -115,6 +154,28 @@ export default function EmployeesTab({ search = "", createOpen, onCreateOpenChan
           onOpenChange={(open) => !open && setEditingUser(null)}
         />
       )}
+
+      <AlertDialog open={!!deletingUser} onOpenChange={(o) => !o && setDeletingUser(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this user permanently?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingUser?.email} will be removed completely and this cannot be undone. If they have tickets,
+              projects or other records linked to them the delete is refused, and you should deactivate them instead.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deletingUser && deleteMutation.mutate(deletingUser.id)}
+              data-testid="button-confirm-delete-user"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
