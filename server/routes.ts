@@ -258,8 +258,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const result = await storage.deleteUser(req.params.id);
       if (result.blockedByHistory) {
+        const where = result.blockedBy ? ` (linked records found in: ${result.blockedBy})` : '';
         return res.status(409).json({
-          message: 'This user has tickets, projects or other records linked to them and cannot be deleted. Deactivate the account instead to preserve history.',
+          message: `This user has tickets, projects or other records linked to them and cannot be deleted${where}. Deactivate the account instead to preserve history.`,
         });
       }
       res.json({ message: 'User deleted' });

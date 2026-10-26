@@ -85,7 +85,7 @@ export interface IStorage {
   createUserWithRole(userData: { email: string; firstName: string; lastName: string; roleId: string | null }, assignedBy: string): Promise<{ user: User; temporaryPassword: string }>;
   updateUserProfile(userId: string, data: { firstName?: string; lastName?: string; email?: string }): Promise<User>;
   setUserActive(userId: string, isActive: boolean): Promise<User>;
-  deleteUser(userId: string): Promise<{ deleted: boolean; blockedByHistory: boolean }>;
+  deleteUser(userId: string): Promise<{ deleted: boolean; blockedByHistory: boolean; blockedBy?: string }>;
   getUserTicketCounts(): Promise<Record<string, { open: number; resolved: number }>>;
 
   // Companies operations
@@ -486,19 +486,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * Permanently deletes a user. Tables that own per-user data (notifications, admin roles,
-   * settings) cascade, but anything the user created or was assigned (tickets, projects,
-   * comments, contracts...) references them without cascade, so Postgres refuses the delete
-   * (FK violation 23503). We surface that as blockedByHistory instead of erasing history.
+   * Permanently deletes a user.
+   *
+   * Housekeeping rows the system creates on its own are cleared first so they don't block the
+   * delete: the user's notifications and team memberships are removed, and their activity/API
+   * log rows are kept but detached (user_id set to NULL). Real work the user created or was
+   * assigned (tickets, projects, comments, contracts, invoices...) references them without
+   * cascade, so Postgres refuses the delete (FK violation 23503); that is reported as
+   * blockedByHistory, with the blocking table, and nothing is changed (single transaction).
    */
-  async deleteUser(userId: string): Promise<{ deleted: boolean; blockedByHistory: boolean }> {
+  async deleteUser(userId: string): Promise<{ deleted: boolean; blockedByHistory: boolean; blockedBy?: string }> {
     try {
-      const rows = await db.delete(users).where(eq(users.id, userId)).returning({ id: users.id });
-      return { deleted: rows.length > 0, blockedByHistory: false };
+      const deleted = await db.transaction(async (tx) => {
+        await tx.delete(notifications).where(eq(notifications.userId, userId));
+        await tx.delete(teamMembers).where(eq(teamMembers.userId, userId));
+        await tx.execute(sql`UPDATE system_activity_logs SET user_id = NULL WHERE user_id = ${userId}`);
+        await tx.execute(sql`UPDATE api_request_logs SET user_id = NULL WHERE user_id = ${userId}`);
+        const rows = await tx.delete(users).where(eq(users.id, userId)).returning({ id: users.id });
+        return rows.length > 0;
+      });
+      return { deleted, blockedByHistory: false };
     } catch (error: any) {
-      const code = error?.code ?? error?.cause?.code;
-      if (code === '23503') {
-        return { deleted: false, blockedByHistory: true };
+      const cause = error?.cause ?? error;
+      if ((error?.code ?? cause?.code) === '23503') {
+        const blockedBy: string | undefined = cause?.table;
+        console.warn(`deleteUser: blocked by records in "${blockedBy}" (constraint ${cause?.constraint})`);
+        return { deleted: false, blockedByHistory: true, blockedBy };
       }
       throw error;
     }

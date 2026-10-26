@@ -160,8 +160,9 @@ export default function EmployeesTab({ search = "", createOpen, onCreateOpenChan
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this user permanently?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deletingUser?.email} will be removed completely and this cannot be undone. If they have tickets,
-              projects or other records linked to them the delete is refused, and you should deactivate them instead.
+              {deletingUser?.email} will be removed completely, along with their notifications and team memberships.
+              This cannot be undone. If they own tickets, projects or other records the delete is refused and nothing
+              is changed; deactivate them instead.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
