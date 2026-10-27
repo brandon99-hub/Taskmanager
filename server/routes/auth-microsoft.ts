@@ -12,7 +12,10 @@ function authorizeUrl(userId: string): string {
     `scope=${encodeURIComponent(MICROSOFT_SCOPES)}&` +
     `response_type=code&` +
     `response_mode=query&` +
-    `prompt=consent&` +
+    // select_account (not consent): once an admin has approved the app tenant-wide, forcing the consent
+    // screen again would block non-admin users. Refresh tokens come from the offline_access scope, and the
+    // account picker lets the user choose which mailbox (e.g. support@ vs their own) TaskFlow reads.
+    `prompt=select_account&` +
     `state=${userId}`;
 }
 

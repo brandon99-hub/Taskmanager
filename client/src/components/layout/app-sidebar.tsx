@@ -47,6 +47,10 @@ export default function AppSidebar() {
     return isAdminRole?.() || hasAnyPermission?.(item.permissions);
   });
 
+  // Nested pages (e.g. /tickets/123) keep their section highlighted; "/" must match exactly.
+  const isRouteActive = (path: string) =>
+    path === "/" ? location === "/" : location === path || location.startsWith(`${path}/`);
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-slate-100">
@@ -72,48 +76,47 @@ export default function AppSidebar() {
           )}
         </div>
       </SidebarHeader>
-      <SidebarContent className="justify-center scrollbar-modal px-2 py-2">
-        <SidebarGroup>
+      <SidebarContent className="scrollbar-modal px-2 py-3">
+        <SidebarGroup className="p-0">
           <SidebarGroupContent>
-            <SidebarMenu className="gap-1">
+            <SidebarMenu className="gap-1.5">
               {visibleItems.map((item) => {
                 const Icon = item.icon;
-                const isActive = location === item.path;
+                const isActive = isRouteActive(item.path);
                 return (
                   <SidebarMenuItem key={item.path}>
+                    {/* The button carries no padding of its own: the Link fills it, so spacing is set in one place. */}
                     <SidebarMenuButton
                       asChild
                       isActive={isActive}
                       tooltip={item.label}
-                      size="lg"
                       className={cn(
-                        "group/menu-item transition-all duration-150 rounded-xl",
+                        "group/menu-item relative h-11 rounded-xl p-0 group-data-[collapsible=icon]:!p-0 transition-all duration-200",
                         isActive
-                          ? "bg-primary/10 text-primary font-semibold hover:bg-primary/15"
-                          : "text-slate-600 hover:text-slate-900 hover:bg-slate-100/70",
-                        isCollapsed && "justify-center"
+                          ? "bg-primary text-primary-foreground font-semibold shadow-md shadow-primary/30 hover:bg-primary hover:text-primary-foreground active:bg-primary active:text-primary-foreground data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
+                          : "text-slate-500 font-semibold hover:bg-primary/5 hover:text-primary active:bg-primary/10 active:text-primary"
                       )}
                     >
                       <Link
                         href={item.path}
+                        aria-current={isActive ? "page" : undefined}
                         data-testid={`nav-${item.path.slice(1) || 'dashboard'}`}
                         className={cn(
-                          "flex items-center gap-3 w-full rounded-xl px-3 py-2.5 relative",
+                          "flex h-full w-full items-center gap-3.5 rounded-xl px-4",
                           isCollapsed && "justify-center px-0"
                         )}
                       >
-                        {isActive && !isCollapsed && (
-                          <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-full bg-accent-brand" />
-                        )}
                         <Icon className={cn(
-                          "w-5 h-5 shrink-0 transition-colors",
-                          isCollapsed && isActive && "rounded-lg bg-primary/15 text-accent-brand p-0.5 w-7 h-7 ring-1 ring-primary/25",
-                          !isCollapsed && (isActive ? "text-accent-brand" : "text-slate-500 group-hover/menu-item:text-slate-800")
+                          "h-5 w-5 shrink-0 transition-colors",
+                          isActive ? "text-accent-brand" : "text-slate-400 group-hover/menu-item:text-primary"
                         )} />
                         {!isCollapsed && (
-                          <span className="truncate text-sm font-medium tracking-tight">
+                          <span className="truncate text-sm tracking-tight">
                             {item.label}
                           </span>
+                        )}
+                        {isActive && !isCollapsed && (
+                          <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-primary-foreground" />
                         )}
                       </Link>
                     </SidebarMenuButton>

@@ -194,8 +194,17 @@ export async function setupAuth(app: Express) {
   });
 
   passport.deserializeUser(async (id: string, done) => {
+    // Runs on every request (including static assets), so a single dropped database connection
+    // would otherwise turn into a 500 for the whole page. Retry once on a fresh connection.
     try {
-      const user = await storage.getUser(id);
+      let user;
+      try {
+        user = await storage.getUser(id);
+      } catch (firstError) {
+        console.warn('deserializeUser: getUser failed, retrying once:', (firstError as any)?.cause?.message ?? (firstError as any)?.message);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        user = await storage.getUser(id);
+      }
       done(null, user);
     } catch (error) {
       done(error);

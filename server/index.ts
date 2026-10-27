@@ -89,6 +89,8 @@ app.use((req, res, next) => {
         ip: req.ip,
         userAgent: req.get('User-Agent'),
         userId: (req as any).user?.id,
+        // Drizzle wraps driver errors as "Failed query: ..."; the real reason (ECONNRESET, timeout, ...) is on cause
+        cause: err.cause ? { code: err.cause.code, message: err.cause.message } : undefined,
         stack: err.stack,
       });
     }

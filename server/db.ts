@@ -16,8 +16,19 @@ const connectionString = process.env.DATABASE_URL;
 const sanitizedUrl = connectionString.replace(/\/\/[^:]+:[^@]+@/, '//:@');
 console.log('Connecting to database:', sanitizedUrl);
 
-export const pool = new Pool({ 
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  // Neon sits behind a pooler that silently drops idle connections, and the link to it can be
+  // slow or flaky: keep TCP alive, give up on a stuck connect instead of hanging, and recycle idle clients.
+  keepAlive: true,
+  connectionTimeoutMillis: 15_000,
+  idleTimeoutMillis: 10_000,
+  max: 10,
+});
+
+// Without a listener, a dropped idle client emits an unhandled 'error' event and can crash the process.
+pool.on('error', (err) => {
+  console.error('Idle database client error (a new connection will be opened):', err.message);
 });
 export const db = drizzle(pool, { schema });
