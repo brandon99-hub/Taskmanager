@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import PageHeader from "@/components/layout/page-header";
-import { Mail, Search, RefreshCw, Link2, Send, Plug, Unplug } from "lucide-react";
+import { Mail, Search, RefreshCw, Link2, Send, Plug, Unplug, MessagesSquare, Settings, AlertCircle } from "lucide-react";
 
 interface GraphMessage {
   id: string;
@@ -51,14 +51,15 @@ export default function Inbox() {
     staleTime: 30 * 1000,
   });
 
-  const { data: thread, isLoading: threadLoading } = useQuery<{ messages: GraphMessage[]; linkedTicketId: string | null }>({
+  const { data: thread, isLoading: threadLoading, isError: threadError, refetch: refetchThread } = useQuery<{ messages: GraphMessage[]; linkedTicketId: string | null }>({
     queryKey: ['/api/inbox/threads', selectedConversationId],
     queryFn: async () => {
-      const res = await fetch(`/api/inbox/threads/${selectedConversationId}`, { credentials: 'include' });
+      const res = await fetch(`/api/inbox/threads/${encodeURIComponent(selectedConversationId!)}`, { credentials: 'include' });
       if (!res.ok) throw new Error('Failed to fetch conversation');
       return res.json();
     },
     enabled: !!selectedConversationId,
+    retry: false, // surface a failure immediately instead of retrying with backoff behind a skeleton
   });
 
   const connectMutation = useMutation({
@@ -125,9 +126,15 @@ export default function Inbox() {
       />
 
       <Tabs defaultValue="messages" className="mt-6">
-        <TabsList variant="underline">
-          <TabsTrigger value="messages" data-testid="tab-inbox-messages">Messages</TabsTrigger>
-          <TabsTrigger value="settings" data-testid="tab-inbox-settings">Settings</TabsTrigger>
+        <TabsList variant="underline" className="justify-center">
+          <TabsTrigger value="messages" data-testid="tab-inbox-messages" className="flex items-center gap-2">
+            <MessagesSquare className="w-4 h-4 text-primary" />
+            Messages
+          </TabsTrigger>
+          <TabsTrigger value="settings" data-testid="tab-inbox-settings" className="flex items-center gap-2">
+            <Settings className="w-4 h-4 text-primary" />
+            Settings
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="messages" className="pt-6">
@@ -193,6 +200,17 @@ export default function Inbox() {
                     <div className="space-y-2">
                       {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-gray-100 rounded animate-pulse" />)}
                     </div>
+                  ) : threadError ? (
+                    <div className="text-center py-16 space-y-3" data-testid="inbox-thread-error">
+                      <AlertCircle className="h-10 w-10 text-rose-400 mx-auto" />
+                      <p className="text-sm text-gray-700">Couldn't load this conversation.</p>
+                      <Button variant="outline" size="sm" onClick={() => refetchThread()}>
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        Try again
+                      </Button>
+                    </div>
+                  ) : !thread?.messages?.length ? (
+                    <div className="text-center py-16 text-sm text-gray-500">No messages found in this conversation.</div>
                   ) : (
                     <div className="space-y-4">
                       {thread?.linkedTicketId && (

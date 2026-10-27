@@ -95,11 +95,14 @@ export async function getInboxThreads(userId: string, top = 25): Promise<GraphMe
 /** Full chronological message history for a conversation thread. */
 export async function getConversationMessages(userId: string, conversationId: string): Promise<GraphMessage[]> {
   const filter = encodeURIComponent(`conversationId eq '${conversationId}'`);
+  // No $orderby here: Graph rejects a conversationId $filter combined with a sort ("InefficientFilter"),
+  // so the thread is sorted oldest-first in code instead.
   const data = await graphFetch(
     userId,
-    `/me/messages?$filter=${filter}&$orderby=receivedDateTime asc&$select=id,conversationId,subject,body,bodyPreview,from,toRecipients,receivedDateTime,isRead,hasAttachments`
+    `/me/messages?$filter=${filter}&$top=50&$select=id,conversationId,subject,body,bodyPreview,from,toRecipients,receivedDateTime,isRead,hasAttachments`
   );
-  return data?.value || [];
+  const messages: GraphMessage[] = data?.value || [];
+  return messages.sort((a, b) => new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime());
 }
 
 export async function replyToEmail(userId: string, messageId: string, bodyHtml: string): Promise<void> {
